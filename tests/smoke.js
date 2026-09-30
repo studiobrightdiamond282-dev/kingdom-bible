@@ -5,7 +5,7 @@ const sumVerses=books=>books.reduce((n,b)=>n+b.reduce((m,c)=>m+c.length,0),0);
 // Every translation the app offers. Kept in one place so a new one cannot be
 // half-registered: the TR map in app.js and these files must agree.
 const TRANSLATIONS=['kjv','ylt','asv','web','bbe'];
-const must=['index.html','styles.css','app.js','sw.js','ref-parser.js','manifest.json','offline.html','assets/logo.png','data/books.json',...TRANSLATIONS.map(t=>`data/bible_${t}.json`)];
+const must=['index.html','styles.css','app.js','sw.js','ref-parser.js','live-sync.js','guide.js','manifest.json','offline.html','assets/logo.png','data/books.json',...TRANSLATIONS.map(t=>`data/bible_${t}.json`)];
 for(const f of must)assert(fs.existsSync(path.join(pub,f)),`Missing ${f}`);
 const books=JSON.parse(fs.readFileSync(path.join(pub,'data/books.json'))).books;
 assert.equal(books.length,66);assert.equal(books.reduce((n,b)=>n+b.chapters,0),1189);

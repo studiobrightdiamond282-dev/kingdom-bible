@@ -49,8 +49,26 @@
 
   <div id="modalRoot"></div>
   <div id="toastRoot" class="toast-root" aria-live="polite"></div>
+  <button class="glass-btn" id="guideBtn" aria-label="Open the live setup guide" title="Live setup guide (G)">?</button>
+  <div class="glass" id="guideOverlay" hidden role="dialog" aria-modal="true" aria-label="Live setup guide">
+    <div class="glass-panel">
+      <div class="glass-head">
+        <div>
+          <h2>Live setup guide</h2>
+          <small>vMix, OBS and the phone remote</small>
+        </div>
+        <button class="glass-x" id="guideClose" aria-label="Close guide">×</button>
+      </div>
+      <div class="glass-search">
+        <input id="guideSearch" type="search" placeholder="Search the guide… try “transparent”, “fps”, “next”" autocomplete="off" aria-label="Search the guide" />
+      </div>
+      <div class="glass-tabs" id="guideTabs" role="tablist"></div>
+      <div class="glass-body" id="guideBody"></div>
+    </div>
+  </div>
   <script src="/ref-parser.js" defer></script>
   <script src="/live-sync.js" defer></script>
+  <script src="/guide.js" defer></script>
   <script src="/app.js" defer></script>
 </body>
 </html>
