@@ -13,6 +13,8 @@
   "rewrites": [
     { "source": "/health", "destination": "/api/health" },
     { "source": "/api/health", "destination": "/api/health" },
+    { "source": "/api/account", "destination": "/api/account" },
+    { "source": "/api/sync", "destination": "/api/sync" },
     { "source": "/api/presentation", "destination": "/api/presentation" },
     { "source": "/api/presentation/events", "destination": "/api/presentation-events" },
     { "source": "/status", "destination": "/status.html" },

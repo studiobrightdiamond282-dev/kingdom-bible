@@ -6,7 +6,7 @@ const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
 const today=()=>new Date().toISOString().slice(0,10);
 const fmtDate=d=>new Intl.DateTimeFormat('en',{weekday:'long',month:'long',day:'numeric'}).format(d||new Date());
 const LS='kingdomBible.v1';
-const DEFAULT={profile:{name:'Stanley',translation:'kjv',theme:'dark',font:'serif',fontSize:20,lineHeight:1.9,readingTime:'06:30',notifications:false},reader:{book:44,chapter:8,translation:'kjv',lastVerse:1},bookmarks:{},highlights:{},notes:{},prayers:[],planProgress:{},history:[],favorites:{},aiHistory:[],readingDays:[],chaptersRead:[],installed:false,devotionalDone:[],onboarded:true,ministry:{theme:'royal',church:'KINGDOM BIBLE',speaker:'',sermon:''}};
+const DEFAULT={profile:{name:'Stanley',translation:'kjv',theme:'dark',font:'serif',fontSize:20,lineHeight:1.9,readingTime:'06:30',notifications:false},reader:{book:44,chapter:8,translation:'kjv',lastVerse:1},bookmarks:{},highlights:{},notes:{},prayers:[],planProgress:{},history:[],favorites:{},aiHistory:[],readingDays:[],chaptersRead:[],installed:false,devotionalDone:[],onboarded:true,collections:{},notifSeen:[],account:{email:'',signedIn:false,lastSync:null},ministry:{theme:'royal',church:'KINGDOM BIBLE',speaker:'',sermon:''}};
 let state=loadState(),books=[],refIndex=null,bookCache=new Map(),xrefCache=new Map(),route='home',selectedVerse=null,deferredInstall=null,searchWorker=null,searchState={query:'',results:[],total:0,status:''};
 function loadState(){try{return deepMerge(structuredClone(DEFAULT),JSON.parse(localStorage.getItem(LS)||'{}'))}catch{return structuredClone(DEFAULT)}}
 function deepMerge(a,b){for(const k in b){if(b[k]&&typeof b[k]==='object'&&!Array.isArray(b[k])&&a[k]&&typeof a[k]==='object'&&!Array.isArray(a[k]))deepMerge(a[k],b[k]);else a[k]=b[k]}return a}
@@ -21,7 +21,7 @@ const DICTIONARY={grace:['God’s unmerited favor and active kindness toward hum
 async function init(){
   updateProfileBits();
   try{books=(await (await fetch('/data/books.json')).json()).books;refIndex=KBRef.createIndex(books)}catch(e){$('#main').innerHTML=`<div class="empty-state"><h3>Unable to load Bible library</h3><p>${esc(e.message)}</p></div>`;return}
-  renderNav(); bindGlobal(); bindGuide();
+  renderNav(); bindGlobal(); bindGuide(); updateNotifBadge();
   if(location.pathname.startsWith('/present')||new URLSearchParams(location.search).has('present')){renderPresentation();return}
   const hash=location.hash.slice(1),valid=NAV.some(n=>n[0]===hash.split('/')[0]); navigate(valid?hash:'home',false);
   registerPWA(); networkStatus();
@@ -34,7 +34,7 @@ function renderNav(){
 function bindGlobal(){
   document.addEventListener('click',e=>{const r=e.target.closest('[data-route]');if(r){e.preventDefault();navigate(r.dataset.route)}const c=e.target.closest('[data-close]');if(c)closeModal()});
   $('#commandBtn').onclick=openCommand;$('#quickBtn').onclick=openQuick;$('#themeBtn').onclick=cycleTheme;
-  $('#notifBtn').onclick=()=>toast('No new notifications');
+  $('#notifBtn').onclick=()=>{openNotifications()};
   window.addEventListener('hashchange',()=>navigate(location.hash.slice(1)||'home',false));
   window.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openCommand()}if(!/input|textarea|select/i.test(e.target.tagName)&&!e.ctrlKey&&!e.metaKey){if(e.key.toLowerCase()==='b')navigate('bible');if(e.key.toLowerCase()==='s')navigate('search');if(e.key.toLowerCase()==='p')navigate('ministry')}});
 }
@@ -88,7 +88,7 @@ async function stepChapter(d){let {book,chapter}=state.reader;chapter+=d;if(chap
 async function openReference(ref){const p=parseRef(ref);if(!p){toast('Reference not recognized','error');return}state.reader.book=p.book;state.reader.chapter=p.chapter;state.reader.lastVerse=p.verse;save();navigate('bible');setTimeout(()=>{$(`#v${p.verse}`)?.scrollIntoView({behavior:'smooth',block:'center'});$(`#v${p.verse}`)?.classList.add('selected')},350)}
 function openVerse(v,text){const r=state.reader,ref=`${books[r.book].name} ${r.chapter}:${v}`;selectedVerse={ref,text,book:r.book,chapter:r.chapter,verse:v,translation:r.translation};state.reader.lastVerse=v;save();modal(`<div class="verse-sheet"><div class="modal-head"><div><div class="eyebrow">${TR[r.translation]} · SELECTED VERSE</div><h2>${esc(ref)}</h2></div><button class="close-btn" data-close>×</button></div><div class="selected-passage">“${esc(text)}”<cite>${esc(ref)} · ${TR[r.translation]}</cite></div><div class="action-grid"><button class="action-btn" data-vact="bookmark"><span>♡</span>${state.bookmarks[ref]?'Unsave':'Save'}</button><button class="action-btn" data-vact="highlight"><span>▰</span>Highlight</button><button class="action-btn" data-vact="note"><span>✎</span>Note</button><button class="action-btn" data-vact="copy"><span>▣</span>Copy</button><button class="action-btn" data-vact="share"><span>↗</span>Share</button><button class="action-btn" data-vact="compare"><span>◫</span>Compare</button><button class="action-btn" data-vact="xref"><span>⌁</span>Cross refs</button><button class="action-btn" data-vact="ai"><span>✦</span>Study</button><button class="action-btn" data-vact="prayer"><span>♧</span>Prayer</button><button class="action-btn" data-vact="memory"><span>◇</span>Memorize</button><button class="action-btn" data-vact="present"><span>▣</span>Present</button><button class="action-btn" data-vact="collection"><span>⊕</span>Collection</button></div></div>`,'verse-modal');$$('[data-vact]').forEach(b=>b.onclick=()=>verseAction(b.dataset.vact))}
 async function verseAction(a){const v=selectedVerse;if(a==='bookmark'){if(state.bookmarks[v.ref])delete state.bookmarks[v.ref];else state.bookmarks[v.ref]={text:v.text,date:today(),folder:'Favorite Scriptures'};save();closeModal();toast(state.bookmarks[v.ref]?'Verse saved':'Bookmark removed','success')}
- else if(a==='highlight')openHighlights();else if(a==='note')openNote(v);else if(a==='copy'){await navigator.clipboard.writeText(`“${v.text}” — ${v.ref} (${TR[v.translation]})`);toast('Copied to clipboard');closeModal()}else if(a==='share')shareText(`${v.text}\n— ${v.ref} (${TR[v.translation]})`);else if(a==='compare')openCompare(v);else if(a==='xref')openXrefs(v);else if(a==='ai'){closeModal();state.aiContext=v;save();navigate('study')}else if(a==='prayer'){closeModal();openPrayerForm(v)}else if(a==='memory')openMemory(v);else if(a==='present'){closeModal();state.ministry.current=v;save();navigate('ministry')}else toast('Custom collections are coming soon')}
+ else if(a==='highlight')openHighlights();else if(a==='note')openNote(v);else if(a==='copy'){await navigator.clipboard.writeText(`“${v.text}” — ${v.ref} (${TR[v.translation]})`);toast('Copied to clipboard');closeModal()}else if(a==='share')shareText(`${v.text}\n— ${v.ref} (${TR[v.translation]})`);else if(a==='compare')openCompare(v);else if(a==='xref')openXrefs(v);else if(a==='ai'){closeModal();state.aiContext=v;save();navigate('study')}else if(a==='prayer'){closeModal();openPrayerForm(v)}else if(a==='memory')openMemory(v);else if(a==='present'){closeModal();state.ministry.current=v;save();navigate('ministry')}else openCollectionPicker(v)}
 function openHighlights(){modal(`<div class="modal-head"><div><h2>Highlight verse</h2><p>${esc(selectedVerse.ref)}</p></div><button class="close-btn" data-close>×</button></div><div class="highlight-colors">${['yellow','blue','green','red','purple','orange'].map(c=>`<button class="color-dot" data-color="${c}" style="background:${c==='yellow'?'#facc15':c==='blue'?'#3b82f6':c==='green'?'#22c55e':c==='red'?'#ef4444':c==='purple'?'#a855f7':'#f97316'}" aria-label="${c}"></button>`).join('')}</div><div class="modal-actions"><button class="secondary-btn" id="clearHighlight">Remove highlight</button></div>`);$$('[data-color]').forEach(b=>b.onclick=()=>{state.highlights[selectedVerse.ref]={color:b.dataset.color,text:selectedVerse.text,date:today()};save();closeModal();renderBible();toast('Highlight saved','success')});$('#clearHighlight').onclick=()=>{delete state.highlights[selectedVerse.ref];save();closeModal();renderBible()}}
 function openNote(v){const old=state.notes[v.ref]||{};modal(`<div class="modal-head"><div><h2>Scripture note</h2><p>${esc(v.ref)}</p></div><button class="close-btn" data-close>×</button></div><div class="form-grid"><div class="field full"><label>Title</label><input id="noteTitle" value="${esc(old.title||'')}" placeholder="What stood out?"/></div><div class="field full"><label>Note</label><textarea id="noteBody" placeholder="Write your reflection…">${esc(old.content||'')}</textarea></div><div class="field full"><label>Tags</label><input id="noteTags" value="${esc((old.tags||[]).join(', '))}" placeholder="faith, study, sermon"/></div></div><div class="modal-actions">${old.content?'<button class="danger-btn" id="deleteNote">Delete</button>':''}<button class="secondary-btn" data-close>Cancel</button><button class="primary-btn" id="saveNote">Save note</button></div>`);$('#saveNote').onclick=()=>{state.notes[v.ref]={title:$('#noteTitle').value.trim()||v.ref,content:$('#noteBody').value.trim(),tags:$('#noteTags').value.split(',').map(x=>x.trim()).filter(Boolean),text:v.text,date:today()};save();closeModal();toast('Note saved','success')};if($('#deleteNote'))$('#deleteNote').onclick=()=>{delete state.notes[v.ref];save();closeModal();toast('Note deleted')}}
 async function openCompare(v){const vals=await Promise.all(Object.keys(TR).map(t=>getVerse(v.ref,t)));modal(`<div class="modal-head"><div><h2>Compare translations</h2><p>${esc(v.ref)} · Public-domain editions</p></div><button class="close-btn" data-close>×</button></div>${vals.map(x=>`<div style="padding:14px 0;border-bottom:1px solid var(--line)"><span class="pill">${TR[x.translation]}</span><p style="font:17px/1.7 var(--scripture);margin:9px 0">${esc(x.text||'Verse numbering differs in this edition.')}</p></div>`).join('')}`)}
@@ -132,6 +132,210 @@ function renderPlans(){setTitle('Reading Plans');$('#main').innerHTML=`<div clas
 function openPlan(id){const p=PLANS.find(x=>x.id===id),n=state.planProgress[id]||0;modal(`<div class="modal-head"><div><div class="eyebrow">DAY ${Math.min(n+1,p.days)} OF ${p.days}</div><h2>${p.name}</h2></div><button class="close-btn" data-close>×</button></div><div class="progress"><span style="width:${Math.round(n/p.days*100)}%"></span></div><div class="card" style="box-shadow:none;margin-top:18px;padding:18px"><strong>Today’s reading</strong><p style="font-family:var(--scripture);font-size:20px">${planReading(id,n)}</p><p style="color:var(--muted);font-size:12px">Read prayerfully and in context. Progress is personal, not competitive.</p></div><div class="modal-actions"><button class="secondary-btn" id="openPlanRead">Open reading</button><button class="primary-btn" id="completePlanDay" ${n>=p.days?'disabled':''}>${n>=p.days?'Plan complete':'Mark day complete'}</button></div>`);const rr=planReading(id,n).split('–')[0];$('#openPlanRead').onclick=()=>openReference(rr.includes(':')?rr:rr+' 1');$('#completePlanDay').onclick=()=>{state.planProgress[id]=Math.min(p.days,n+1);save();closeModal();renderPlans();toast('Today’s reading marked complete','success')}}
 function planReading(id,n){if(id==='psalms30')return `Psalms ${n*5+1}–${Math.min(150,n*5+5)}`;if(id==='proverbs31')return `Proverbs ${Math.min(31,n+1)}`;if(id==='gospels30')return `${['Matthew','Mark','Luke','John'][Math.floor(n/8)%4]} ${n%8+1}`;if(id==='nt90')return `${books[39+(n%27)].name} ${n%books[39+(n%27)].chapters+1}`;if(id==='year')return `Genesis ${n%50+1}`;const refs=['Hebrews 11:1','Philippians 4:6','Matthew 6:33','Romans 8:28','John 15:5','Psalms 46:1','James 1:5'];return refs[n%refs.length]}
 
+/* ACCOUNT & SYNC */
+let accountState={configured:false,user:null,busy:false};
+const SYNC_KEYS=window.KBSync?KBSync.SYNCABLE:['bookmarks','highlights','notes','prayers','planProgress','favorites','readingDays','chaptersRead','devotionalDone','collections','history','profile'];
+async function accountApi(action,payload){
+  const res=await fetch('/api/account',{method:action?'POST':'GET',headers:{'content-type':'application/json'},body:action?JSON.stringify({action,...(payload||{})}):undefined});
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok){const err=new Error(data.error||'Request failed');err.status=res.status;throw err}
+  return data;
+}
+function localSyncPayload(){return window.KBSync?KBSync.pick(state):(()=>{const o={};SYNC_KEYS.forEach(k=>{if(state[k]!==undefined)o[k]=state[k]});return o})()}
+/**
+ * Merge remote data into local without ever discarding local work.
+ * The rules live in sync-merge.js so they can be unit tested directly.
+ */
+function mergeSync(remote){return window.KBSync?KBSync.merge(state,remote):0}
+async function pushSync(){
+  if(!accountState.user)throw new Error('Sign in first');
+  const res=await fetch('/api/sync',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({data:localSyncPayload()})});
+  if(!res.ok)throw new Error('Sync failed');
+  const body=await res.json();
+  state.account.lastSync=new Date().toISOString();
+  save();
+  return body;
+}
+async function pullSync(){
+  if(!accountState.user)throw new Error('Sign in first');
+  const res=await fetch('/api/sync');
+  if(!res.ok)throw new Error('Sync failed');
+  const {data}=await res.json();
+  const changed=data?mergeSync(data):0;
+  if(changed)save();
+  state.account.lastSync=new Date().toISOString();
+  save();
+  return changed;
+}
+async function refreshAccountSummary(){
+  const el=$('#accountSummary');
+  try{
+    const info=await accountApi();
+    accountState.configured=info.configured;
+    accountState.user=info.user||null;
+    if(state.account)state.account.signedIn=Boolean(info.user);
+  }catch{accountState.configured=false;accountState.user=null}
+  if(!el)return;
+  if(!accountState.configured){el.textContent='Account service is not connected on this build. Your data stays safely on this device — export it any time.';return}
+  if(accountState.user){el.textContent=`Signed in as ${accountState.user.email}${state.account.lastSync?' · synced '+new Date(state.account.lastSync).toLocaleString():''}`;return}
+  el.textContent='Sign in to keep your notes, highlights and collections in sync across your devices.';
+}
+function openAccount(){
+  const draw=()=>{
+    if(!accountState.configured){
+      modal(`<div class="modal-head"><div><h2>Cloud account & sync</h2><p>Not connected on this deployment</p></div><button class="close-btn" data-close>×</button></div>
+        <div class="notice" style="border-color:rgba(248,113,113,.4);background:rgba(248,113,113,.10)"><b>No account service is connected.</b><br/>Nothing you write can leave this device until a database is configured. That is the safe default, not a failure.</div>
+        <p style="color:var(--muted);font-size:13px;margin-top:14px">Everything still works: collections, notes, highlights, reading history and plans are all saved on this device. Use <b>Export</b> in Profile to back them up as a file.</p>
+        <div class="modal-actions"><button class="secondary-btn" data-close>Close</button><button class="secondary-btn" id="acctExport">Export my data</button></div>`);
+      $('#acctExport').onclick=exportData;
+      return;
+    }
+    if(accountState.user){
+      modal(`<div class="modal-head"><div><h2>Cloud account</h2><p>${esc(accountState.user.email)}</p></div><button class="close-btn" data-close>×</button></div>
+        <div class="notice"><b>Your library follows you.</b> Notes, highlights, collections, prayers, plans and reading history sync between devices. The Bible text itself never leaves the device — it is already downloaded.</div>
+        <p style="color:var(--muted);font-size:13px;margin-top:14px">${state.account.lastSync?'Last synced '+esc(new Date(state.account.lastSync).toLocaleString()):'Not synced yet on this device.'}</p>
+        <div class="modal-actions"><button class="secondary-btn" id="syncDown">Pull from cloud</button><button class="primary-btn" id="syncUp">Push to cloud</button><button class="danger-btn" id="signOut">Sign out</button></div>`);
+      $('#syncUp').onclick=async()=>{try{await pushSync();toast('Uploaded to your account','success');draw()}catch(e){toast(e.message,'error')}};
+      $('#syncDown').onclick=async()=>{try{const n=await pullSync();toast(n?`Merged ${n} change${n===1?'':'s'}`:'Already up to date','success');draw();updateNotifBadge()}catch(e){toast(e.message,'error')}};
+      $('#signOut').onclick=async()=>{try{await accountApi('logout')}catch{};accountState.user=null;state.account.signedIn=false;save();closeModal();toast('Signed out');refreshAccountSummary()};
+      return;
+    }
+    modal(`<div class="modal-head"><div><h2>Sign in or create an account</h2><p>Sync your library across devices</p></div><button class="close-btn" data-close>×</button></div>
+      <form id="acctForm" autocomplete="on">
+        <div class="field"><label>Your name</label><input id="acctName" autocomplete="name" placeholder="Stanley" maxlength="60"/></div>
+        <div class="field" style="margin-top:12px"><label>Email</label><input id="acctEmail" type="email" autocomplete="email" placeholder="you@example.com" required/></div>
+        <div class="field" style="margin-top:12px"><label>Password</label><input id="acctPass" type="password" autocomplete="current-password" placeholder="At least 10 characters" required minlength="10"/></div>
+        <div id="acctErr" class="notice" style="margin-top:12px;border-color:rgba(248,113,113,.4);background:rgba(248,113,113,.10)" hidden></div>
+        <div class="modal-actions"><button type="button" class="secondary-btn" id="acctLogin">Sign in</button><button type="submit" class="primary-btn" id="acctRegister">Create account</button></div>
+      </form>
+      <p style="color:var(--muted);font-size:12px;margin-top:12px">Your password is hashed with scrypt before it is stored, and the session lives in an httpOnly cookie that page scripts cannot read.</p>`);
+    const fail=m=>{const e=$('#acctErr');e.textContent=m;e.hidden=false};
+    const succeed=async user=>{
+      accountState.user=user;state.account.signedIn=true;save();
+      closeModal();refreshAccountSummary();
+      try{await pushSync();toast(`Welcome, ${user.name}. Your library is backed up.`,'success')}catch{toast('Signed in','success')}
+    };
+    $('#acctForm').onsubmit=async e=>{
+      e.preventDefault();
+      try{const r=await accountApi('register',{name:$('#acctName').value,email:$('#acctEmail').value,password:$('#acctPass').value});await succeed(r.user)}catch(err){fail(err.message)}
+    };
+    $('#acctLogin').onclick=async()=>{
+      try{const r=await accountApi('login',{email:$('#acctEmail').value,password:$('#acctPass').value});await succeed(r.user)}catch(err){fail(err.message)}
+    };
+  };
+  draw();
+}
+/* NOTIFICATIONS */
+/** Build real notifications from the reader's actual state, not placeholder copy. */
+function computeNotifications(){
+  const out=[],todayKey=today();
+  const readToday=state.readingDays.includes(todayKey);
+  const streakDays=streak();
+  if(!readToday)out.push({id:'read-today',icon:'▤',title:streakDays>0?`Keep your ${streakDays}-day streak alive`:'Read a chapter today',body:streakDays>0?'You have not read yet today. One chapter keeps the streak going.':'Open the Bible and read one chapter to start a streak.',route:'bible'});
+  if(!state.devotionalDone.includes(todayKey))out.push({id:'devotional',icon:'☼',title:"Today's devotional is ready",body:`${DEVOTIONAL.title} — ${DEVOTIONAL.scripture}`,route:'devotional'});
+  const active=Object.entries(state.planProgress||{}).find(([,p])=>p&&p.day&&!p.done);
+  if(active)out.push({id:'plan-'+active[0],icon:'◫',title:`${PLANS.find(x=>x.id===active[0])?.name||'Reading plan'} · day ${active[1].day}`,body:'Your plan has an unfinished day waiting for you.',route:'plans'});
+  if(orphanBookmarks().length)out.push({id:'orphans',icon:'⊕',title:`${orphanBookmarks().length} saved verse${orphanBookmarks().length===1?'':'s'} not in a collection`,body:'Group your saved verses so they are easier to teach from.',action:'collections'});
+  const noteCount=Object.keys(state.notes||{}).length;
+  if(noteCount)out.push({id:'notes',icon:'✎',title:`${noteCount} Scripture note${noteCount===1?'':'s'} saved`,body:'Your notes stay on this device unless you sync them.',route:'study'});
+  return out;
+}
+function unreadCount(){const seen=state.notifSeen||[];return computeNotifications().filter(n=>!seen.includes(n.id)).length}
+function openNotifications(){
+  const draw=()=>{
+    const list=computeNotifications(),seen=state.notifSeen||[];
+    const rows=list.length?list.map(n=>{
+      const isSeen=seen.includes(n.id);
+      return `<button class="notif${isSeen?' seen':''}" data-go="${n.route||''}" data-action="${n.action||''}" data-id="${n.id}">
+        <span class="notif-icon">${n.icon}</span>
+        <span class="notif-body"><strong>${esc(n.title)}</strong><small>${esc(n.body)}</small></span>
+        ${isSeen?'':'<span class="notif-dot" aria-label="new"></span>'}
+      </button>`}).join(''):'<p class="empty-hint">Nothing to report. You are up to date.</p>';
+    modal(`<div class="modal-head"><div><h2>Notifications</h2><p>Built from your reading, plan and saved verses.</p></div><button class="close-btn" data-close>×</button></div>
+      <div class="notif-list">${rows}</div>
+      <div class="modal-actions"><button class="secondary-btn" id="markAll">Mark all read</button><button class="secondary-btn" id="notifPerm">Enable device alerts</button></div>`);
+    $$('[data-go],[data-action]',modal).forEach(b=>b.onclick=()=>{
+      state.notifSeen=Array.from(new Set([...(state.notifSeen||[]),b.dataset.id]));save();
+      if(b.dataset.action==='collections'){closeModal();openCollections();return}
+      closeModal();updateNotifBadge();
+      if(b.dataset.go)navigate(b.dataset.go);
+    });
+    $('#markAll').onclick=()=>{state.notifSeen=computeNotifications().map(n=>n.id);save();draw();updateNotifBadge();toast('All caught up','success')};
+    $('#notifPerm').onclick=async()=>{
+      if(!('Notification' in window)){toast('This browser has no notification support','error');return}
+      const r=await Notification.requestPermission();
+      state.profile.notifications=r==='granted';save();
+      toast(r==='granted'?'Device alerts enabled':'Device alerts were not allowed',r==='granted'?'success':'');
+    };
+  };
+  draw();
+}
+function updateNotifBadge(){
+  const n=unreadCount(),btn=$('#notifBtn');
+  if(!btn)return;
+  btn.dataset.count=n;
+  btn.style.color=n?'var(--gold)':'';
+  btn.title=n?`${n} new notification${n===1?'':'s'}`:'Notifications';
+}
+/* COLLECTIONS */
+function collectionList(){return Object.values(state.collections||{}).sort((a,b)=>(b.created||'').localeCompare(a.created||''))}
+function createCollection(name){const clean=String(name||'').trim().slice(0,60);if(!clean)return null;const id='c'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);state.collections[id]={id,name:clean,refs:[],created:today()};save();return id}
+function renameCollection(id,name){const c=state.collections[id];const clean=String(name||'').trim().slice(0,60);if(!c||!clean)return;c.name=clean;save()}
+function deleteCollection(id){delete state.collections[id];save()}
+function addToCollection(id,ref){const c=state.collections[id];if(!c)return false;if(!c.refs.includes(ref))c.refs.push(ref);save();return true}
+function removeFromCollection(id,ref){const c=state.collections[id];if(!c)return;c.refs=c.refs.filter(r=>r!==ref);save()}
+/** Saved verses that do not belong to any collection yet. */
+function orphanBookmarks(){const out=[];for(const ref in state.bookmarks||{}){if(collectionList().some(c=>c.refs.includes(ref)))continue;out.push(ref)}return out}
+function openCollections(){
+  modal(`<div class="modal-head"><div><h2>Collections</h2><p>Group verses for study, sharing or a sermon series.</p></div><button class="close-btn" data-close>×</button></div>
+  <div class="field"><label>New collection</label><div class="pick-row-plain" style="display:flex;gap:8px;margin-top:6px"><input id="newCollName" placeholder="Sermon series, Gifts, Topical…" maxlength="60"/><button class="primary-btn" id="createColl">Create</button></div></div>
+  <div class="collections" id="collList" style="margin-top:18px"></div>`);
+  const draw=()=>{
+    const cur=collectionList();
+    const rows=cur.length?cur.map(c=>`<div class="coll-row" data-coll="${c.id}">
+        <div class="coll-main"><strong>${esc(c.name)}</strong><small>${c.refs.length} verse${c.refs.length===1?'':'s'}</small></div>
+        <button class="mini-btn" data-open="${c.id}">Open</button>
+        <button class="mini-btn danger" data-del="${c.id}">Delete</button>
+      </div>`).join(''):'<p class="empty-hint">No collections yet. Create one above to start grouping verses.</p>';
+    const orphans=orphanBookmarks();
+    const extra=orphans.length?`<p class="empty-hint">${orphans.length} saved verse${orphans.length===1?'':'s'} not yet in a collection.</p>`:'';
+    $('#collList').innerHTML=rows+extra;
+    $$('#collList [data-open]').forEach(b=>b.onclick=()=>openCollection(b.dataset.open));
+    $$('#collList [data-del]').forEach(b=>b.onclick=()=>{deleteCollection(b.dataset.del);draw();toast('Collection deleted')});
+  };
+  const doCreate=()=>{const id=createCollection($('#newCollName').value);if(!id){toast('Give the collection a name','error');return}$('#newCollName').value='';draw();toast('Collection created','success')};
+  $('#createColl').onclick=doCreate;
+  $('#newCollName').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();doCreate()}};
+  draw();
+}
+function openCollection(id){
+  const c=state.collections[id];if(!c)return;
+  const render=()=>{
+    const refs=(c.refs||[]).filter(r=>state.bookmarks[r]||state.notes[r]);
+    const items=refs.length?refs.map(ref=>{const b=state.bookmarks[ref]||{},n=state.notes[ref]||{};return `<article class="coll-item" data-ref="${esc(ref)}">
+        <div><strong>${esc(ref)}</strong><p>${esc(b.text||n.text||'—')}</p></div>
+        <button class="mini-btn danger" data-drop="${esc(ref)}">Remove</button>
+      </article>`}).join(''):'<p class="empty-hint">This collection is empty. From any verse choose <b>Collection</b> to add one.</p>';
+    modal(`<div class="modal-head"><div><h2>${esc(c.name)}</h2><p>${refs.length} verse${refs.length===1?'':'s'}</p></div><button class="close-btn" data-close>×</button></div>
+      <div class="field"><label>Rename</label><input id="collRename" value="${esc(c.name)}" maxlength="60"/></div>
+      <div class="coll-items" style="margin-top:16px">${items}</div>`);
+    $('#collRename').onchange=e=>{renameCollection(id,e.target.value);toast('Renamed','success')};
+    $$('[data-drop]',modal).forEach(b=>b.onclick=e=>{e.stopPropagation();removeFromCollection(id,b.dataset.drop);toast('Removed from collection');render()});
+    $$('[data-ref]',modal).forEach(a=>a.onclick=e=>{if(e.target.dataset.drop)return;closeModal();openReference(a.dataset.ref)});
+  };
+  render();
+}
+function openCollectionPicker(v){
+  const list=collectionList();
+  modal(`<div class="modal-head"><div><h2>Add to collection</h2><p>${esc(v.ref)}</p></div><button class="close-btn" data-close>×</button></div>
+    <div class="field"><label>Or create a new one</label><div style="display:flex;gap:8px;margin-top:6px"><input id="pickNew" placeholder="Collection name" maxlength="60"/><button class="primary-btn" id="pickCreate">Add</button></div></div>
+    <div style="margin-top:16px">${list.length?list.map(c=>`<button class="pick-row" data-pick="${c.id}"><strong>${esc(c.name)}</strong><small>${c.refs.length} verse${c.refs.length===1?'':'s'}</small></button>`).join(''):'<p class="empty-hint">No collections yet. Create one to group this verse.</p>'}</div>`);
+  const addTo=cid=>{addToCollection(cid,v.ref);closeModal();toast(`Added to ${state.collections[cid].name}`,'success')};
+  $$('[data-pick]',modal).forEach(b=>b.onclick=()=>addTo(b.dataset.pick));
+  const doCreate=()=>{const name=$('#pickNew').value.trim();if(!name){toast('Give it a name','error');return}const id=createCollection(name);addTo(id,v.ref);closeModal();toast(`Added to ${name}`,'success')};
+  $('#pickCreate').onclick=doCreate;
+  $('#pickNew').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();doCreate()}};
+}
 /* GLASS GUIDE */
 let guideActiveTab=null,guideQuery='',guideLastFocus=null;
 function guideTabsHTML(){if(!guideQuery.trim())return KBGuide.TABS.map(t=>`<button class="glass-tab${t.id===guideActiveTab?' on':''}" data-tab="${t.id}" role="tab" aria-selected="${t.id===guideActiveTab}">${esc(t.label)}</button>`).join('');const hits=KBGuide.filter(guideQuery);if(!hits.length)return '<span class="glass-empty">No matches</span>';return hits.map(t=>`<button class="glass-tab${t.id===guideActiveTab?' on':''}" data-tab="${t.id}" role="tab" aria-selected="${t.id===guideActiveTab}">${esc(t.label)}</button>`).join('')}
@@ -161,7 +365,7 @@ function openGuide(type){openGuidePopup(type==='vMix'?'vmix':'obs')}
 async function renderPresentation(){document.body.className='presentation-body';document.body.innerHTML=`<div class="presentation-stage royal" id="stage"><div class="presentation-status"></div><blockquote>Waiting for Scripture…</blockquote><cite>KINGDOM BIBLE</cite><div class="presentation-brand">KINGDOM BIBLE</div></div>`;const apply=p=>{if(!p)return;const s=$('#stage'),th=p.theme||'royal';s.className='presentation-stage '+th;const clear=th==='transparent';document.documentElement.classList.toggle('is-transparent',clear);document.body.classList.toggle('is-transparent',clear);const t=p.blank?'':String(p.text||'').trim();$('blockquote',s).textContent=t?`“${t}”`:'';$('cite',s).textContent=p.blank?'':`${p.ref||''} · ${TR[p.translation]||String(p.translation||'').toUpperCase()}`;$('.presentation-brand',s).textContent=p.church||'KINGDOM BIBLE'};if(window.KBLive){KBLive.subscribe(apply,{pollMs:2000});const first=await KBLive.get();if(first&&first.text)apply(first);return}try{const d=await(await fetch('/api/presentation')).json();if(d.text)apply(d)}catch{const x=localStorage.getItem('kingdomPresentation');if(x)apply(JSON.parse(x))}window.addEventListener('storage',e=>{if(e.key==='kingdomPresentation')apply(JSON.parse(e.newValue))});const bc=new BroadcastChannel('kingdom-presentation');bc.onmessage=e=>apply(e.data);try{const es=new EventSource('/api/presentation/events');es.onmessage=e=>apply(JSON.parse(e.data))}catch{}}
 
 /* PROFILE */
-function renderProfile(){setTitle('Profile & Settings');const saved=Object.keys(state.bookmarks);$('#main').innerHTML=`<div class="page"><div class="card profile-header"><div class="avatar">${esc(state.profile.name[0]||'G')}</div><div style="flex:1"><h1>${esc(state.profile.name)}</h1><p>Local profile · Personal data stored on this device</p></div><button class="secondary-btn" id="editProfile">Edit profile</button></div><div class="profile-layout" style="margin-top:18px"><nav class="card settings-nav"><button class="active">Overview</button><button>Appearance</button><button>Reading</button><button>Privacy</button><button>Data</button></nav><section class="card settings-content"><div class="eyebrow">YOUR LIBRARY</div><div class="home-stats" style="margin:15px 0 25px"><div class="stat-card"><div><strong>${state.chaptersRead.length}</strong><small>chapters</small></div></div><div class="stat-card"><div><strong>${saved.length}</strong><small>saved</small></div></div><div class="stat-card"><div><strong>${Object.keys(state.highlights).length}</strong><small>highlights</small></div></div><div class="stat-card"><div><strong>${Object.keys(state.notes).length}</strong><small>notes</small></div></div></div><div class="eyebrow">APPEARANCE</div><div class="setting-row"><div><h3>Theme</h3><p>Choose a comfortable reading environment.</p></div><div class="theme-options">${['light','dark','sepia','amoled','contrast'].map(t=>`<button class="theme-swatch ${state.profile.theme===t?'active':''}" data-theme-pick="${t}">${t[0].toUpperCase()+t.slice(1)}</button>`).join('')}</div></div><div class="setting-row"><div><h3>Preferred translation</h3><p>Five public-domain editions: KJV, YLT, ASV, WEB and Basic English.</p></div><select class="reader-select" id="profileTr">${translationOptions(state.profile.translation)}</select></div><div class="setting-row"><div><h3>Install KINGDOM BIBLE</h3><p>Offline access and an app-like home-screen experience.</p></div><button class="secondary-btn" id="profileInstall">Install</button></div><div class="eyebrow" style="margin-top:25px">PRIVACY & DATA</div><div class="setting-row"><div><h3>Local-first privacy</h3><p>Notes, prayers, bookmarks, and history remain in this browser.</p></div><span class="pill"><span class="status-dot"></span> Private</span></div><div class="setting-row"><div><h3>Export personal data</h3><p>Download your profile data as JSON.</p></div><button class="secondary-btn" id="exportData">Export</button></div><div class="setting-row"><div><h3>Cloud account & sync</h3><p>Secure multi-device accounts are not connected in this local build.</p></div><span class="pill">Coming Soon</span></div><div class="setting-row"><div><h3>Clear local data</h3><p>Permanently remove personal activity from this browser.</p></div><button class="danger-btn small-btn" id="clearData">Clear</button></div></section></div></div>`;$('#editProfile').onclick=openEditProfile;$$('[data-theme-pick]').forEach(b=>b.onclick=()=>{state.profile.theme=b.dataset.themePick;save();renderProfile()});$('#profileTr').onchange=e=>{state.profile.translation=e.target.value;state.reader.translation=e.target.value;save();toast('Preferred translation updated')};$('#profileInstall').onclick=installApp;$('#exportData').onclick=exportData;$('#clearData').onclick=confirmClear}
+function renderProfile(){setTitle('Profile & Settings');const saved=Object.keys(state.bookmarks);$('#main').innerHTML=`<div class="page"><div class="card profile-header"><div class="avatar">${esc(state.profile.name[0]||'G')}</div><div style="flex:1"><h1>${esc(state.profile.name)}</h1><p>Local profile · Personal data stored on this device</p></div><button class="secondary-btn" id="editProfile">Edit profile</button></div><div class="profile-layout" style="margin-top:18px"><nav class="card settings-nav"><button class="active">Overview</button><button>Appearance</button><button>Reading</button><button>Privacy</button><button>Data</button></nav><section class="card settings-content"><div class="eyebrow">YOUR LIBRARY</div><div class="home-stats" style="margin:15px 0 25px"><div class="stat-card"><div><strong>${state.chaptersRead.length}</strong><small>chapters</small></div></div><div class="stat-card"><div><strong>${saved.length}</strong><small>saved</small></div></div><div class="stat-card"><div><strong>${Object.keys(state.highlights).length}</strong><small>highlights</small></div></div><div class="stat-card"><div><strong>${Object.keys(state.notes).length}</strong><small>notes</small></div></div></div><div class="eyebrow">APPEARANCE</div><div class="setting-row"><div><h3>Theme</h3><p>Choose a comfortable reading environment.</p></div><div class="theme-options">${['light','dark','sepia','amoled','contrast'].map(t=>`<button class="theme-swatch ${state.profile.theme===t?'active':''}" data-theme-pick="${t}">${t[0].toUpperCase()+t.slice(1)}</button>`).join('')}</div></div><div class="setting-row"><div><h3>Preferred translation</h3><p>Five public-domain editions: KJV, YLT, ASV, WEB and Basic English.</p></div><select class="reader-select" id="profileTr">${translationOptions(state.profile.translation)}</select></div><div class="setting-row"><div><h3>Install KINGDOM BIBLE</h3><p>Offline access and an app-like home-screen experience.</p></div><button class="secondary-btn" id="profileInstall">Install</button></div><div class="eyebrow" style="margin-top:25px">PRIVACY & DATA</div><div class="setting-row"><div><h3>Local-first privacy</h3><p>Notes, prayers, bookmarks, and history remain in this browser.</p></div><span class="pill"><span class="status-dot"></span> Private</span></div><div class="setting-row"><div><h3>Export personal data</h3><p>Download your profile data as JSON.</p></div><button class="secondary-btn" id="exportData">Export</button></div><div class="setting-row"><div><h3>Collections</h3><p>${collectionList().length} collection${collectionList().length===1?'':'s'} · group verses for study or a series.</p></div><button class="secondary-btn" id="openCollections">Manage</button></div><div class="setting-row"><div><h3>Cloud account & sync</h3><p id="accountSummary">Checking account service…</p></div><button class="secondary-btn" id="openAccount">Manage</button></div><div class="setting-row"><div><h3>Clear local data</h3><p>Permanently remove personal activity from this browser.</p></div><button class="danger-btn small-btn" id="clearData">Clear</button></div></section></div></div>`;$('#editProfile').onclick=openEditProfile;$$('[data-theme-pick]').forEach(b=>b.onclick=()=>{state.profile.theme=b.dataset.themePick;save();renderProfile()});$('#profileTr').onchange=e=>{state.profile.translation=e.target.value;state.reader.translation=e.target.value;save();toast('Preferred translation updated')};$('#profileInstall').onclick=installApp;$('#exportData').onclick=exportData;$('#openCollections').onclick=openCollections;$('#openAccount').onclick=openAccount;$('#clearData').onclick=confirmClear;refreshAccountSummary()}
 function openEditProfile(){modal(`<div class="modal-head"><div><h2>Edit profile</h2><p>Personalize your local experience.</p></div><button class="close-btn" data-close>×</button></div><div class="form-grid"><div class="field full"><label>Name</label><input id="profileName" value="${esc(state.profile.name)}"></div><div class="field"><label>Reading time</label><input type="time" id="profileTime" value="${state.profile.readingTime}"></div><div class="field"><label>Translation</label><select id="editTr">${translationOptions(state.profile.translation)}</select></div></div><div class="modal-actions"><button class="primary-btn" id="saveProfile">Save profile</button></div>`);$('#saveProfile').onclick=()=>{state.profile.name=$('#profileName').value.trim()||'Reader';state.profile.readingTime=$('#profileTime').value;state.profile.translation=$('#editTr').value;save();closeModal();renderProfile();toast('Profile updated','success')}}
 function exportData(){const blob=new Blob([JSON.stringify({...state,exportedAt:new Date().toISOString(),app:'KINGDOM BIBLE v1.0.0'},null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`kingdom-bible-data-${today()}.json`;a.click();URL.revokeObjectURL(a.href);toast('Personal data exported')}
 function confirmClear(){modal(`<div class="modal-head"><div><h2>Clear local data?</h2><p>This cannot be undone.</p></div><button class="close-btn" data-close>×</button></div><p>This permanently removes bookmarks, notes, highlights, prayer entries, reading progress, and settings from this browser.</p><div class="modal-actions"><button class="secondary-btn" data-close>Cancel</button><button class="danger-btn" id="confirmClear">Clear everything</button></div>`);$('#confirmClear').onclick=()=>{localStorage.removeItem(LS);state=structuredClone(DEFAULT);save();closeModal();navigate('home');toast('Local data cleared')}}

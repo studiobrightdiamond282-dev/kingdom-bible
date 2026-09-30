@@ -23,6 +23,37 @@ main{margin-left:var(--side);padding:calc(var(--top) + 28px) clamp(20px,3vw,48px
 .ref-choices button{justify-content:space-between}
 .ref-choices button span{color:var(--muted);font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase}
 @media(max-width:580px){.ref-hint{font-size:11px}}
+/* ---------------------------------------------------------- */
+/* Collections & notifications                                */
+/* ---------------------------------------------------------- */
+.coll-row{display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid var(--line)}
+.coll-row:last-child{border-bottom:0}
+.coll-main{flex:1;min-width:0}
+.coll-main strong{display:block;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.coll-main small{color:var(--muted);font-size:11.5px}
+.mini-btn{border:1px solid var(--line);background:var(--surface2);color:var(--ink);border-radius:9px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
+.mini-btn:hover{background:var(--surface);border-color:var(--gold)}
+.mini-btn.danger{color:#fca5a5}
+.mini-btn.danger:hover{border-color:#f87171;background:rgba(248,113,113,.12)}
+.coll-item{display:flex;align-items:flex-start;gap:10px;padding:13px 0;border-bottom:1px solid var(--line);cursor:pointer}
+.coll-item:last-child{border-bottom:0}
+.coll-item>div{flex:1;min-width:0}
+.coll-item strong{display:block;font-size:13px;color:var(--gold)}
+.coll-item p{margin:5px 0 0;font:15px/1.6 var(--scripture);color:var(--ink)}
+.pick-row{display:flex;width:100%;align-items:center;justify-content:space-between;gap:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:12px;padding:13px 14px;margin-bottom:8px;cursor:pointer;text-align:left}
+.pick-row:hover{border-color:var(--gold);background:var(--surface2)}
+.pick-row strong{font-size:14px}
+.pick-row small{color:var(--muted);font-size:11.5px;white-space:nowrap}
+.empty-hint{color:var(--muted);font-size:13px;padding:10px 0;margin:0}
+.notif{display:flex;align-items:flex-start;gap:12px;width:100%;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:14px;padding:13px 14px;margin-bottom:9px;cursor:pointer;text-align:left}
+.notif:hover{border-color:var(--gold)}
+.notif.seen{opacity:.55}
+.notif-icon{width:36px;height:36px;flex:none;display:grid;place-items:center;border-radius:11px;background:var(--surface2);color:var(--gold);font-size:16px}
+.notif-body{flex:1;min-width:0}
+.notif-body strong{display:block;font-size:13.5px;margin-bottom:3px}
+.notif-body small{display:block;color:var(--muted);font-size:12px;line-height:1.5}
+.notif-dot{width:9px;height:9px;flex:none;margin-top:5px;border-radius:50%;background:var(--gold)}
+
 
 /* ---------------------------------------------------------- */
 /* Glass guide (Auro-style frosted popup)                      */
