@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 'use strict';
-const http=require('http'),fs=require('fs'),path=require('path'),crypto=require('crypto');
+const http=require('http'),fs=require('fs'),path=require('path'),crypto=require('crypto'),os=require('os');
 const ROOT=path.join(__dirname,'public'),PORT=Number(process.env.PORT||4173),HOST='0.0.0.0';
+/** LAN addresses so a phone on the same Wi-Fi can find the remote. */
+function lanAddresses(){const out=[];for(const list of Object.values(os.networkInterfaces()))for(const n of list||[])if(n.family==='IPv4'&&!n.internal)out.push(n.address);return out}
 const MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.png':'image/png','.svg':'image/svg+xml','.txt':'text/plain; charset=utf-8','.xml':'application/xml; charset=utf-8'};
 let presentation={};const listeners=new Set(),hits=new Map();
 function headers(res,type='application/json; charset=utf-8'){res.setHeader('Content-Type',type);res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','strict-origin-when-cross-origin');res.setHeader('X-Frame-Options','SAMEORIGIN');res.setHeader('Permissions-Policy','camera=(), microphone=(), geolocation=()');res.setHeader('Content-Security-Policy',"default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; worker-src 'self'; frame-ancestors 'self' *; base-uri 'self'; form-action 'self'")}
@@ -10,12 +12,13 @@ function rate(req,res,limit=100){const ip=req.socket.remoteAddress||'local',now=
 function body(req){return new Promise((resolve,reject)=>{let s='';req.on('data',c=>{s+=c;if(s.length>100000){reject(new Error('Payload too large'));req.destroy()}});req.on('end',()=>{try{resolve(JSON.parse(s||'{}'))}catch{reject(new Error('Invalid JSON'))}})})}
 function safePresentation(x){if(!x||typeof x!=='object')return null;const s=k=>typeof x[k]==='string'?x[k].slice(0,k==='text'?3000:150):'';return{text:s('text'),ref:s('ref'),translation:s('translation'),theme:['royal','dark','light','transparent'].includes(x.theme)?x.theme:'royal',church:s('church'),blank:!!x.blank,ts:Date.now()}}
 const server=http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://local');if(!rate(req,res))return;
-  if(u.pathname==='/health'||u.pathname==='/api/health')return json(res,200,{status:'healthy',application:'operational',database:'local-first',presentation:'operational',version:'1.0.0',time:new Date().toISOString()});
+  if(u.pathname==='/health'||u.pathname==='/api/health')return json(res,200,{status:'healthy',application:'operational',database:'local-first',presentation:'shared',version:'1.0.0',time:new Date().toISOString()});
+  if(u.pathname==='/net')return json(res,200,{port:PORT,addresses:lanAddresses(),remoteUrls:lanAddresses().map(a=>`http://${a}:${PORT}/remote`),displayUrls:lanAddresses().map(a=>`http://${a}:${PORT}/present`)});
   if(u.pathname==='/api/presentation/events'&&req.method==='GET'){res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive','X-Accel-Buffering':'no'});res.write(`data: ${JSON.stringify(presentation)}\n\n`);listeners.add(res);req.on('close',()=>listeners.delete(res));return}
   if(u.pathname==='/api/presentation'&&req.method==='GET')return json(res,200,presentation);
   if(u.pathname==='/api/presentation'&&req.method==='POST'){const clean=safePresentation(await body(req));if(!clean)return json(res,400,{error:'Invalid presentation payload'});presentation=clean;for(const client of listeners)client.write(`data: ${JSON.stringify(clean)}\n\n`);return json(res,200,{ok:true,updatedAt:clean.ts})}
   let file=u.pathname==='/status'?'/status.html':u.pathname==='/remote'?'/remote.html':u.pathname==='/'||u.pathname==='/present'||u.pathname==='/control'?'/index.html':u.pathname;file=decodeURIComponent(file);const resolved=path.resolve(ROOT,'.'+file);if(!resolved.startsWith(ROOT))return json(res,403,{error:'Forbidden'});fs.stat(resolved,(err,st)=>{if(err||!st.isFile()){if(!path.extname(file)){return serve(path.join(ROOT,'index.html'),res)}json(res,404,{error:'Not found'});return}serve(resolved,res)})
  }catch(e){json(res,e.message==='Payload too large'?413:400,{error:e.message})}});
 function serve(file,res){const ext=path.extname(file);headers(res,MIME[ext]||'application/octet-stream');res.setHeader('Cache-Control',file.includes('/data/')?'public, max-age=86400, immutable':ext==='.html'?'no-cache':'public, max-age=3600');fs.createReadStream(file).on('error',()=>json(res,500,{error:'Read error'})).pipe(res)}
-server.listen(PORT,HOST,()=>console.log(`KINGDOM BIBLE running on http://${HOST}:${PORT}`));
+server.listen(PORT,HOST,()=>{const lan=lanAddresses();console.log(`KINGDOM BIBLE running on http://${HOST}:${PORT}`);console.log(`  local:  http://localhost:${PORT}`);if(lan.length){console.log('  phone:  '+lan.map(a=>`http://${a}:${PORT}/remote`).join('\n          '));console.log('  display:'+lan.map(a=>` http://${a}:${PORT}/present`).join('\n          '))}else console.log('  (no LAN address found — connect a network for phone remote)')});
 function shutdown(){for(const x of listeners)x.end();server.close(()=>process.exit(0))}process.on('SIGTERM',shutdown);process.on('SIGINT',shutdown);

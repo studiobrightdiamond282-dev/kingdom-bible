@@ -130,6 +130,21 @@ async function main() {
     assert.equal(shownBlank.blank, true);
     console.log('  ok  blank screen propagated to the display');
 
+    // LAN discovery, so a volunteer knows which address to open on the phone.
+    const net = await (await fetch(`${BASE}/net`)).json();
+    assert.strictEqual(net.port, PORT);
+    assert.ok(Array.isArray(net.remoteUrls) && Array.isArray(net.displayUrls));
+    net.remoteUrls.forEach((u) => assert.ok(u.endsWith('/remote'), `bad remote url ${u}`));
+    net.displayUrls.forEach((u) => assert.ok(u.endsWith('/present'), `bad display url ${u}`));
+    assert.strictEqual(net.remoteUrls.length, net.displayUrls.length);
+    console.log(`  ok  /net exposes ${net.remoteUrls.length} LAN address(es) for the phone remote`);
+
+    // The self-hosted path is the reliable cross-device setup, so the local
+    // server must report its presentation state as shared.
+    const h = await (await fetch(`${BASE}/health`)).json();
+    assert.strictEqual(h.presentation, 'shared');
+    console.log('  ok  self-hosted server reports shared presentation state');
+
     console.log('\nLive remote end-to-end passed.');
   } finally {
     stop();
