@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#07142f" />
+  <meta name="description" content="KINGDOM BIBLE — Read, study, understand, and live the Word." />
+  <meta property="og:title" content="KINGDOM BIBLE" />
+  <meta property="og:description" content="The complete Bible reading, study, prayer and ministry platform." />
+  <meta property="og:image" content="/assets/logo-hero.png" />
+  <title>KINGDOM BIBLE</title>
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="icon" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/icons/icon-180.png" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div id="offlineBar" class="offline-bar" hidden>You’re offline. Saved Bible content and personal data remain available.</div>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Primary navigation">
+      <button class="brand" data-route="home" aria-label="Kingdom Bible home">
+        <img src="/assets/logo.png" alt="" />
+        <span><strong>KINGDOM</strong><small>BIBLE</small></span>
+      </button>
+      <nav id="desktopNav" class="side-nav"></nav>
+      <div class="side-footer">
+        <button class="install-card" id="installBtn" hidden><span class="icon">⇩</span><span><strong>Install app</strong><small>Offline access & faster reading</small></span></button>
+        <div class="profile-chip"><div id="sideAvatar" class="avatar">S</div><span><strong id="sideName">Stanley</strong><small>Local profile</small></span><button class="icon-btn" data-route="profile" aria-label="Profile settings">•••</button></div>
+      </div>
+    </aside>
+
+    <header class="topbar">
+      <button class="mobile-brand" data-route="home"><img src="/assets/logo.png" alt="Kingdom Bible" /></button>
+      <div class="crumb"><span id="pageEyebrow">KINGDOM BIBLE</span><strong id="pageTitle">Home</strong></div>
+      <button id="commandBtn" class="command-trigger" aria-label="Open command search"><span>⌕</span><span>Search Scripture & tools</span><kbd>⌘ K</kbd></button>
+      <div class="top-actions">
+        <button id="themeBtn" class="icon-btn" aria-label="Change appearance">◐</button>
+        <button id="notifBtn" class="icon-btn" aria-label="Notifications">♢</button>
+        <button class="avatar top-avatar" data-route="profile" aria-label="Open profile">S</button>
+      </div>
+    </header>
+
+    <main id="main" tabindex="-1"><div class="loading-screen"><img src="/assets/logo.png" alt=""/><span></span><p>Preparing the Word…</p></div></main>
+
+    <nav id="mobileNav" class="mobile-nav" aria-label="Mobile navigation"></nav>
+    <button id="quickBtn" class="quick-fab" aria-label="Quick actions">+</button>
+  </div>
+
+  <div id="modalRoot"></div>
+  <div id="toastRoot" class="toast-root" aria-live="polite"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>
