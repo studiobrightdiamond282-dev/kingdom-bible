@@ -28,6 +28,60 @@ A premium, local-first Progressive Web App for Bible reading, Scripture study, p
 - Scripture memorization practice
 - KINGDOM AI local Scripture study assistant with transparent safety boundaries
 - Ministry Mode with live presentation screen, SSE/BroadcastChannel synchronization, themes, service timer, vMix and OBS guides
+## Translations included
+
+Five public-domain translations ship with the app. They are all **free to redistribute**:
+
+| Key | Version | Year | Notes |
+| --- | --- | --- | --- |
+| `kjv` | King James Version | 1611 | Default |
+| `ylt` | Young’s Literal Translation | 1898 | Closest to the original languages |
+| `asv` | American Standard Version | 1901 | |
+| `web` | World English Bible | 2020 | |
+| `bbe` | Bible in Basic English | 1949/1964 | Plain modern English |
+
+### Translations that are deliberately NOT included
+
+NIV, NKJV, ESV, NASB, NLT, CEV, the Amplified Bible and similar modern versions are
+**copyrighted, commercial translations**. Bundling their text in a downloadable app
+requires a licence from the rights holder, and copying it from a website is
+infringement. They are not shipped here, and the app does not pretend otherwise.
+
+If you hold a licence, add the text through the same pipeline described below and
+register the key in `public/app.js` (`TR`) and `tests/smoke.js`.
+
+### Verse alignment (important)
+
+The app addresses verses **positionally**, so every translation must use the same
+verse numbering as the KJV or a reference would resolve to the wrong text. The build
+refuses to write a translation that is not aligned:
+
+```bash
+node scripts/add-translation.js path/to/source.json <key>
+```
+
+The script aligns to KJV, then validates 66 books, exact KJV chapter/verse shape,
+known-verse spot checks, psalm superscriptions, and documented textual gaps before
+writing a single byte. Every adjustment is an explicit rule in the `CATALOG` at the
+top of the script, each with a `why`.
+
+Two real alignment problems were found and fixed this way:
+
+- **BBE** gives the Psalm 76 superscription its own verse, splits 3 John 1:14, and
+  prefixes 115 psalm verses with the superscription inline.
+- **WEB** (pre-existing) placed the Romans doxology at the end of Romans 14 instead
+  of Romans 16, so `Romans 16:25` rendered empty and Romans 14 was three verses long.
+  `scripts/fix-web-versification.js` moves it to match KJV, ASV, YLT, BBE and the
+  TSK cross-reference dataset.
+
+### Textual gaps
+
+Some verses exist in the KJV numbering but are absent from the Textus Receptus
+behind the ASV and WEB (Matthew 17:21, Mark 9:44, Acts 8:37, and others). Those
+slots are intentionally blank so numbering stays aligned. They are listed in
+`scripts/textual-gaps.js`, and the tests fail if a translation's blank slots do not
+match that list exactly.
+
 ## Hosting architecture
 
 The app is local-first, so the whole product is static and runs in the browser. The only server-side feature is the Ministry Mode presentation broadcast, which is a separate concern from the Bible data.
