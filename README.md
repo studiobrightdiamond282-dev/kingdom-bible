@@ -4,6 +4,17 @@
 
 A premium, local-first Progressive Web App for Bible reading, Scripture study, prayer journaling, reading plans, memorization, and professional church Scripture presentation.
 
+## Live sites
+
+| What | URL |
+| --- | --- |
+| **Live app (Vercel)** | https://kingdom-bible-deploy.vercel.app |
+| Source code (GitHub) | https://github.com/studiobrightdiamond282-dev/kingdom-bible |
+| Audience display | https://kingdom-bible-deploy.vercel.app/present |
+| Service status | https://kingdom-bible-deploy.vercel.app/status |
+| Health check | https://kingdom-bible-deploy.vercel.app/health |
+
+
 ## Included in v1.0
 
 - Complete 66-book Bible reader with KJV, ASV, and WEB public-domain translations
@@ -17,6 +28,39 @@ A premium, local-first Progressive Web App for Bible reading, Scripture study, p
 - Scripture memorization practice
 - KINGDOM AI local Scripture study assistant with transparent safety boundaries
 - Ministry Mode with live presentation screen, SSE/BroadcastChannel synchronization, themes, service timer, vMix and OBS guides
+## Hosting architecture
+
+The app is local-first, so the whole product is static and runs in the browser. The only server-side feature is the Ministry Mode presentation broadcast, which is a separate concern from the Bible data.
+
+```
+public/     the entire PWA — HTML, CSS, app.js, service worker, and ~30 MB of Bible data
+api/        Vercel serverless functions
+lib/        shared, dependency-free helpers (security headers + payload store)
+```
+
+`server.js` is a plain `http.createServer` that cannot run on serverless platforms, so Vercel and Netlify serve `public/` directly and expose the same three endpoints as functions:
+
+| Route | Purpose |
+| --- | --- |
+| `GET /health` | Service health, no secrets or stack traces |
+| `GET /api/presentation` | Current live Scripture payload |
+| `POST /api/presentation` | Update the live payload (validated and length-bounded) |
+| `GET /api/presentation/events` | Server-sent updates for the audience display |
+
+The security headers in `vercel.json` and `netlify.toml` are identical to the ones `server.js` sets, including the same Content-Security-Policy.
+
+### Shared presentation state
+
+By default the live payload is held in the function's memory, which is enough for a single instance. To keep the audience display in sync across regions and cold starts, attach a Vercel KV or Upstash Redis store:
+
+| Variable | Purpose |
+| --- | --- |
+| `UPSTASH_REDIS_REST_URL` | Redis REST endpoint |
+| `UPSTASH_REDIS_REST_TOKEN` | Redis REST token |
+
+The app degrades safely without them. `app.js` already mirrors every update through `localStorage`, the `storage` event, and `BroadcastChannel`, so the presenter and audience windows on the same device stay in sync even with no server at all. The event stream also sends the current payload as its first frame, so a display that connects late is never blank, and each function stops before the platform's duration cap and lets the browser reconnect.
+
+
 - Responsive desktop, tablet, mobile, projector and 16:9 display layouts
 - Light, dark, sepia, AMOLED, and high-contrast themes
 - Installable PWA, runtime caching, offline fallback, accessible keyboard/focus behavior
