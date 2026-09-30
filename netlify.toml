@@ -37,6 +37,11 @@
   status = 200
 
 [[redirects]]
+  from = "/remote"
+  to = "/remote.html"
+  status = 200
+
+[[redirects]]
   from = "/present"
   to = "/index.html"
   status = 200

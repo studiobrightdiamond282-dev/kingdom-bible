@@ -82,6 +82,71 @@ slots are intentionally blank so numbering stays aligned. They are listed in
 `scripts/textual-gaps.js`, and the tests fail if a translation's blank slots do not
 match that list exactly.
 
+## Live remote (phone → OBS / vMix / projector)
+
+Ministry Mode has a dedicated phone remote at **`/remote`**. Open it on your
+phone, and the audience display follows whatever you send.
+
+### Setup
+
+1. On the computer running OBS or vMix, open **Ministry Mode → Phone remote** to
+   get the URL, or go to `/remote` directly.
+2. On your phone (same Wi-Fi), open that URL and send a passage.
+3. In OBS: **Sources → + → Browser**, paste the browser-source URL
+   (`<your-site>/present`), set **1920 × 1080**, tick *Shutdown source when not
+   visible* off so it keeps updating.
+4. In vMix: **Add Input → Web Browser**, same URL, 1920 × 1080.
+
+### What the remote gives you
+
+| Control | What it does |
+| --- | --- |
+| **NEXT VERSE** | The big gold button. Advances one verse. |
+| **PREVIOUS** | Steps back. |
+| Block size 1–10 | **Passage mode.** Send John 3:16-18, press NEXT, and it advances to 3:19-21 — holding the same block instead of creeping one verse. |
+| Reference box | Loose input works here too: `lk 3 23`, `jhn 3:16`, `1jhn 3 16`. |
+| Translation | Switches the live text without touching the display. |
+| Theme | Royal, Black, White, or **Transparent** for OBS overlay capture. |
+| Church / ministry | Name shown on the display. |
+| Blank screen | Clears the audience screen between points. |
+| Service timer | Elapsed service clock. |
+| Copy display URL | Puts the browser-source URL on the clipboard. |
+
+The remote also keeps the screen awake, gives haptic feedback on each press, and
+adopts whatever is already on the display when you open it, so it never starts
+out of step.
+
+### How the remote talks to the display
+
+`public/live-sync.js` carries every update over four channels at once, so a
+message gets through whichever one is available:
+
+1. `localStorage` + the `storage` event — other tabs on the same device
+2. `BroadcastChannel` — instant between tabs
+3. `POST /api/presentation` — the server, for a second device
+4. `GET` polling every 2 s on the display — a safety net where the event stream
+   is time-boxed, which serverless hosts do
+
+### Getting a second device to work reliably
+
+Same device, same browser, or a self-hosted `npm start` on the presenting
+computer (one Node process, so the state is always shared) all work with **no
+configuration**.
+
+For the hosted site, a phone and the display are separate devices, so the live
+payload has to live somewhere both can reach. Set:
+
+| Variable | Purpose |
+| --- | --- |
+| `UPSTASH_REDIS_REST_URL` | Redis REST endpoint |
+| `UPSTASH_REDIS_REST_TOKEN` | Redis REST token |
+
+Without it the hosted version still works between tabs on one machine, and a
+phone remote will show the connection dot but may not reach the display. For a
+fixed installation, running `npm start` on the presenting computer and pointing
+OBS at `http://localhost:4173/present` is the most reliable setup, because the
+phone and display then talk to one real server.
+
 ## Hosting architecture
 
 The app is local-first, so the whole product is static and runs in the browser. The only server-side feature is the Ministry Mode presentation broadcast, which is a separate concern from the Bible data.

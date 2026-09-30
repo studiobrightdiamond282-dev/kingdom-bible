@@ -16,6 +16,7 @@
     { "source": "/api/presentation", "destination": "/api/presentation" },
     { "source": "/api/presentation/events", "destination": "/api/presentation-events" },
     { "source": "/status", "destination": "/status.html" },
+    { "source": "/remote", "destination": "/remote.html" },
     { "source": "/present", "destination": "/index.html" },
     { "source": "/control", "destination": "/index.html" },
     { "source": "/((?!api/|assets/|data/|icons/|.*\\.).*)", "destination": "/index.html" }
