@@ -1,6 +1,6 @@
 const VERSION='kingdom-bible-v1.0.0';
 const SHELL=[
-  '/', '/index.html','/styles.css','/app.js','/search-worker.js','/offline.html','/manifest.json','/favicon.png',
+  '/', '/index.html','/styles.css','/app.js','/ref-parser.js','/search-worker.js','/offline.html','/manifest.json','/favicon.png',
   '/assets/logo.png','/assets/logo-hero.png','/icons/icon-192.png','/icons/icon-512.png','/data/books.json',
   '/data/bibles/kjv/44.json','/data/bibles/kjv/42.json','/data/bibles/kjv/18.json'
 ];
