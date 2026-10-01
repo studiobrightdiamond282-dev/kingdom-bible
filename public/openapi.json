@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "KINGDOM BIBLE Local API",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "description": "Local-first ministry hub: LAN discovery, service-code pairing, server-side Scripture resolution and live presentation streaming. Every mutating route requires the service code; nothing leaves the local machine."
   },
   "paths": {

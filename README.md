@@ -176,13 +176,46 @@ Never place provider secrets in browser code. Use the names in `.env.example` on
 `GET /health` returns service status without secrets or stack traces:
 
 ```json
-{"ok":true,"app":"KINGDOM BIBLE","version":"1.1.0","presentation":"operational",
+{"ok":true,"app":"KINGDOM BIBLE","version":"1.1.1","presentation":"operational",
  "sessionActive":true,"listeners":1,"uptime":412,"serverTime":1757404800000}
 ```
 
 The service **code is never returned** from `/health`, `/api/network` or `/api/state` — only
 from routes authenticated with the code itself. Otherwise anyone on the church Wi-Fi could
 read the pairing code out of a discovery probe and hijack the projector.
+
+## Hub detection (why the website cannot run a service)
+
+The phone remote, the service code, the SSE stream and server-side verse resolution all live
+in `server.js`. A static host such as Vercel serves `public/` and nothing else, so the
+ministry controls genuinely do not exist there.
+
+`public/hub-probe.js` decides which world the page is in, and the app renders three honest
+states instead of pretending:
+
+| State | When | What the presenter sees |
+| --- | --- | --- |
+| `online` | `/health` returns real JSON stamped `app: "KINGDOM BIBLE"` | Service code, scannable QR, LAN address, green **Live** |
+| `static` | Host answers, but there is no hub (Vercel) | Instructions to run `npm start`, plus **Check again** |
+| `offline` | Nothing answers (hub stopped) | The same, worded for a local page |
+
+**A status code is never treated as proof.** Vercel answers `GET /health` with **200
+`text/html`** (the SPA rewrite catches every unknown path) and `404` on `/api/*`, so a naive
+`res.ok` check would report a dead hub as live. `hub-probe.js` requires a JSON body carrying
+this application's marker, and the phone remote and `/status` use the same rule.
+
+The card never renders a blank QR canvas, a dashed `------` code or a green **Live** pill
+without a real hub. **Check again** re-probes in place, so once `npm start` is running the
+card flips to live without a page reload — no need to reload the phone mid-service.
+
+Presenter control still works without a hub: Previous/Next walk the canon locally from the
+bundled data, crossing book and chapter boundaries exactly like the server does.
+
+### Pairing stability
+
+`ensureSession()` retires a saved service code **only** on an explicit `401`. A dropped
+request or a Wi-Fi blip is not proof the code is stale, and rotating it would orphan every
+paired phone plus any vMix input that is mid-service.
 
 ## Keyboard shortcuts
 
@@ -193,5 +226,5 @@ read the pairing code out of a discovery probe and hijack the projector.
 
 ## Version
 
-KINGDOM BIBLE v1.1.0 — `package.json`, `server.js` and the service-worker cache version are
+KINGDOM BIBLE v1.1.1 — `package.json`, `server.js` and the service-worker cache version are
 kept in sync, and a smoke test fails the build if they drift.

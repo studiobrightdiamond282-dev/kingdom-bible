@@ -4,7 +4,7 @@
 const http=require('http'),fs=require('fs'),path=require('path'),crypto=require('crypto'),os=require('os');
 const ROOT=path.join(__dirname,'public'),DATA=path.join(__dirname,'data');
 const PORT=Number(process.env.PORT||4173),HOST='0.0.0.0';
-const APP='KINGDOM BIBLE',VERSION='1.1.0';
+const APP='KINGDOM BIBLE',VERSION='1.1.1';
 const MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.png':'image/png','.svg':'image/svg+xml','.txt':'text/plain; charset=utf-8','.xml':'application/xml; charset=utf-8'};
 const THEMES=['royal','dark','light','transparent','sunset','noir'];
 const TRANSLATIONS=['kjv','asv','web'];

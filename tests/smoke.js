@@ -10,12 +10,18 @@ for(const tr of ['kjv','asv','web']){const d=JSON.parse(fs.readFileSync(path.joi
 const kjv=JSON.parse(fs.readFileSync(path.join(pub,'data/bible_kjv.json')));assert.equal(kjv.books.flat(2).length,31102);assert(kjv.books[0][0][0].startsWith('In the beginning'));
 const x=JSON.parse(fs.readFileSync(path.join(pub,'data/xrefs/22.json')));assert(x['Isaiah 53:5']?.some(r=>r.startsWith('1 Peter')));
 const html=fs.readFileSync(path.join(pub,'index.html'),'utf8'),app=fs.readFileSync(path.join(pub,'app.js'),'utf8');assert(html.includes('KINGDOM BIBLE'));assert(app.includes('renderBible'));assert(app.includes('renderMinistry'));
+const swSrc0=fs.readFileSync(path.join(pub,'sw.js'),'utf8');
 
 /* ---- ministry remote + vMix capture ---- */
 assert(fs.existsSync(path.join(pub,'remote.html')),'Missing remote.html');
 assert(fs.existsSync(path.join(pub,'remote.js')),'Missing remote.js');
 assert(fs.existsSync(path.join(pub,'qr.js')),'Missing qr.js');
+assert(fs.existsSync(path.join(pub,'hub-probe.js')),'Missing hub-probe.js');
 assert(html.includes('/qr.js'),'index.html must load qr.js');
+/* the probe must load before app.js: app.js reads window.KingdomHub on first paint */
+assert(html.includes('/hub-probe.js'),'index.html must load hub-probe.js');
+assert(html.indexOf('/hub-probe.js')<html.indexOf('/app.js'),'hub-probe.js must load before app.js');
+assert(swSrc0.includes('/hub-probe.js'),'the service worker must precache hub-probe.js');
 const remote=fs.readFileSync(path.join(pub,'remote.js'),'utf8');
 for(const ep of ['/api/session/status','/api/remote/action','/api/verse','/api/stream']){
   assert(remote.includes(ep)||app.includes(ep),`remote flow missing ${ep}`);
@@ -49,7 +55,7 @@ assert(mf.name&&mf.short_name&&mf.start_url&&mf.display,'manifest is incomplete'
 const pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
 const swSrc=fs.readFileSync(path.join(pub,'sw.js'),'utf8');
 const serverSrc=fs.readFileSync(path.join(root,'server.js'),'utf8');
-assert.equal(pkg.version,'1.1.0','package.json version');
+assert.equal(pkg.version,'1.1.1','package.json version');
 assert(serverSrc.includes("VERSION='"+pkg.version+"'"),'server.js must report the same version as package.json');
 assert(swSrc.includes(`kingdom-bible-v${pkg.version}`),'sw.js cache version must match package.json so updates are picked up');
 

@@ -129,8 +129,20 @@ body.presentation-body.is-debug .presentation-status{display:block}
 .url-row input{flex:1;min-width:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;
   background:var(--surface2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;color:var(--ink)}
 .connect-card .hint{margin:11px 0 0;font-size:11.5px;color:var(--muted);line-height:1.55}
+/* ---- hub offline: the ministry card must never imply a live session that is not
+   there. A muted dot plus plain instructions beats a green "Live" pill that lies. */
+.status-dot.off{background:var(--muted);box-shadow:none}
+.hub-pill-off{background:var(--surface2);color:var(--muted)}
+.hub-lead{margin:0 0 12px;font-size:13px;line-height:1.65;color:var(--ink)}
+.hub-steps{margin:0 0 14px;padding-left:20px;font-size:12.5px;line-height:1.75;color:var(--muted)}
+.hub-steps li{margin:4px 0}
+.hub-steps code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
+  background:var(--surface2);border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:var(--ink)}
+.hub-actions{display:flex;gap:9px;flex-wrap:wrap;align-items:center}
+.hub-actions a{text-decoration:none}
 @media(max-width:720px){.connect-body{grid-template-columns:1fr;justify-items:center;text-align:center}
-  .connect-info{width:100%}.code-row{justify-content:center}.url-row{flex-direction:column;align-items:stretch}}
+  .connect-info{width:100%}.code-row{justify-content:center}.url-row{flex-direction:column;align-items:stretch}
+  .hub-actions{justify-content:center}}
 /* multi-verse passages + capture hint */
 .presentation-verse{max-width:min(92vw,1700px);transform-origin:center center}
 /* fitText() may scale the whole block when a very long passage cannot fit at the

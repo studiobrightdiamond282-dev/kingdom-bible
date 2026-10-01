@@ -123,14 +123,39 @@ function openPlan(id){const p=PLANS.find(x=>x.id===id),n=state.planProgress[id]|
 function planReading(id,n){if(id==='psalms30')return `Psalms ${n*5+1}–${Math.min(150,n*5+5)}`;if(id==='proverbs31')return `Proverbs ${Math.min(31,n+1)}`;if(id==='gospels30')return `${['Matthew','Mark','Luke','John'][Math.floor(n/8)%4]} ${n%8+1}`;if(id==='nt90')return `${books[39+(n%27)].name} ${n%books[39+(n%27)].chapters+1}`;if(id==='year')return `Genesis ${n%50+1}`;const refs=['Hebrews 11:1','Philippians 4:6','Matthew 6:33','Romans 8:28','John 15:5','Psalms 46:1','James 1:5'];return refs[n%refs.length]}
 
 /* MINISTRY */
-async function renderMinistry(){setTitle('Ministry Mode','KINGDOM BIBLE');await Promise.all([ensureSession(),loadNet()]);let cur=state.ministry.current||await getVerse('John 3:16');state.ministry.current=cur;save();$('#main').innerHTML=`<div class="page"><section class="ministry-hero"><div class="eyebrow">PROFESSIONAL SCRIPTURE PRESENTATION</div><h1>Ministry Mode</h1><p>Present Scripture beautifully for services, sermons, Bible studies, projectors, OBS, and vMix browser sources.</p><div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:22px"><button class="primary-btn" id="openDisplay">▣ Open audience display</button><button class="secondary-btn" id="copyDisplay" style="background:rgba(255,255,255,.08);color:white;border-color:rgba(255,255,255,.15)">Copy browser-source URL</button></div></section>${connectCardHtml()}<div class="ministry-grid"><section class="card control-card"><div class="section-head" style="margin:0 0 14px"><div><h2>Presenter control</h2><p>Live preview · updates audience display instantly</p></div><span class="pill"><span class="status-dot"></span> Live session</span></div><div class="control-preview ${state.ministry.theme==='light'?'light':state.ministry.theme==='royal'?'royal':''}" id="controlPreview"><blockquote>“${esc(cur.text)}”</blockquote><cite>${esc(cur.ref)} · ${TR[cur.translation||state.reader.translation]}</cite><div class="church-label">${esc(state.ministry.church)}</div></div><div class="control-actions"><button class="secondary-btn" id="minPrev">← Previous</button><button class="primary-btn" id="minSearch">⌕ Change Scripture</button><button class="secondary-btn" id="minNext">Next →</button><button class="secondary-btn" id="minBlank">Blank screen</button></div><div class="form-grid" style="margin-top:16px"><div class="field"><label>Theme</label><select id="minTheme"><option value="royal">Royal Gold</option><option value="dark">Classic Black</option><option value="light">Minimal White</option><option value="sunset">Sunset</option><option value="noir">Noir</option><option value="transparent">Transparent (key)</option></select></div><div class="field"><label>Church / ministry name</label><input id="minChurch" value="${esc(state.ministry.church)}"></div></div></section><aside class="card service-panel"><div class="eyebrow">LIVE SERVICE</div><h2>${esc(state.ministry.sermon||'Sunday Service')}</h2><div class="timer" id="serviceTimer">00:00:00</div><div style="display:flex;gap:8px"><button class="secondary-btn small-btn" id="timerStart">Start timer</button><button class="secondary-btn small-btn" id="timerReset">Reset</button></div><div class="connection" style="margin-top:18px"><span class="status-dot"></span><span>Audience display sync is ready</span></div><div class="section-head"><div><h2>Media quick start</h2></div></div><button class="secondary-btn" style="width:100%;margin-bottom:8px" id="guideVmix">How to use with vMix</button><button class="secondary-btn" style="width:100%" id="guideObs">How to use with OBS</button></aside></div></div>`;
+async function renderMinistry(){setTitle('Ministry Mode','KINGDOM BIBLE');await loadHub();if(hub().isLive(hubState))await ensureSession();let cur=state.ministry.current||await getVerse('John 3:16');state.ministry.current=cur;save();$('#main').innerHTML=`<div class="page"><section class="ministry-hero"><div class="eyebrow">PROFESSIONAL SCRIPTURE PRESENTATION</div><h1>Ministry Mode</h1><p>Present Scripture beautifully for services, sermons, Bible studies, projectors, OBS, and vMix browser sources.</p><div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:22px"><button class="primary-btn" id="openDisplay">▣ Open audience display</button><button class="secondary-btn" id="copyDisplay" style="background:rgba(255,255,255,.08);color:white;border-color:rgba(255,255,255,.15)">Copy browser-source URL</button></div></section>${connectCardHtml()}<div class="ministry-grid"><section class="card control-card"><div class="section-head" style="margin:0 0 14px"><div><h2>Presenter control</h2><p>Live preview · updates audience display instantly</p></div><span class="pill">${hub().isLive(hubState)?'<span class="status-dot"></span> Live session':'<span class="status-dot off"></span> This computer only'}</span></div><div class="control-preview ${state.ministry.theme==='light'?'light':state.ministry.theme==='royal'?'royal':''}" id="controlPreview"><blockquote>“${esc(cur.text)}”</blockquote><cite>${esc(cur.ref)} · ${TR[cur.translation||state.reader.translation]}</cite><div class="church-label">${esc(state.ministry.church)}</div></div><div class="control-actions"><button class="secondary-btn" id="minPrev">← Previous</button><button class="primary-btn" id="minSearch">⌕ Change Scripture</button><button class="secondary-btn" id="minNext">Next →</button><button class="secondary-btn" id="minBlank">Blank screen</button></div><div class="form-grid" style="margin-top:16px"><div class="field"><label>Theme</label><select id="minTheme"><option value="royal">Royal Gold</option><option value="dark">Classic Black</option><option value="light">Minimal White</option><option value="sunset">Sunset</option><option value="noir">Noir</option><option value="transparent">Transparent (key)</option></select></div><div class="field"><label>Church / ministry name</label><input id="minChurch" value="${esc(state.ministry.church)}"></div></div></section><aside class="card service-panel"><div class="eyebrow">LIVE SERVICE</div><h2>${esc(state.ministry.sermon||'Sunday Service')}</h2><div class="timer" id="serviceTimer">00:00:00</div><div style="display:flex;gap:8px"><button class="secondary-btn small-btn" id="timerStart">Start timer</button><button class="secondary-btn small-btn" id="timerReset">Reset</button></div><div class="connection" style="margin-top:18px"><span class="status-dot${hub().isLive(hubState)?'':' off'}"></span><span>${hub().isLive(hubState)?'Audience display sync is ready':'Audience display syncs on this computer only'}</span></div><div class="section-head"><div><h2>Media quick start</h2></div></div><button class="secondary-btn" style="width:100%;margin-bottom:8px" id="guideVmix">How to use with vMix</button><button class="secondary-btn" style="width:100%" id="guideObs">How to use with OBS</button></aside></div></div>`;
   $('#minTheme').value=state.ministry.theme;$('#openDisplay').onclick=()=>window.open(displayUrl(),'kingdomPresentation','width=1280,height=720');$('#copyDisplay').onclick=()=>copyText(displayUrl(),'Browser-source URL copied — paste it into vMix / OBS');$('#minSearch').onclick=openMinistrySearch;$('#minPrev').onclick=()=>minStep(-1);$('#minNext').onclick=()=>minStep(1);$('#minBlank').onclick=()=>sendPresentation({...cur,blank:true});$('#minTheme').onchange=e=>{state.ministry.theme=e.target.value;save();sendPresentation(cur);renderMinistry()};$('#minChurch').onchange=e=>{state.ministry.church=e.target.value.trim()||'KINGDOM BIBLE';save();sendPresentation(cur)};$('#guideVmix').onclick=()=>openGuide('vMix');$('#guideObs').onclick=()=>openGuide('OBS');bindConnectCard();bindTimer()}
 async function openMinistrySearch(){modal(`<div class="modal-head"><div><h2>Send Scripture live</h2><p>Enter a Bible reference, such as Romans 8:28</p></div><button class="close-btn" data-close>×</button></div><form id="minRefForm"><div class="field"><label>Scripture reference</label><input id="minRef" placeholder="John 3:16"/></div><div class="field" style="margin-top:12px"><label>Translation</label><select id="minTr">${translationOptions(state.reader.translation)}</select></div><div class="modal-actions"><button class="primary-btn">Send to display</button></div></form>`);$('#minRefForm').onsubmit=async e=>{e.preventDefault();const v=await getVerse($('#minRef').value,$('#minTr').value);if(!v?.text){toast('Reference not found','error');return}state.ministry.current=v;save();await sendPresentation(v);closeModal();renderMinistry();toast(`${v.ref} is live`,'success')}}
-/* Delegate step navigation to the server so it can cross chapter and book boundaries. */
+/* Delegate step navigation to the server so it can cross chapter and book boundaries.
+   Without a hub there is no server to ask, so walk the canon locally from the same
+   bundled data — the presenter must never press "Next" on a stage and get nothing. */
 async function minStep(d){
+  if(!hub().isLive(hubState))return localStep(d);
   const out=await sessionAction({type:d>0?'next':'prev'});
   if(out&&out.ok!==false&&out.error)return toast(out.error,'error');
   await syncFromHub();
+  renderMinistry();
+}
+/* Local equivalent of the hub's next/prev, crossing chapter and book boundaries. */
+async function localStep(d){
+  const cur=state.ministry.current;
+  if(!cur||cur.book==null)return toast('Send a verse first','error');
+  const tr=cur.translation||state.reader.translation;
+  let bi=cur.book,ch=cur.chapter,v=(cur.verse||1)+d;
+  if(v<1){
+    if(ch===1){if(bi===0)return toast('Start of the Bible','error');bi--;ch=books[bi].chapters}
+    else ch--;
+    v=(await loadBook(tr,bi)).chapters[ch-1].length;
+  }
+  if(v>(await loadBook(tr,bi)).chapters[ch-1].length){
+    if(ch>=books[bi].chapters){if(bi>=books.length-1)return toast('End of the Bible','error');bi++;ch=1}
+    else ch++;
+    v=1;
+  }
+  const next=await getVerse(`${books[bi].name} ${ch}:${v}`,tr);
+  if(!next||!next.text)return toast('Cannot advance','error');
+  state.ministry.current=next;save();
+  await sendPresentation(next);
   renderMinistry();
 }
 async function syncFromHub(){
@@ -148,9 +173,30 @@ async function sendPresentation(v){const payload={...v,theme:state.ministry.them
   try{new BroadcastChannel('kingdom-presentation').postMessage(payload)}catch{}
 }
 
-/* ---------- live service session (presenter side) ---------- */
-let sessionCode=null,netInfo=null;
-async function loadNet(){try{netInfo=await(await fetch('/api/network')).json()}catch{netInfo=null}}
+/* ---------- live service session (presenter side) ----------
+   The phone remote, the service code, the SSE stream and server-side verse
+   resolution all live in the local Node hub. On a static host (Vercel) those
+   routes do not exist, so hub-probe.js tells us which world we are in before
+   anything is rendered. Never infer it from a status code: a static host
+   answers /health with 200 text/html. */
+let sessionCode=null,netInfo=null,hubState='checking';
+const HUB_PORT=4173;
+/* If hub-probe.js ever fails to load, fail closed: never claim a live session, and
+   still tell the presenter exactly what to do rather than rendering an empty card. */
+const HUB_FALLBACK={PORT:HUB_PORT,isLive:()=>false,probe:async()=>'static',
+  describe:()=>({title:'Phone remote needs the ministry hub',
+    body:'The live service is served by the ministry computer itself.',
+    hint:'Run "npm start" on the ministry computer and open the LAN address it prints.',
+    steps:['Open the KINGDOM BIBLE folder in a terminal.','Run `npm start`.',
+           'Open the LAN address it prints, then choose "Check again".'],
+    launchUrl:'http://localhost:'+HUB_PORT})};
+function hub(){return window.KingdomHub||HUB_FALLBACK}
+async function loadHub(){
+  try{hubState=await hub().probe()}catch{hubState='static'}
+  if(hub().isLive(hubState))await loadNet();
+  return hubState;
+}
+async function loadNet(){try{netInfo=await(await fetch('/api/network',{cache:'no-store'})).json()}catch{netInfo=null}}
 /* The audience display must be reachable from the projector machine and the phone,
    so it always uses the LAN origin + the live code — never localhost, never code-less. */
 function lanOrigin(){const a=netInfo&&netInfo.addresses&&netInfo.addresses[0];return a?`http://${a}:${netInfo.port}`:location.origin}
@@ -158,14 +204,22 @@ function remoteUrl(){return lanOrigin()+'/remote'+(sessionCode?'?code='+encodeUR
 function displayUrl(){return lanOrigin()+'/present'+(sessionCode?'?code='+encodeURIComponent(sessionCode):'')}
 async function ensureSession(){
   if(sessionCode)return sessionCode;
+  /* only a proven live hub can mint or validate a code */
+  if(!hub().isLive(hubState))return null;
   /* reuse the code already in storage: rotating it would drop every paired phone
      and any vMix input that is mid-service. Only mint a new one when it is invalid. */
   const known=localStorage.getItem('kingdomCode');
   if(known){
+    /* A transport failure is NOT proof the code is stale. Only an explicit
+       rejection may retire it — otherwise a brief Wi-Fi blip would orphan every
+       paired phone and a vMix input that is mid-service. */
+    let rejected=false;
     try{
-      const d=await(await fetch('/api/session/status',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code:known})})).json();
-      if(d.ok){sessionCode=known;return sessionCode}
+      const r=await fetch('/api/session/status',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code:known})});
+      if(r.status===401)rejected=true;
+      else{const d=await r.json();if(d.ok){sessionCode=known;return sessionCode}}
     }catch{}
+    if(!rejected)return known;
     localStorage.removeItem('kingdomCode');
   }
   try{
@@ -197,10 +251,38 @@ function drawQR(text,canvas){
   return true;
 }
 
-/* presenter-facing connection card: code + QR + LAN address */
+/* presenter-facing connection card: code + QR + LAN address
+   Three honest states. The old version rendered a green "Live" pill, a dashed
+   "------" code and a blank white QR box whenever the hub was missing, which is
+   exactly what the static Vercel deployment showed. Never claim a live session
+   that does not exist, and never render a placeholder that looks scannable. */
 function connectCardHtml(){
+  const live=hub().isLive(hubState);
+  if(!live){
+    const d=hub().describe(hubState)||{};
+    return `<section class="card connect-card hub-offline-card">
+  <div class="section-head" style="margin:0 0 14px">
+    <div><h2>${esc(d.title||'Connect the ministry hub')}</h2><p>Scan the code, or type the address on any phone on this Wi-Fi</p></div>
+    <span class="pill hub-pill-off"><span class="status-dot off"></span> Hub offline</span>
+  </div>
+  <div class="connect-body">
+    <div class="connect-info" style="width:100%">
+      <p class="hub-lead">${esc(d.body||'')}</p>
+      <ol class="hub-steps">${(d.steps||[]).map(s=>`<li>${esc(s).replace(/`([^`]+)`/g,'<code>$1</code>')}</li>`).join('')}</ol>
+      <div class="hub-actions">
+        <button class="primary-btn small-btn" id="hubRetry">Check again</button>
+        <a class="secondary-btn small-btn" href="${esc(d.launchUrl||'http://localhost:'+HUB_PORT)}" id="hubLaunch">Open the local hub</a>
+      </div>
+      <p class="hint" id="netHint">${esc(d.hint||'')}</p>
+    </div>
+  </div></section>`;
+  }
   const addr=netInfo&&netInfo.addresses&&netInfo.addresses[0];
-  const url=addr?`http://${addr}:${netInfo.port}/remote`:'—';
+  const port=(netInfo&&netInfo.port)||HUB_PORT;
+  /* with a live hub but no LAN address, fall back to this machine's own origin
+     so the field still carries a real, openable URL */
+  const origin=addr?`http://${addr}:${port}`:location.origin;
+  const url=origin+'/remote';
   const code=sessionCode||'------';
   return `<section class="card connect-card">
   <div class="section-head" style="margin:0 0 14px">
@@ -217,15 +299,20 @@ function connectCardHtml(){
       <div class="field" style="margin-top:12px"><label>Phone address</label>
         <div class="url-row"><input id="sessionUrl" readonly value="${esc(url)}"><button class="secondary-btn small-btn" id="copyUrl">Copy</button></div>
       </div>
-      <p class="hint" id="netHint">${addr?'Both devices must be on the same Wi-Fi network. If the phone cannot connect, allow Node.js through Windows Firewall on port '+(netInfo.port||4173)+'.':'No LAN address found — connect this computer to Wi-Fi.'}</p>
+      <p class="hint" id="netHint">${addr?'Both devices must be on the same Wi-Fi network. If the phone cannot connect, allow Node.js through Windows Firewall on port '+port+'.':'The hub is running, but this computer has no LAN address. Connect it to Wi-Fi, then choose "Check again".'}</p>
     </div>
   </div></section>`;
 }
 function bindConnectCard(){
+  const retry=$('#hubRetry');
+  if(retry)retry.onclick=async()=>{retry.disabled=true;retry.textContent='Checking…';await loadHub();if(hub().isLive(hubState))await ensureSession();renderMinistry();toast(hub().isLive(hubState)?'Ministry hub connected':'The ministry hub is still not running',hub().isLive(hubState)?'success':'error')};
   const urlEl=$('#sessionUrl');
   const full=urlEl?urlEl.value:'';
   const qrUrl=full?full+'?code='+encodeURIComponent(sessionCode||''):'';
+  /* a QR is only drawn when it is genuinely scannable; otherwise the canvas is
+     removed entirely rather than left as a blank white square */
   if(qrUrl&&sessionCode)drawQR(qrUrl,$('#sessionQr'));
+  else $('.qr-wrap')?.remove();
   const cc=$('#copyCode');if(cc)cc.onclick=()=>copyText(sessionCode,'Service code copied');
   const cu=$('#copyUrl');if(cu)cu.onclick=()=>copyText(full,'Address copied');
 }

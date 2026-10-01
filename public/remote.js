@@ -7,9 +7,9 @@ const TR={kjv:'King James Version',asv:'American Standard Version',web:'World En
 /* short badges for the live-now strip: 'King James Version' must never render as "VERSION" */
 const TRS={kjv:'KJV',asv:'ASV',web:'WEB'};
 const trLabel=t=>TRS[t]||String(t||'').toUpperCase()||'—';
-/* Static deployments (e.g. Vercel) have no /api. Detect once so we can explain
-   instead of showing a raw "HTTP 404" to a presenter standing at the font. */
-let hubOnline=true;
+/* Static deployments (e.g. Vercel) have no /api. Start pessimistic and let a real
+   response prove otherwise, so a dead hub is never shown as a live connection. */
+let hubOnline=false;
 let code=(location.search.match(/[?&]code=([A-Za-z0-9]{4,6})/)||[])[1]||localStorage.getItem(KEY)||'';
 let tr='kjv', es=null, books=[], busy=false;
 
@@ -22,8 +22,12 @@ async function api(path,opts){
   try{ r=await fetch(path,Object.assign({headers:{'Content-Type':'application/json'}},opts)); }
   catch{ hubOnline=false; throw new Error('Cannot reach the ministry hub'); }
   let d={};try{d=await r.json()}catch{}
-  if(r.status===404||r.status>=500){ hubOnline=false; throw new Error('The ministry hub is not running on this address.'); }
+  /* A successful status is not proof of a hub: a static host answers unknown paths
+     with 200 and the app shell. Only a real JSON body marks the hub as present. */
+  const isJson=/json/i.test(r.headers.get('content-type')||'');
+  if(r.status===404||r.status>=500||!isJson){ hubOnline=false; throw new Error('The ministry hub is not running on this address.'); }
   if(!r.ok)throw new Error(d.error||('HTTP '+r.status));
+  hubOnline=true;
   return d;
 }
 function setLink(on){$('#linkDot').className='remote-dot '+(on?'on':'')}
@@ -44,7 +48,7 @@ async function pair(){
 /* Turn a dead hub into actionable guidance instead of a raw HTTP status. */
 function hubOffline(msg){
   if(hubOnline)return msg||'Could not connect.';
-  return (msg?msg+' ':'')+'The ministry hub is offline. On the ministry PC run "npm start", then open this page from the LAN address it prints.';
+  return (msg?msg+' ':'')+'The ministry hub is offline. On the ministry PC run "npm start", then open this page from the LAN address it prints (not this website address).';
 }
 
 function openStream(){
@@ -152,5 +156,18 @@ document.addEventListener('click',e=>{
     catch{ showPair(hubOnline?'Previous session expired. Enter the current code.':hubOffline('')); }
   } else showPair('');
   if(!hubOnline)setLink(false);
+  /* the hub may simply not have been started yet, so offer a way to try again
+     without reloading the phone mid-service */
+  const retry=$('#pairRetry');
+  if(retry)retry.onclick=async()=>{
+    retry.disabled=true;retry.textContent='Checking…';
+    try{
+      await loadBooks();
+      const c=(code||'').trim();
+      if(c){await api('/api/session/status',{method:'POST',body:JSON.stringify({code:c})});showCtl();openStream();}
+      else showPair('The ministry hub is running. Enter the code shown on the presenter screen.');
+    }catch(e){ showPair(hubOffline(e.message)); }
+    finally{ retry.disabled=false;retry.textContent='Check again'; }
+  };
 })();
 })();
