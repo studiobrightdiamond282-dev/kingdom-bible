@@ -124,9 +124,23 @@ function planReading(id,n){if(id==='psalms30')return `Psalms ${n*5+1}–${Math.m
 
 /* MINISTRY */
 async function renderMinistry(){setTitle('Ministry Mode','KINGDOM BIBLE');await Promise.all([ensureSession(),loadNet()]);let cur=state.ministry.current||await getVerse('John 3:16');state.ministry.current=cur;save();$('#main').innerHTML=`<div class="page"><section class="ministry-hero"><div class="eyebrow">PROFESSIONAL SCRIPTURE PRESENTATION</div><h1>Ministry Mode</h1><p>Present Scripture beautifully for services, sermons, Bible studies, projectors, OBS, and vMix browser sources.</p><div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:22px"><button class="primary-btn" id="openDisplay">▣ Open audience display</button><button class="secondary-btn" id="copyDisplay" style="background:rgba(255,255,255,.08);color:white;border-color:rgba(255,255,255,.15)">Copy browser-source URL</button></div></section>${connectCardHtml()}<div class="ministry-grid"><section class="card control-card"><div class="section-head" style="margin:0 0 14px"><div><h2>Presenter control</h2><p>Live preview · updates audience display instantly</p></div><span class="pill"><span class="status-dot"></span> Live session</span></div><div class="control-preview ${state.ministry.theme==='light'?'light':state.ministry.theme==='royal'?'royal':''}" id="controlPreview"><blockquote>“${esc(cur.text)}”</blockquote><cite>${esc(cur.ref)} · ${TR[cur.translation||state.reader.translation]}</cite><div class="church-label">${esc(state.ministry.church)}</div></div><div class="control-actions"><button class="secondary-btn" id="minPrev">← Previous</button><button class="primary-btn" id="minSearch">⌕ Change Scripture</button><button class="secondary-btn" id="minNext">Next →</button><button class="secondary-btn" id="minBlank">Blank screen</button></div><div class="form-grid" style="margin-top:16px"><div class="field"><label>Theme</label><select id="minTheme"><option value="royal">Royal Gold</option><option value="dark">Classic Black</option><option value="light">Minimal White</option><option value="sunset">Sunset</option><option value="noir">Noir</option><option value="transparent">Transparent (key)</option></select></div><div class="field"><label>Church / ministry name</label><input id="minChurch" value="${esc(state.ministry.church)}"></div></div></section><aside class="card service-panel"><div class="eyebrow">LIVE SERVICE</div><h2>${esc(state.ministry.sermon||'Sunday Service')}</h2><div class="timer" id="serviceTimer">00:00:00</div><div style="display:flex;gap:8px"><button class="secondary-btn small-btn" id="timerStart">Start timer</button><button class="secondary-btn small-btn" id="timerReset">Reset</button></div><div class="connection" style="margin-top:18px"><span class="status-dot"></span><span>Audience display sync is ready</span></div><div class="section-head"><div><h2>Media quick start</h2></div></div><button class="secondary-btn" style="width:100%;margin-bottom:8px" id="guideVmix">How to use with vMix</button><button class="secondary-btn" style="width:100%" id="guideObs">How to use with OBS</button></aside></div></div>`;
-  $('#minTheme').value=state.ministry.theme;$('#openDisplay').onclick=()=>window.open('/present','kingdomPresentation','width=1280,height=720');$('#copyDisplay').onclick=async()=>{await navigator.clipboard.writeText(location.origin+'/present');toast('Browser-source URL copied')};$('#minSearch').onclick=openMinistrySearch;$('#minPrev').onclick=()=>minStep(-1);$('#minNext').onclick=()=>minStep(1);$('#minBlank').onclick=()=>sendPresentation({...cur,blank:true});$('#minTheme').onchange=e=>{state.ministry.theme=e.target.value;save();sendPresentation(cur);renderMinistry()};$('#minChurch').onchange=e=>{state.ministry.church=e.target.value.trim()||'KINGDOM BIBLE';save();sendPresentation(cur)};$('#guideVmix').onclick=()=>openGuide('vMix');$('#guideObs').onclick=()=>openGuide('OBS');bindConnectCard();bindTimer()}
+  $('#minTheme').value=state.ministry.theme;$('#openDisplay').onclick=()=>window.open(displayUrl(),'kingdomPresentation','width=1280,height=720');$('#copyDisplay').onclick=()=>copyText(displayUrl(),'Browser-source URL copied — paste it into vMix / OBS');$('#minSearch').onclick=openMinistrySearch;$('#minPrev').onclick=()=>minStep(-1);$('#minNext').onclick=()=>minStep(1);$('#minBlank').onclick=()=>sendPresentation({...cur,blank:true});$('#minTheme').onchange=e=>{state.ministry.theme=e.target.value;save();sendPresentation(cur);renderMinistry()};$('#minChurch').onchange=e=>{state.ministry.church=e.target.value.trim()||'KINGDOM BIBLE';save();sendPresentation(cur)};$('#guideVmix').onclick=()=>openGuide('vMix');$('#guideObs').onclick=()=>openGuide('OBS');bindConnectCard();bindTimer()}
 async function openMinistrySearch(){modal(`<div class="modal-head"><div><h2>Send Scripture live</h2><p>Enter a Bible reference, such as Romans 8:28</p></div><button class="close-btn" data-close>×</button></div><form id="minRefForm"><div class="field"><label>Scripture reference</label><input id="minRef" placeholder="John 3:16"/></div><div class="field" style="margin-top:12px"><label>Translation</label><select id="minTr">${translationOptions(state.reader.translation)}</select></div><div class="modal-actions"><button class="primary-btn">Send to display</button></div></form>`);$('#minRefForm').onsubmit=async e=>{e.preventDefault();const v=await getVerse($('#minRef').value,$('#minTr').value);if(!v?.text){toast('Reference not found','error');return}state.ministry.current=v;save();await sendPresentation(v);closeModal();renderMinistry();toast(`${v.ref} is live`,'success')}}
-async function minStep(d){let v=state.ministry.current,p=parseRef(v.ref),data=await loadBook(v.translation||state.reader.translation,p.book);p.verse+=d;if(p.verse<1||p.verse>data.chapters[p.chapter-1].length)return;const nv=await getVerse(`${books[p.book].name} ${p.chapter}:${p.verse}`,v.translation);state.ministry.current=nv;save();sendPresentation(nv);renderMinistry()}
+/* Delegate step navigation to the server so it can cross chapter and book boundaries. */
+async function minStep(d){
+  const out=await sessionAction({type:d>0?'next':'prev'});
+  if(out&&out.ok!==false&&out.error)return toast(out.error,'error');
+  await syncFromHub();
+  renderMinistry();
+}
+async function syncFromHub(){
+  if(!sessionCode)return;
+  try{
+    const d=await(await fetch('/api/session/status',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code:sessionCode})})).json();
+    const p=d.presentation;
+    if(p&&p.ref){state.ministry.current=p;save();if(p.theme)state.ministry.theme=p.theme;if(p.church)state.ministry.church=p.church}
+  }catch{}
+}
 async function sendPresentation(v){const payload={...v,theme:state.ministry.theme,church:state.ministry.church,ts:Date.now()};
   localStorage.setItem('kingdomPresentation',JSON.stringify(payload));
   /* live session drives the display and every paired phone */
@@ -137,8 +151,23 @@ async function sendPresentation(v){const payload={...v,theme:state.ministry.them
 /* ---------- live service session (presenter side) ---------- */
 let sessionCode=null,netInfo=null;
 async function loadNet(){try{netInfo=await(await fetch('/api/network')).json()}catch{netInfo=null}}
+/* The audience display must be reachable from the projector machine and the phone,
+   so it always uses the LAN origin + the live code — never localhost, never code-less. */
+function lanOrigin(){const a=netInfo&&netInfo.addresses&&netInfo.addresses[0];return a?`http://${a}:${netInfo.port}`:location.origin}
+function remoteUrl(){return lanOrigin()+'/remote'+(sessionCode?'?code='+encodeURIComponent(sessionCode):'')}
+function displayUrl(){return lanOrigin()+'/present'+(sessionCode?'?code='+encodeURIComponent(sessionCode):'')}
 async function ensureSession(){
   if(sessionCode)return sessionCode;
+  /* reuse the code already in storage: rotating it would drop every paired phone
+     and any vMix input that is mid-service. Only mint a new one when it is invalid. */
+  const known=localStorage.getItem('kingdomCode');
+  if(known){
+    try{
+      const d=await(await fetch('/api/session/status',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code:known})})).json();
+      if(d.ok){sessionCode=known;return sessionCode}
+    }catch{}
+    localStorage.removeItem('kingdomCode');
+  }
   try{
     const r=await(await fetch('/api/session/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({})})).json();
     if(r.ok){sessionCode=r.code;localStorage.setItem('kingdomCode',r.code);return r.code}
@@ -202,8 +231,48 @@ function bindConnectCard(){
 }
 function bindTimer(){let sec=0,id=null;const out=$('#serviceTimer'),draw=()=>out.textContent=new Date(sec*1000).toISOString().slice(11,19);$('#timerStart').onclick=e=>{if(id){clearInterval(id);id=null;e.target.textContent='Start timer'}else{id=setInterval(()=>{sec++;draw()},1000);e.target.textContent='Pause'}};$('#timerReset').onclick=()=>{sec=0;draw()}}
 function openGuide(type){const vm=type==='vMix';modal(`<div class="modal-head"><div><h2>Use KINGDOM BIBLE with ${type}</h2><p>Browser-source quick start</p></div><button class="close-btn" data-close>×</button></div><div class="guide-steps">${(vm?['Create or open the Ministry Mode session.','Copy the browser-source URL.','Open vMix and choose Add Input → Web Browser.','Paste the URL and set 1920 × 1080.','Open the audience display or presenter control.','Search Scripture and send verses live.']:['Create or open the Ministry Mode session.','Copy the browser-source URL.','In OBS, add a Browser Source.','Paste the URL and set 1920 × 1080.','For transparency, choose the Transparent theme.','Use Presenter Control to send verses live.']).map(x=>`<div class="guide-step">${x}</div>`).join('')}</div><div class="notice" style="margin-top:15px">The presentation route contains no controls and is suitable for capture. Keep this control page private.</div>`)}
+/* ---------- audience display (vMix / OBS capture surface) ----------
+   The stage is a fixed viewport that must never scroll or crop: a verse that runs off
+   the bottom is a bug on a projector. Fitting happens in two stages.
+   1. Search the font size (binary search) down to a readability floor, so ordinary
+      passages stay as large as possible.
+   2. If even the floor overflows — a whole chapter in a small browser source, say —
+      scale the whole block down uniformly with a transform, which is the only way to
+      keep long text inside the frame without making it unreadably small line-by-line.
+   Measuring scrollHeight after each trial keeps this reliable across the different
+   engines vMix and OBS ship. */
+function fitText(box,stage,maxPx,minPx){
+  const quote=box.querySelector('blockquote');
+  if(!quote)return 0;
+  box.style.transform='';
+  quote.style.fontSize='';
+  /* the block must fit inside the stage minus the citation and brand gutters */
+  const cs=getComputedStyle(stage);
+  const chrome=(parseFloat(cs.paddingTop)||0)+(parseFloat(cs.paddingBottom)||0)
+    +(box.querySelector('cite')?.offsetHeight||0)+(stage.querySelector('.presentation-brand')?.offsetHeight||0);
+  const budget=Math.max(80,stage.clientHeight-chrome-(stage.clientHeight*0.06));
+  let hi=Math.min(maxPx,parseFloat(getComputedStyle(quote).fontSize)||maxPx);
+  let lo=minPx;
+  if(quote.scrollHeight>budget){
+    for(let i=0;i<8&&hi-lo>1;i++){
+      const mid=(hi+lo)/2;
+      quote.style.fontSize=mid+'px';
+      if(quote.scrollHeight<=budget)lo=mid;else hi=mid;
+    }
+    quote.style.fontSize=lo+'px';
+  }else quote.style.fontSize=hi+'px';
+  /* stage 2: the floor did not save us, so scale the rendered block to the frame.
+     The 0.995 keeps sub-pixel rounding on the safe side of the budget. */
+  const used=box.scrollHeight;
+  if(used>budget){
+    const k=Math.max(0.2,(budget/used)*0.995);
+    box.style.transform='scale('+k.toFixed(4)+')';
+  }
+  return parseFloat(quote.style.fontSize);
+}
 async function renderPresentation(){
-    document.body.className='presentation-body';
+    const DEBUG=/[?&]debug=1/.test(location.search);
+    document.body.className='presentation-body'+(DEBUG?' is-debug':'');
     document.body.innerHTML=`<div class="presentation-stage royal" id="stage"><div class="presentation-status" id="stageStatus"></div><div class="presentation-verse" id="stageVerse"><blockquote>Waiting for Scripture…</blockquote><cite>KINGDOM BIBLE</cite></div><div class="presentation-brand" id="stageBrand">KINGDOM BIBLE</div><div class="presentation-hint" id="stageHint"></div></div>`;
 
     /* Belt-and-braces with the CSS: capture browsers still synthesise mouse events. */
@@ -215,11 +284,13 @@ async function renderPresentation(){
     document.addEventListener('selectionchange',()=>{if(document.activeElement&&/INPUT|TEXTAREA/.test(document.activeElement.tagName))return;const s=window.getSelection();if(s&&!s.isCollapsed)s.removeAllRanges()});
 
     const stage=$('#stage'),verseBox=$('#stageVerse'),brand=$('#stageBrand'),hint=$('#stageHint');
+    /* a multi-verse passage needs a smaller ceiling than a single verse */
+    const fit=p=>verseBox.classList.contains('is-blank')?0:fitText(verseBox,stage,p&&p.multiverse?56:94,14);
     const apply=p=>{
       if(!p)return;
       stage.className='presentation-stage '+(p.theme||'royal');
       /* the keying theme must clear the body too or vMix composites #020617 behind the verse */
-      document.body.className='presentation-body'+(p.theme==='transparent'?' is-key':'');
+      document.body.className='presentation-body'+(p.theme==='transparent'?' is-key':'')+(DEBUG?' is-debug':'');
       brand.textContent=p.church||'KINGDOM BIBLE';
       if(p.blank||!p.text){
         verseBox.innerHTML='<blockquote></blockquote><cite></cite>';
@@ -232,9 +303,11 @@ async function renderPresentation(){
         verseBox.innerHTML=`<blockquote>“${body}”</blockquote><cite>${esc(p.ref||p.label||'')} · ${esc(TR[p.translation]||String(p.translation||'').toUpperCase())}</cite>`;
       }
       /* shrink long passages so nothing is ever cropped by the capture frame */
-      const bq=$('blockquote',verseBox);
-      if(bq){let px=94;bq.style.fontSize=px+'px';const lim=stage.clientHeight*.62;while(bq.scrollHeight>lim&&px>18){px-=2;bq.style.fontSize=px+'px'}}
+      fit(Object.assign({},p,{multiverse:Array.isArray(p.verses)&&p.verses.length>1}));
     };
+    /* vMix and OBS resize the browser input live; re-fit so nothing is ever cropped */
+    let fitTimer=null;
+    addEventListener('resize',()=>{clearTimeout(fitTimer);fitTimer=setTimeout(()=>fit({multiverse:verseBox.classList.contains('is-multiverse')}),120)});
 
     const code=new URLSearchParams(location.search).get('code')||localStorage.getItem('kingdomCode');
     if(code){

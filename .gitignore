@@ -31,4 +31,12 @@ desktop.ini
 npm-debug.log*
 coverage/
 .tmp/
+.tmpview/
 *.tmp.vercel/
+.vercel/
+# NOTE: keep this AFTER the secrets block but re-open .env.example below,
+# otherwise `.env*` would re-ignore the template that `!.env.example` allowed.
+.env
+.env.local
+.env.*.local
+!.env.example

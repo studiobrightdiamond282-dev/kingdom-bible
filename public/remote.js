@@ -4,6 +4,12 @@
 const $=s=>document.querySelector(s);
 const KEY='kingdomRemoteCode';
 const TR={kjv:'King James Version',asv:'American Standard Version',web:'World English Bible'};
+/* short badges for the live-now strip: 'King James Version' must never render as "VERSION" */
+const TRS={kjv:'KJV',asv:'ASV',web:'WEB'};
+const trLabel=t=>TRS[t]||String(t||'').toUpperCase()||'—';
+/* Static deployments (e.g. Vercel) have no /api. Detect once so we can explain
+   instead of showing a raw "HTTP 404" to a presenter standing at the font. */
+let hubOnline=true;
 let code=(location.search.match(/[?&]code=([A-Za-z0-9]{4,6})/)||[])[1]||localStorage.getItem(KEY)||'';
 let tr='kjv', es=null, books=[], busy=false;
 
@@ -12,8 +18,11 @@ function toast(msg,kind){
   clearTimeout(toast._t);toast._t=setTimeout(()=>t.className='remote-toast',1900);
 }
 async function api(path,opts){
-  const r=await fetch(path,Object.assign({headers:{'Content-Type':'application/json'}},opts));
+  let r;
+  try{ r=await fetch(path,Object.assign({headers:{'Content-Type':'application/json'}},opts)); }
+  catch{ hubOnline=false; throw new Error('Cannot reach the ministry hub'); }
   let d={};try{d=await r.json()}catch{}
+  if(r.status===404||r.status>=500){ hubOnline=false; throw new Error('The ministry hub is not running on this address.'); }
   if(!r.ok)throw new Error(d.error||('HTTP '+r.status));
   return d;
 }
@@ -29,8 +38,13 @@ async function pair(){
     await api('/api/session/status',{method:'POST',body:JSON.stringify({code:c})});
     code=c;localStorage.setItem(KEY,c);showCtl();openStream();
     toast('Connected','ok');
-  }catch(e){ showPair(e.message||'Could not connect.'); }
+  }catch(e){ showPair(hubOffline(e.message)); }
   finally{ $('#pairBtn').disabled=false;$('#pairBtn').textContent='Connect'; }
+}
+/* Turn a dead hub into actionable guidance instead of a raw HTTP status. */
+function hubOffline(msg){
+  if(hubOnline)return msg||'Could not connect.';
+  return (msg?msg+' ':'')+'The ministry hub is offline. On the ministry PC run "npm start", then open this page from the LAN address it prints.';
 }
 
 function openStream(){
@@ -56,7 +70,7 @@ function paint(p){
   if(!p)return;
   live=p;
   $('#nowText').textContent=p.blank?'(blank)':(p.text||'Nothing yet');
-  $('#nowRef').textContent=p.blank?'':(p.ref||'')+' · '+(TR[p.translation]||'').split(' ').slice(-1)[0];
+  $('#nowRef').textContent=p.blank?'':(p.ref||'')+' · '+trLabel(p.translation);
   if(p.theme)[...$('#themeSeg').children].forEach(b=>b.classList.toggle('on',b.dataset.theme===p.theme));
   const bb=document.querySelector('[data-act="blank"]');
   if(bb){bb.textContent=p.blank?'Show verse':'Blank';bb.classList.toggle('active',!!p.blank)}
@@ -135,7 +149,8 @@ document.addEventListener('click',e=>{
   await loadBooks();
   if(code){
     try{ await api('/api/session/status',{method:'POST',body:JSON.stringify({code})}); showCtl(); openStream(); }
-    catch{ showPair('Previous session expired. Enter the current code.'); }
+    catch{ showPair(hubOnline?'Previous session expired. Enter the current code.':hubOffline('')); }
   } else showPair('');
+  if(!hubOnline)setLink(false);
 })();
 })();

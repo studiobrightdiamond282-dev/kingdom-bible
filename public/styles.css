@@ -56,7 +56,9 @@ body.presentation-body{background:#020617;overflow:hidden;font-synthesis-weight:
 .presentation-brand{position:absolute;bottom:4vh;font-size:clamp(9px,1vw,16px);font-weight:700;letter-spacing:.28em;
   color:#8191af;font-family:var(--ui)}
 .presentation-status{position:absolute;right:20px;top:20px;width:8px;height:8px;background:#16a34a;
-  border-radius:50%;opacity:.45;transition:background .3s}
+  border-radius:50%;opacity:.45;transition:background .3s;display:none}
+/* the link dot is a presenter aid, never part of the projected frame: opt in with ?debug=1 */
+body.presentation-body.is-debug .presentation-status{display:block}
 /* ============ PHONE REMOTE (/remote) ============ */
 .remote-body{margin:0;min-height:100vh;background:radial-gradient(circle at 20% 0%,#16295c,#060d20 55%);color:#e9eefb;font-family:var(--ui);
   padding:0 0 max(28px,env(safe-area-inset-bottom))}
@@ -130,7 +132,9 @@ body.presentation-body{background:#020617;overflow:hidden;font-synthesis-weight:
 @media(max-width:720px){.connect-body{grid-template-columns:1fr;justify-items:center;text-align:center}
   .connect-info{width:100%}.code-row{justify-content:center}.url-row{flex-direction:column;align-items:stretch}}
 /* multi-verse passages + capture hint */
-.presentation-verse{max-width:min(92vw,1700px)}
+.presentation-verse{max-width:min(92vw,1700px);transform-origin:center center}
+/* fitText() may scale the whole block when a very long passage cannot fit at the
+   readability floor; the origin above keeps it centred while doing so. */
 .presentation-verse .vnum{font-size:.46em;vertical-align:super;color:#f5d778;margin:0 .18em;line-height:0;font-family:var(--ui)}
 .presentation-stage.light .vnum{color:#99710a}
 .presentation-verse.is-multiverse blockquote{font-size:clamp(26px,3.6vw,64px)}

@@ -4,6 +4,7 @@
 const http=require('http'),fs=require('fs'),path=require('path'),crypto=require('crypto'),os=require('os');
 const ROOT=path.join(__dirname,'public'),DATA=path.join(__dirname,'data');
 const PORT=Number(process.env.PORT||4173),HOST='0.0.0.0';
+const APP='KINGDOM BIBLE',VERSION='1.1.0';
 const MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.png':'image/png','.svg':'image/svg+xml','.txt':'text/plain; charset=utf-8','.xml':'application/xml; charset=utf-8'};
 const THEMES=['royal','dark','light','transparent','sunset','noir'];
 const TRANSLATIONS=['kjv','asv','web'];
@@ -14,7 +15,9 @@ function headers(res,type='application/json; charset=utf-8',frameable=false){
   res.setHeader('X-Content-Type-Options','nosniff');
   res.setHeader('Referrer-Policy','strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy','camera=(), microphone=(), geolocation=(), usb=(), payment=()');
-  res.setHeader('X-Frame-Options',frameable?'ALLOWALL':'SAMEORIGIN');
+  /* ALLOWALL is not a real XFO value: when the page is meant to be captured/embedded,
+     drop the legacy header entirely and let CSP frame-ancestors carry the policy. */
+  if(!frameable)res.setHeader('X-Frame-Options','SAMEORIGIN');
   res.setHeader('Content-Security-Policy',"default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; worker-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'"+(frameable?'; frame-ancestors *':''));
 }
 function json(res,status,data){res.statusCode=status;headers(res);res.end(JSON.stringify(data))}
@@ -108,7 +111,9 @@ function startSession(pin){
   return session.code;
 }
 
-function snapshot(){return{presentation:state.presentation,timer:state.timer,session:{code:session.code,remoteCount:session.remoteCount},serverTime:Date.now()}}
+/* The service code is a LAN-wide secret: it is what lets a phone drive the projector.
+   Only code-authenticated routes may ever echo it back. */
+function snapshot(includeCode){return{presentation:state.presentation,timer:state.timer,session:{code:includeCode?session.code:null,active:!!session.code,remoteCount:session.remoteCount,listeners:session.listeners.size},serverTime:Date.now()}}
 function broadcast(type,payload){
   const frame='event: '+type+'\ndata: '+JSON.stringify(payload)+'\n\n';
   for(const res of session.listeners){try{res.write(frame)}catch{session.listeners.delete(res)}}
@@ -169,18 +174,25 @@ const server=http.createServer(async(req,res)=>{
   const u=new URL(req.url,'http://x'),p=u.pathname;
   try{
     if(!rate(req,res))return;
-    if(p==='/api/network')return json(res,200,{ok:true,port:PORT,addresses:sortedAddresses(),url:baseUrl(),code:session.code,listeners:session.listeners.size});
+    /* Public health probe: no secrets, no stack traces. Consumed by /status and by
+       uptime checks. `presentation` reports whether the live hub is reachable. */
+    if(p==='/health')return json(res,200,{ok:true,app:APP,version:VERSION,presentation:'operational',sessionActive:!!session.code,listeners:session.listeners.size,uptime:Math.round(process.uptime()),serverTime:Date.now()});
+    /* Discovery must never hand the pairing code to anyone on the LAN who asks. */
+    if(p==='/api/network')return json(res,200,{ok:true,port:PORT,addresses:sortedAddresses(),url:baseUrl(),sessionActive:!!session.code,listeners:session.listeners.size});
 
     if(p==='/api/session/start'&&req.method==='POST'){
       const b=await body(req);
-      const code=startSession(b.pin);
+      /* Re-presenting the same code must not rotate it: already-paired phones and
+         running vMix inputs would drop off the stream. */
+      const want=String(b.pin||'').trim().toUpperCase();
+      const code=(want&&codeValid(want))?want:startSession(b.pin);
       return json(res,200,{ok:true,code,url:baseUrl(),addresses:sortedAddresses()});
     }
     if(p==='/api/session/status'&&req.method==='POST'){
       const b=await body(req);
       if(!codeValid(b.code))return json(res,401,{ok:false,error:'Incorrect service code'});
       session.remoteCount=Math.max(1,session.remoteCount);
-      return json(res,200,Object.assign({ok:true},snapshot()));
+      return json(res,200,Object.assign({ok:true},snapshot(true)));
     }
     if(p==='/api/remote/action'&&req.method==='POST'){
       const b=await body(req);
@@ -197,7 +209,7 @@ const server=http.createServer(async(req,res)=>{
       const list=booksList().map(b=>({name:b.name,abbr:b.abbr,chapters:b.chapters,aliases:b.aliases||[]}));
       return json(res,200,{ok:true,books:list});
     }
-    if(p==='/api/state'&&req.method==='GET')return json(res,200,Object.assign({ok:true},snapshot()));
+    if(p==='/api/state'&&req.method==='GET')return json(res,200,Object.assign({ok:true},snapshot(false)));
 
     if(p==='/api/stream'){
       const b=u.searchParams.get('code');
@@ -220,9 +232,12 @@ const server=http.createServer(async(req,res)=>{
       else f=path.join(ROOT,path.normalize(p).replace(/^(\.\.[\\/])+/,''));
       if(f.startsWith(ROOT)&&fs.existsSync(f)&&fs.statSync(f).isFile()){
         const ext=path.extname(f),st=fs.statSync(f);
-        const noStore=/\.html$/i.test(ext)||p==='/remote'||p==='/present';
+        const live=/^\/present(\/|$)/.test(p)||/^\/remote(\/|$)/.test(p);
+        const noStore=/\.html$/i.test(ext)||live;
         res.statusCode=200;
-        headers(res,MIME[ext]||'application/octet-stream',true);
+        /* only the capture surfaces may be framed (vMix/OBS browser inputs);
+           every other page keeps the SAMEORIGIN clickjacking guard. */
+        headers(res,MIME[ext]||'application/octet-stream',live);
         res.setHeader('Cache-Control',noStore?'no-store, must-revalidate':'public, max-age=60');
         res.setHeader('ETag','"'+st.size+'-'+st.mtimeMs+'"');
         return fs.createReadStream(f).pipe(res);
@@ -234,12 +249,13 @@ const server=http.createServer(async(req,res)=>{
 
 server.listen(PORT,HOST,()=>{
   const addrs=sortedAddresses();
-  console.log('\n  \u2728 KINGDOM BIBLE — local-first Scripture hub');
+  console.log('\n  \u2728 '+APP+' v'+VERSION+' — local-first Scripture hub');
   console.log('  ----------------------------------------------------');
   console.log('  Presenter : http://localhost:'+PORT);
   console.log('  Phone     : http://localhost:'+PORT+'/remote');
   addrs.forEach(a=>console.log('  LAN       : http://'+a+':'+PORT+'  (phone + vMix)'));
-  console.log('  Output    : http://localhost:'+PORT+'/present   (vMix Web Browser input)');
+  console.log('  Display   : http://<LAN-IP>:'+PORT+'/present?code=<SERVICE-CODE>   (vMix Web Browser input)');
+  console.log('  Health    : http://localhost:'+PORT+'/health');
   if(!addrs.length)console.log('  [!] No LAN address detected — connect the phone to the same Wi-Fi as this PC.');
   console.log('  ----------------------------------------------------\n');
 });

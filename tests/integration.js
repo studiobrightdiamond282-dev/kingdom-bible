@@ -1,5 +1,5 @@
 /* End-to-end: presenter starts session -> phone remote connects -> verse pushed -> display stream receives. */
-const fs=require('fs');
+const fs=require('fs'),path=require('path');
 const B='http://localhost:'+(process.env.PORT||4173);
 const j=async(p,o)=>{const r=await fetch(B+p,o);let d={};try{d=await r.json()}catch{}return{status:r.status,body:d}};
 const post=(p,b)=>j(p,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b||{})});
@@ -138,6 +138,68 @@ const QR=global.window.QR;
     console.log('  Code  : '+code);
   }
 
+console.log('\n--- hub hardening ---');
+  {
+    /* the pairing code is the LAN-wide secret: it must never be readable without it */
+    const netBody=(await j('/api/network')).body;
+    ok('discovery does not leak the service code',netBody.code===undefined,JSON.stringify(netBody));
+    const pubState=(await j('/api/state')).body;
+    ok('public state does not leak the service code',pubState.session&&pubState.session.code===null,JSON.stringify(pubState.session));
+    const authed=(await post('/api/session/status',{code})).body;
+    ok('authenticated status does return the code',authed.session&&authed.session.code===code);
+    /* /status.js and the README both promise this route exists */
+    const h=await j('/health');
+    ok('GET /health answers without secrets',h.status===200&&h.body.ok===true&&h.body.presentation==='operational',JSON.stringify(h.body));
+    ok('health response carries no code or stack trace',!/\bcode\b|stack/i.test(JSON.stringify(h.body)),JSON.stringify(h.body));
+    /* re-presenting the same code must not rotate it and orphan paired phones */
+    const again=await post('/api/session/start',{pin:code});
+    ok('restarting with the same code keeps it stable',again.body.code===code,again.body.code);
+    const stillOk=await post('/api/session/status',{code});
+    ok('previous pairing survives a ministry page reload',stillOk.status===200);
+    /* a genuinely new code must still rotate */
+    const rotated=await post('/api/session/start',{pin:'NEW777'});
+    ok('a new pin rotates the session',rotated.body.code==='NEW777',rotated.body.code);
+    await post('/api/session/start',{pin:code});
+  }
+
+  console.log('\n--- presentation fit + capture guards ---');
+  {
+    const appSrc=fs.readFileSync(path.join(__dirname,'../public/app.js'),'utf8');
+    /* regression: the old linear loop floored at 18px, so chapter-length passages
+       overflowed the capture frame (seen as John 10 running off a projector). */
+    ok('auto-fit uses a binary search, not a fixed 18px floor',
+      /binary search/i.test(appSrc)&&!/>18\{px-=2/.test(appSrc));
+    ok('auto-fit re-runs when the capture window resizes',/addEventListener\('resize'/.test(appSrc));
+    /* regression: the link dot used to render into the vMix output */
+    ok('status dot is opt-in via ?debug=1',/is-debug/.test(appSrc));
+    /* regression: presenter buttons used a code-less, localhost-only /present */
+    ok('display URL carries the LAN origin and live code',
+      /function displayUrl\(\)\{return lanOrigin\(\)\+'\/present'\+/.test(appSrc)&&/\?code='\+encodeURIComponent\(sessionCode\)/.test(appSrc));
+    ok('presenter no longer opens a bare /present',
+      !/window\.open\('\/present'/.test(appSrc)&&!/location\.origin\+'\/present'/.test(appSrc));
+    /* regression: "King James Version".split(' ').slice(-1)[0] rendered "VERSION" */
+    const remoteSrc=fs.readFileSync(path.join(__dirname,'../public/remote.js'),'utf8');
+    ok('remote translation badge uses short labels',/trLabel\(p\.translation\)/.test(remoteSrc)
+      &&!/split\(' '\)\.slice\(-1\)\[0\]/.test(remoteSrc));
+    ok('remote explains an offline hub instead of showing HTTP 404',/hubOffline/.test(remoteSrc));
+  }
+
+  console.log('\n--- static deployment contract ---');
+  {
+    /* Vercel serves public/ only; the SPA rewrites must keep every route reachable */
+    const v=JSON.parse(fs.readFileSync(path.join(__dirname,'../vercel.json'),'utf8'));
+    const routes=v.rewrites.map(r=>r.destination);
+    ok('vercel routes /present, /remote and /status',['/index.html','/remote.html','/status.html'].every(d=>routes.includes(d)),
+      JSON.stringify(routes));
+    const al=JSON.parse(fs.readFileSync(path.join(__dirname,'../public/.well-known/assetlinks.json'),'utf8'));
+    ok('assetlinks.json is valid JSON with the android_app relation',
+      Array.isArray(al)&&al[0].target.namespace==='android_app'&&/^app\.kingdombible\.app$/.test(al[0].target.package_name));
+    ok('assetlinks.json carries no placeholder string',
+      !/REPLACE_WITH|TODO|YOUR_/.test(JSON.stringify(al)),JSON.stringify(al));
+    ok('assetlinks helper exists',fs.existsSync(path.join(__dirname,'../scripts/assetlinks.js')));
+  }
+
+  console.log('\n'+pass+' passed, '+fail+' failed');
   console.log('\n'+pass+' passed, '+fail+' failed');
   if(fail)process.exitCode=1;
 })();

@@ -4,7 +4,7 @@
 
 A premium, local-first Progressive Web App for Bible reading, Scripture study, prayer journaling, reading plans, memorization, and professional church Scripture presentation.
 
-## Included in v1.0
+## Included in v1.1
 
 - Complete 66-book Bible reader with KJV, ASV, and WEB public-domain translations
 - 1,189 chapters and 31,102 KJV verses
@@ -17,6 +17,7 @@ A premium, local-first Progressive Web App for Bible reading, Scripture study, p
 - Scripture memorization practice
 - KINGDOM AI local Scripture study assistant with transparent safety boundaries
 - Ministry Mode with live presentation screen, SSE/BroadcastChannel synchronization, themes, service timer, vMix and OBS guides
+- Phone remote with QR pairing, service-code locking, and server-side Scripture resolution
 - Responsive desktop, tablet, mobile, projector and 16:9 display layouts
 - Light, dark, sepia, AMOLED, and high-contrast themes
 - Installable PWA, runtime caching, offline fallback, accessible keyboard/focus behavior
@@ -34,7 +35,7 @@ Open `http://localhost:4173`.
 ## Test
 
 ```bash
-npm test                  # smoke + QR round-trip (no server needed)
+npm test                  # smoke + QR round-trip + display auto-fit (no server needed)
 node tests/integration.js # full remote/display flow (needs `npm start` running)
 npm run test:all          # everything
 ```
@@ -42,6 +43,11 @@ npm run test:all          # everything
 `tests/qr.js` decodes the QR output with an independent decoder and checks the format
 info BCH, the finder patterns, the Reed-Solomon syndromes and the exact payload across
 all ten QR versions — so the connect code is proven scannable, not just plausible.
+
+`tests/fit.js` extracts `fitText()` **verbatim from `public/app.js`** and runs it against a
+mocked layout engine. It proves the audience display never crops a verse, that a single
+verse stays projector-large, that the previous 18px floor really did overflow a whole
+chapter, and that resizing a vMix input re-fits the text.
 
 ## Phone remote + vMix
 
@@ -70,17 +76,49 @@ code; wrong codes get `401`. Codes live in server memory only and reset on resta
 
 ### vMix / OBS
 
-1. Ministry Mode → **Copy browser-source URL** (includes the session code).
+1. Ministry Mode → **Copy browser-source URL**. It copies the **LAN address plus the live
+   service code**, e.g. `http://192.168.100.5:4173/present?code=AB12CD` — never
+   `localhost`, and never a code-less URL that would ignore the phone.
 2. vMix → **Add Input → Web Browser**, or OBS → **Browser Source**, at 1920×1080.
-3. Paste `http://<LAN-IP>:4173/present?code=<SERVICE-CODE>` so the display follows the phone.
+3. Paste that URL. The display then follows the phone live.
+4. **Open audience display** opens the same coded URL on the ministry PC for a preview.
+
+Because the URL carries the code, restarting the hub or reloading the Ministry page does
+not break a running vMix input: the code is reused rather than rotated.
 
 **Text-highlight fix** — vMix/OBS forward synthetic mouse input, which used to drag-select the
 verse and paint a highlight across the output. The capture surface now blocks selection, caret,
 tap-highlight and drag, and the JS defensively clears any selection the capture browser still
-manages to create. Long passages auto-shrink to fit the frame instead of being cropped.
+manages to create.
+
+**Never-cropped text** — a long passage (a whole chapter) used to run off the top and bottom of
+the frame because the shrink loop gave up at an 18px floor. `fitText()` now binary-searches the
+largest font size that fits the frame, and if even the floor overflows it scales the whole block
+down uniformly. It re-fits whenever the browser input is resized. `?debug=1` reveals the
+connection dot, which is otherwise hidden so it never appears in captured output.
 
 Choose **Transparent (key)** for a keyed overlay; the page body is cleared too, so vMix does not
 composite black behind the text.
+
+## Deployment
+
+The app has two halves, and they deploy differently.
+
+**Static PWA (Vercel)** — reading, study, search, prayer, plans and devotional work fully at
+the edge. Deployed from `public/` via `vercel.json`, with SPA rewrites for `/present`,
+`/remote` and `/status`.
+
+```bash
+npx vercel --prod          # manual
+```
+
+**Live ministry hub (local)** — `/api/*`, the phone remote, vMix SSE and LAN discovery are
+**not** in the static build. They require `npm start` on the ministry PC, because the hub is
+intentionally LAN-only: it discovers the local address, holds the session in memory, and
+streams to devices on the same Wi-Fi with no internet and no cloud account.
+
+The static build detects the missing API and tells the user to start the hub rather than
+showing a raw `HTTP 404`.
 
 ## Google Play compliance
 
@@ -94,7 +132,16 @@ Two messages appear in Play Console for a sideloaded build. Both are addressed:
   ever returns.
 
 `public/.well-known/assetlinks.json` is included for Trusted Web Activity / Play Store digital
-asset linking — replace the placeholder fingerprint with your release SHA-256.
+asset linking. The committed file ships an **empty** `sha256_cert_fingerprints` array rather
+than a fake value — a placeholder fingerprint silently fails Play verification. Generate the
+real one from your upload keystore:
+
+```bash
+npm run assetlinks -- ./upload-keystore.jks
+```
+
+This runs `keytool`, writes the exact SHA-256 into `assetlinks.json`, and refuses debug
+keystores (Play signs releases with the upload key). Commit the result.
 
 ## Data and licensing
 
@@ -126,7 +173,16 @@ Never place provider secrets in browser code. Use the names in `.env.example` on
 
 ## Health check
 
-`GET /health` returns service status without secrets or stack traces.
+`GET /health` returns service status without secrets or stack traces:
+
+```json
+{"ok":true,"app":"KINGDOM BIBLE","version":"1.1.0","presentation":"operational",
+ "sessionActive":true,"listeners":1,"uptime":412,"serverTime":1757404800000}
+```
+
+The service **code is never returned** from `/health`, `/api/network` or `/api/state` — only
+from routes authenticated with the code itself. Otherwise anyone on the church Wi-Fi could
+read the pairing code out of a discovery probe and hijack the projector.
 
 ## Keyboard shortcuts
 
@@ -137,4 +193,5 @@ Never place provider secrets in browser code. Use the names in `.env.example` on
 
 ## Version
 
-KINGDOM BIBLE v1.0.0
+KINGDOM BIBLE v1.1.0 — `package.json`, `server.js` and the service-worker cache version are
+kept in sync, and a smoke test fails the build if they drift.
