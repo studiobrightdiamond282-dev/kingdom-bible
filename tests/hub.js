@@ -82,7 +82,7 @@ const htmlOnApi={status:200,json:false,body:null};
 
   console.log('\n--- presenter navigation without a hub ---');
   {
-    ok('prev/next fall back to a local canon walk',/if\(!hub\(\)\.isLive\(hubState\)\)return localStep\(d\)/.test(app));
+    ok('prev/next fall back to a local canon walk',/if\(!hub\(\)\.isLive\(hubState\)\)return localStep\(d(,quiet)?\)/.test(app));
     ok('the local walk crosses book and chapter boundaries',
       /bi--;ch=books\[bi\]\.chapters/.test(app)&&/bi\+\+;ch=1/.test(app));
     ok('the local walk blocks at the ends of the canon',
