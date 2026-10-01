@@ -31,4 +31,4 @@ desktop.ini
 npm-debug.log*
 coverage/
 .tmp/
-*.tmp
+*.tmp.vercel/
