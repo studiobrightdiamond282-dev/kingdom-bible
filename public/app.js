@@ -41,8 +41,38 @@ function bindGlobal(){
 function navigate(to,push=true){route=to.split('/')[0]||'home';if(push)history.pushState(null,'','#'+to);$$('.nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.route===route));const info=NAV.find(n=>n[0]===route)||NAV[0];$('#pageTitle').textContent=info[2];$('#pageEyebrow').textContent=route==='ministry'?'MINISTRY MODE':'KINGDOM BIBLE';closeModal();renderRoute(to);scrollTo(0,0)}
 function renderRoute(full){const m=$('#main');m.innerHTML='<div class="loading-screen"><span></span><p>Opening…</p></div>';const renderers={home:renderHome,bible:renderBible,search:renderSearch,study:renderStudy,prayer:renderPrayer,devotional:renderDevotional,plans:renderPlans,ministry:renderMinistry,profile:renderProfile};Promise.resolve(renderers[route]?.(full)).catch(e=>{console.error(e);m.innerHTML=`<div class="empty-state"><div class="empty-icon">!</div><h3>Something went wrong</h3><p>${esc(e.message)}</p><button class="secondary-btn" data-route="home">Return home</button></div>`})}
 async function loadBook(tr,bi){const key=tr+':'+bi;if(bookCache.has(key))return bookCache.get(key);const d=await (await fetch(`/data/bibles/${tr}/${bi}.json`)).json();bookCache.set(key,d);return d}
-async function getVerse(ref,tr=state.reader.translation){const p=parseRef(ref);if(!p)return null;const d=await loadBook(tr,p.book);return {...p,text:d.chapters[p.chapter-1]?.[p.verse-1],translation:tr,ref:`${books[p.book].name} ${p.chapter}:${p.verse}`}}
-function parseRef(s){s=String(s||'').trim();const m=s.match(/^(.+?)\s+(\d+)(?::(\d+)(?:[-–]\d+)?)?$/);if(!m)return null;const q=m[1].toLowerCase().replace(/\./g,'').trim();let bi=books.findIndex(b=>[b.name,b.abbr,...b.aliases].some(a=>a.toLowerCase().replace(/\./g,'')===q));if(bi<0)return null;return{book:bi,chapter:+m[2],verse:+(m[3]||1)}}
+async function getVerse(ref,tr=state.reader.translation){const p=parseRef(ref);if(!p)return null;const v=p.verse||1;const d=await loadBook(tr,p.book);return {...p,verse:v,text:d.chapters[p.chapter-1]?.[v-1],translation:tr,ref:`${books[p.book].name} ${p.chapter}:${v}`}}
+/* One parser for everything the user can type or say. bible-ref.js understands
+   "jn 3 16", "1john2:5", "John 3:16-18", spoken forms and misspellings —
+   exact -> prefix -> subsequence -> edit distance, never a blind guess.
+   The old exact-match-only regex here was the "Reference not found" bug. */
+function parseRef(s){
+  if(window.KingdomRef)return window.KingdomRef.parse(s,books);
+  s=String(s||'').trim();const m=s.match(/^(.+?)\s+(\d+)(?::(\d+)(?:[-–]\d+)?)?$/);if(!m)return null;
+  const q=m[1].toLowerCase().replace(/\./g,'').trim();
+  const bi=books.findIndex(b=>[b.name,b.abbr,...b.aliases].some(a=>a.toLowerCase().replace(/\./g,'')===q));
+  if(bi<0)return null;return{book:bi,chapter:+m[2],verse:m[3]?+m[3]:null,verseEnd:null};
+}
+/* Resolve a reference into display-ready verses: a single verse, a range
+   ("John 3:16-18") or a whole chapter — the client twin of server.js resolve(),
+   so Ministry Mode and Voice Mode work even with no hub (static hosting). */
+async function getPassage(ref,tr=state.reader.translation){
+  const p=typeof ref==='object'&&ref?ref:parseRef(ref);
+  if(!p||!books[p.book])return null;
+  const d=await loadBook(tr,p.book),ch=d.chapters[p.chapter-1];
+  if(!ch)return null;
+  const MAXV=40;let list=[];
+  if(p.verse==null)list=ch.slice(0,MAXV).map((t,i)=>({n:i+1,text:t}));
+  else{
+    if(p.verse>ch.length)return null;
+    const end=Math.min(p.verseEnd||p.verse,ch.length,p.verse+MAXV-1);
+    for(let i=p.verse;i<=end;i++)list.push({n:i,text:ch[i-1]});
+  }
+  if(!list.length||!list[0].text)return null;
+  const label=`${books[p.book].name} ${p.chapter}`;
+  const out=p.verse==null?label:list.length===1?`${label}:${list[0].n}`:`${label}:${list[0].n}-${list[list.length-1].n}`;
+  return{book:p.book,chapter:p.chapter,verse:list[0].n,verseEnd:list[list.length-1].n,verses:list,text:list.map(v=>v.text).join(' '),ref:out,label,translation:tr};
+}
 function markRead(b,c){const id=`${b}:${c}`;if(!state.chaptersRead.includes(id))state.chaptersRead.push(id);if(!state.readingDays.includes(today()))state.readingDays.push(today());save()}
 function streak(){let n=0,d=new Date();for(;;){const k=d.toISOString().slice(0,10);if(state.readingDays.includes(k)){n++;d.setDate(d.getDate()-1)}else if(n===0&&k===today()){d.setDate(d.getDate()-1)}else break}return n}
 function toast(msg,type=''){const x=document.createElement('div');x.className='toast '+type;x.textContent=msg;$('#toastRoot').append(x);setTimeout(()=>x.remove(),3100)}
@@ -84,7 +114,7 @@ function bookRow(b,i,sel){return `<button class="book-row ${i===sel?'active':''}
 function verseHTML(text,v,r){const ref=`${books[r.book].name} ${r.chapter}:${v}`,hl=state.highlights[ref]?.color||'';return `<span class="verse ${hl?'hl-'+hl:''}" data-v="${v}" id="v${v}"><sup class="verse-num">${v}</sup>${text?esc(text):'<em style="color:var(--muted);font-family:var(--ui);font-size:.68em">Verse not included in this edition.</em>'}</span>`}
 function changeReader(book,chapter){state.reader.book=book;state.reader.chapter=chapter;state.reader.lastVerse=1;save();renderBible();scrollTo(0,0)}
 async function stepChapter(d){let {book,chapter}=state.reader;chapter+=d;if(chapter<1){if(book===0)return;book--;chapter=books[book].chapters}else if(chapter>books[book].chapters){if(book===65)return;book++;chapter=1}changeReader(book,chapter)}
-async function openReference(ref){const p=parseRef(ref);if(!p){toast('Reference not recognized','error');return}state.reader.book=p.book;state.reader.chapter=p.chapter;state.reader.lastVerse=p.verse;save();navigate('bible');setTimeout(()=>{$(`#v${p.verse}`)?.scrollIntoView({behavior:'smooth',block:'center'});$(`#v${p.verse}`)?.classList.add('selected')},350)}
+async function openReference(ref){const p=parseRef(ref);if(!p){toast('Reference not recognized — try “John 3:16”','error');return}const vv=p.verse||1;state.reader.book=p.book;state.reader.chapter=p.chapter;state.reader.lastVerse=vv;save();navigate('bible');setTimeout(()=>{$(`#v${vv}`)?.scrollIntoView({behavior:'smooth',block:'center'});$(`#v${vv}`)?.classList.add('selected')},350)}
 function openVerse(v,text){const r=state.reader,ref=`${books[r.book].name} ${r.chapter}:${v}`;selectedVerse={ref,text,book:r.book,chapter:r.chapter,verse:v,translation:r.translation};state.reader.lastVerse=v;save();modal(`<div class="verse-sheet"><div class="modal-head"><div><div class="eyebrow">${TR[r.translation]} · SELECTED VERSE</div><h2>${esc(ref)}</h2></div><button class="close-btn" data-close>×</button></div><div class="selected-passage">“${esc(text)}”<cite>${esc(ref)} · ${TR[r.translation]}</cite></div><div class="action-grid"><button class="action-btn" data-vact="bookmark"><span>♡</span>${state.bookmarks[ref]?'Unsave':'Save'}</button><button class="action-btn" data-vact="highlight"><span>▰</span>Highlight</button><button class="action-btn" data-vact="note"><span>✎</span>Note</button><button class="action-btn" data-vact="copy"><span>▣</span>Copy</button><button class="action-btn" data-vact="share"><span>↗</span>Share</button><button class="action-btn" data-vact="compare"><span>◫</span>Compare</button><button class="action-btn" data-vact="xref"><span>⌁</span>Cross refs</button><button class="action-btn" data-vact="ai"><span>✦</span>Study</button><button class="action-btn" data-vact="prayer"><span>♧</span>Prayer</button><button class="action-btn" data-vact="memory"><span>◇</span>Memorize</button><button class="action-btn" data-vact="present"><span>▣</span>Present</button><button class="action-btn" data-vact="collection"><span>⊕</span>Collection</button></div></div>`,'verse-modal');$$('[data-vact]').forEach(b=>b.onclick=()=>verseAction(b.dataset.vact))}
 async function verseAction(a){const v=selectedVerse;if(a==='bookmark'){if(state.bookmarks[v.ref])delete state.bookmarks[v.ref];else state.bookmarks[v.ref]={text:v.text,date:today(),folder:'Favorite Scriptures'};save();closeModal();toast(state.bookmarks[v.ref]?'Verse saved':'Bookmark removed','success')}
  else if(a==='highlight')openHighlights();else if(a==='note')openNote(v);else if(a==='copy'){await navigator.clipboard.writeText(`“${v.text}” — ${v.ref} (${TR[v.translation]})`);toast('Copied to clipboard');closeModal()}else if(a==='share')shareText(`${v.text}\n— ${v.ref} (${TR[v.translation]})`);else if(a==='compare')openCompare(v);else if(a==='xref')openXrefs(v);else if(a==='ai'){closeModal();state.aiContext=v;save();navigate('study')}else if(a==='prayer'){closeModal();openPrayerForm(v)}else if(a==='memory')openMemory(v);else if(a==='present'){closeModal();state.ministry.current=v;save();navigate('ministry')}else toast('Custom collections are coming soon')}
@@ -101,7 +131,7 @@ function renderSearch(){setTitle('Search');$('#main').innerHTML=`<div class="pag
   let testament='all';$('#searchForm').onsubmit=e=>{e.preventDefault();performSearch($('#searchBox').value,testament,$('#searchTr').value)};$$('[data-test]').forEach(b=>b.onclick=()=>{$$('[data-test]').forEach(x=>x.classList.remove('active'));b.classList.add('active');testament=b.dataset.test;if(searchState.query)performSearch(searchState.query,testament,$('#searchTr').value)});$$('.result-item').forEach(bindResult);const p=parseRef(searchState.query);if(p&&searchState.results.length===0)openReference(searchState.query)
 }
 function renderSearchResults(){if(searchState.status)return `<div class="empty-state"><p>${esc(searchState.status)}</p></div>`;if(!searchState.query)return `<div class="card"><div class="empty-state"><div class="empty-icon">⌕</div><h3>Find a word, phrase, or passage</h3><p>Exact phrases can be placed in quotation marks. Search loads only when you need it.</p></div></div>`;if(!searchState.results.length)return `<div class="card"><div class="empty-state"><h3>No verses found</h3><p>Check spelling, try fewer words, or select another translation.</p></div></div>`;return `<div class="section-head"><div><h2>${searchState.total.toLocaleString()} result${searchState.total===1?'':'s'}</h2><p>Showing the first ${searchState.results.length}</p></div></div><div class="card">${searchState.results.map((r,i)=>{const a=esc(r.text.slice(0,r.at)),b=esc(r.text.slice(r.at,r.at+r.len)),c=esc(r.text.slice(r.at+r.len));return `<article class="result-item" data-result="${i}"><strong>${r.bookName} ${r.chapter}:${r.verse} · ${TR[r.translation]}</strong><p>${a}<mark>${b}</mark>${c}</p><span class="result-meta">Open verse in Bible reader →</span></article>`}).join('')}</div>`}
-function performSearch(q,testament='all',translation=state.reader.translation){q=q.trim();if(!q)return;const ref=parseRef(q);if(ref&&/^.+\d+:\d+$/.test(q)){openReference(q);return}searchState={query:q,results:[],total:0,status:'Searching the complete Bible…'};$('#searchResults').innerHTML=renderSearchResults();if(!searchWorker){searchWorker=new Worker('/search-worker.js');searchWorker.onmessage=e=>{if(e.data.type==='status'){searchState.status=e.data.message}else if(e.data.type==='results'){searchState.results=e.data.results;searchState.total=e.data.total;searchState.status='';state.history=[e.data.query,...state.history.filter(x=>x!==e.data.query)].slice(0,10);save()}else searchState.status=e.data.message;const el=$('#searchResults');if(el){el.innerHTML=renderSearchResults();$$('.result-item').forEach(bindResult)}}}searchWorker.postMessage({type:'search',query:q,testament,translation})}
+function performSearch(q,testament='all',translation=state.reader.translation){q=q.trim();if(!q)return;const ref=parseRef(q);if(ref&&ref.verse!=null){openReference(q);return}searchState={query:q,results:[],total:0,status:'Searching the complete Bible…'};$('#searchResults').innerHTML=renderSearchResults();if(!searchWorker){searchWorker=new Worker('/search-worker.js');searchWorker.onmessage=e=>{if(e.data.type==='status'){searchState.status=e.data.message}else if(e.data.type==='results'){searchState.results=e.data.results;searchState.total=e.data.total;searchState.status='';state.history=[e.data.query,...state.history.filter(x=>x!==e.data.query)].slice(0,10);save()}else searchState.status=e.data.message;const el=$('#searchResults');if(el){el.innerHTML=renderSearchResults();$$('.result-item').forEach(bindResult)}}}searchWorker.postMessage({type:'search',query:q,testament,translation})}
 function bindResult(el){el.onclick=()=>{const r=searchState.results[+el.dataset.result];openReference(`${r.bookName} ${r.chapter}:${r.verse}`)}}
 
 /* STUDY / SAFE ASSISTANT */
@@ -123,25 +153,60 @@ function openPlan(id){const p=PLANS.find(x=>x.id===id),n=state.planProgress[id]|
 function planReading(id,n){if(id==='psalms30')return `Psalms ${n*5+1}–${Math.min(150,n*5+5)}`;if(id==='proverbs31')return `Proverbs ${Math.min(31,n+1)}`;if(id==='gospels30')return `${['Matthew','Mark','Luke','John'][Math.floor(n/8)%4]} ${n%8+1}`;if(id==='nt90')return `${books[39+(n%27)].name} ${n%books[39+(n%27)].chapters+1}`;if(id==='year')return `Genesis ${n%50+1}`;const refs=['Hebrews 11:1','Philippians 4:6','Matthew 6:33','Romans 8:28','John 15:5','Psalms 46:1','James 1:5'];return refs[n%refs.length]}
 
 /* MINISTRY */
-async function renderMinistry(){setTitle('Ministry Mode','KINGDOM BIBLE');await loadHub();if(hub().isLive(hubState))await ensureSession();let cur=state.ministry.current||await getVerse('John 3:16');state.ministry.current=cur;save();$('#main').innerHTML=`<div class="page"><section class="ministry-hero"><div class="eyebrow">PROFESSIONAL SCRIPTURE PRESENTATION</div><h1>Ministry Mode</h1><p>Present Scripture beautifully for services, sermons, Bible studies, projectors, OBS, and vMix browser sources.</p><div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:22px"><button class="primary-btn" id="openDisplay">▣ Open audience display</button><button class="secondary-btn" id="copyDisplay" style="background:rgba(255,255,255,.08);color:white;border-color:rgba(255,255,255,.15)">Copy browser-source URL</button></div></section>${connectCardHtml()}<div class="ministry-grid"><section class="card control-card"><div class="section-head" style="margin:0 0 14px"><div><h2>Presenter control</h2><p>Live preview · updates audience display instantly</p></div><span class="pill">${hub().isLive(hubState)?'<span class="status-dot"></span> Live session':'<span class="status-dot off"></span> This computer only'}</span></div><div class="control-preview ${state.ministry.theme==='light'?'light':state.ministry.theme==='royal'?'royal':''}" id="controlPreview"><blockquote>“${esc(cur.text)}”</blockquote><cite>${esc(cur.ref)} · ${TR[cur.translation||state.reader.translation]}</cite><div class="church-label">${esc(state.ministry.church)}</div></div><div class="control-actions"><button class="secondary-btn" id="minPrev">← Previous</button><button class="primary-btn" id="minSearch">⌕ Change Scripture</button><button class="secondary-btn" id="minNext">Next →</button><button class="secondary-btn" id="minBlank">Blank screen</button></div><div class="form-grid" style="margin-top:16px"><div class="field"><label>Theme</label><select id="minTheme"><option value="royal">Royal Gold</option><option value="dark">Classic Black</option><option value="light">Minimal White</option><option value="sunset">Sunset</option><option value="noir">Noir</option><option value="transparent">Transparent (key)</option></select></div><div class="field"><label>Church / ministry name</label><input id="minChurch" value="${esc(state.ministry.church)}"></div></div></section><aside class="card service-panel"><div class="eyebrow">LIVE SERVICE</div><h2>${esc(state.ministry.sermon||'Sunday Service')}</h2><div class="timer" id="serviceTimer">00:00:00</div><div style="display:flex;gap:8px"><button class="secondary-btn small-btn" id="timerStart">Start timer</button><button class="secondary-btn small-btn" id="timerReset">Reset</button></div><div class="connection" style="margin-top:18px"><span class="status-dot${hub().isLive(hubState)?'':' off'}"></span><span>${hub().isLive(hubState)?'Audience display sync is ready':'Audience display syncs on this computer only'}</span></div><div class="section-head"><div><h2>Media quick start</h2></div></div><button class="secondary-btn" style="width:100%;margin-bottom:8px" id="guideVmix">How to use with vMix</button><button class="secondary-btn" style="width:100%" id="guideObs">How to use with OBS</button></aside></div></div>`;
-  $('#minTheme').value=state.ministry.theme;$('#openDisplay').onclick=()=>window.open(displayUrl(),'kingdomPresentation','width=1280,height=720');$('#copyDisplay').onclick=()=>copyText(displayUrl(),'Browser-source URL copied — paste it into vMix / OBS');$('#minSearch').onclick=openMinistrySearch;$('#minPrev').onclick=()=>minStep(-1);$('#minNext').onclick=()=>minStep(1);$('#minBlank').onclick=()=>sendPresentation({...cur,blank:true});$('#minTheme').onchange=e=>{state.ministry.theme=e.target.value;save();sendPresentation(cur);renderMinistry()};$('#minChurch').onchange=e=>{state.ministry.church=e.target.value.trim()||'KINGDOM BIBLE';save();sendPresentation(cur)};$('#guideVmix').onclick=()=>openGuide('vMix');$('#guideObs').onclick=()=>openGuide('OBS');bindConnectCard();bindTimer()}
-async function openMinistrySearch(){modal(`<div class="modal-head"><div><h2>Send Scripture live</h2><p>Enter a Bible reference, such as Romans 8:28</p></div><button class="close-btn" data-close>×</button></div><form id="minRefForm"><div class="field"><label>Scripture reference</label><input id="minRef" placeholder="John 3:16"/></div><div class="field" style="margin-top:12px"><label>Translation</label><select id="minTr">${translationOptions(state.reader.translation)}</select></div><div class="modal-actions"><button class="primary-btn">Send to display</button></div></form>`);$('#minRefForm').onsubmit=async e=>{e.preventDefault();const v=await getVerse($('#minRef').value,$('#minTr').value);if(!v?.text){toast('Reference not found','error');return}state.ministry.current=v;save();await sendPresentation(v);closeModal();renderMinistry();toast(`${v.ref} is live`,'success')}}
+async function renderMinistry(){setTitle('Ministry Mode','KINGDOM BIBLE');await loadHub();if(hub().isLive(hubState))await ensureSession();let cur=state.ministry.current||await getVerse('John 3:16');state.ministry.current=cur;save();$('#main').innerHTML=`<div class="page"><section class="ministry-hero"><div class="eyebrow">PROFESSIONAL SCRIPTURE PRESENTATION</div><h1>Ministry Mode</h1><p>Present Scripture beautifully for services, sermons, Bible studies, projectors, OBS, and vMix browser sources.</p><div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:22px"><button class="primary-btn" id="openDisplay">▣ Open audience display</button><button class="secondary-btn" id="copyDisplay" style="background:rgba(255,255,255,.08);color:white;border-color:rgba(255,255,255,.15)">Copy browser-source URL</button></div></section>${window.KingdomVoice?window.KingdomVoice.cardHtml():''}${connectCardHtml()}<div class="ministry-grid"><section class="card control-card"><div class="section-head" style="margin:0 0 14px"><div><h2>Presenter control</h2><p>Live preview · updates audience display instantly</p></div><span class="pill">${hub().isLive(hubState)?'<span class="status-dot"></span> Live session':'<span class="status-dot off"></span> This computer only'}</span></div><div class="control-preview ${state.ministry.theme==='light'?'light':state.ministry.theme==='royal'?'royal':''}" id="controlPreview"><blockquote>“${esc(cur.text)}”</blockquote><cite>${esc(cur.ref)} · ${TR[cur.translation||state.reader.translation]}</cite><div class="church-label">${esc(state.ministry.church)}</div></div><div class="control-actions"><button class="secondary-btn" id="minPrev">← Previous</button><button class="primary-btn" id="minSearch">⌕ Change Scripture</button><button class="secondary-btn" id="minNext">Next →</button><button class="secondary-btn" id="minBlank">Blank screen</button></div><div class="form-grid" style="margin-top:16px"><div class="field"><label>Theme</label><select id="minTheme"><option value="royal">Royal Gold</option><option value="dark">Classic Black</option><option value="light">Minimal White</option><option value="sunset">Sunset</option><option value="noir">Noir</option><option value="transparent">Transparent (key)</option></select></div><div class="field"><label>Church / ministry name</label><input id="minChurch" value="${esc(state.ministry.church)}"></div></div></section><aside class="card service-panel"><div class="eyebrow">LIVE SERVICE</div><h2>${esc(state.ministry.sermon||'Sunday Service')}</h2><div class="timer" id="serviceTimer">00:00:00</div><div style="display:flex;gap:8px"><button class="secondary-btn small-btn" id="timerStart">Start timer</button><button class="secondary-btn small-btn" id="timerReset">Reset</button></div><div class="connection" style="margin-top:18px"><span class="status-dot${hub().isLive(hubState)?'':' off'}"></span><span>${hub().isLive(hubState)?'Audience display sync is ready':'Audience display syncs on this computer only'}</span></div><div class="section-head"><div><h2>Media quick start</h2></div></div><button class="secondary-btn" style="width:100%;margin-bottom:8px" id="guideVmix">How to use with vMix</button><button class="secondary-btn" style="width:100%" id="guideObs">How to use with OBS</button></aside></div></div>`;
+  $('#minTheme').value=state.ministry.theme;$('#openDisplay').onclick=()=>window.open(displayUrl(),'kingdomPresentation','width=1280,height=720');$('#copyDisplay').onclick=()=>copyText(displayUrl(),'Browser-source URL copied — paste it into vMix / OBS');$('#minSearch').onclick=openMinistrySearch;$('#minPrev').onclick=()=>minStep(-1);$('#minNext').onclick=()=>minStep(1);$('#minBlank').onclick=()=>sendPresentation({...cur,blank:true});$('#minTheme').onchange=e=>{state.ministry.theme=e.target.value;save();sendPresentation(cur);renderMinistry()};$('#minChurch').onchange=e=>{state.ministry.church=e.target.value.trim()||'KINGDOM BIBLE';save();sendPresentation(cur)};$('#guideVmix').onclick=()=>openGuide('vMix');$('#guideObs').onclick=()=>openGuide('OBS');bindConnectCard();bindTimer();bindVoice()}
+/* Repaint only the presenter preview — Voice Mode fires many updates per
+   minute and a full re-render would flicker and tear down the mic UI. */
+function updateMinistryPreview(v){
+  const el=$('#controlPreview');if(!el||!v)return;
+  el.innerHTML=`<blockquote>“${esc(v.text)}”</blockquote><cite>${esc(v.ref)} · ${TR[v.translation||state.reader.translation]}</cite><div class="church-label">${esc(state.ministry.church)}</div>`;
+}
+/* resolve + present a parsed reference (used by Voice Preacher Mode) */
+async function presentHit(hit,tr){
+  const v=await getPassage(hit,tr||state.reader.translation);
+  if(!v)return null;
+  state.ministry.current=v;save();
+  await sendPresentation(v);
+  updateMinistryPreview(v);
+  return v;
+}
+function bindVoice(){
+  if(!window.KingdomVoice)return;
+  KingdomVoice.bind({
+    books,
+    present:(hit,tr)=>presentHit(hit,tr),
+    /* "…now verse 25": jump inside the passage currently on the display */
+    gotoVerse:(verse,verseEnd,tr)=>{
+      const cur=state.ministry.current;
+      if(!cur||cur.book==null)return null;
+      return presentHit({book:cur.book,chapter:cur.chapter,verse,verseEnd:verseEnd||null},tr||cur.translation);
+    },
+    next:()=>minStep(1,true),
+    prev:()=>minStep(-1,true),
+    blank:()=>{const c=state.ministry.current;if(c)return sendPresentation({...c,blank:true})},
+    show:()=>{const c=state.ministry.current;if(c)return sendPresentation(c)},
+    notify:toast,
+  });
+}
+async function openMinistrySearch(){modal(`<div class="modal-head"><div><h2>Send Scripture live</h2><p>A verse (Romans 8:28), a range (John 3:16-18) or a whole chapter (Psalm 23)</p></div><button class="close-btn" data-close>×</button></div><form id="minRefForm"><div class="field"><label>Scripture reference</label><input id="minRef" placeholder="John 3:16 · jn 3 16 · 1 John 2:5 · Psalm 23"/></div><div class="field" style="margin-top:12px"><label>Translation</label><select id="minTr">${translationOptions(state.reader.translation)}</select></div><div class="modal-actions"><button class="primary-btn">Send to display</button></div></form>`);$('#minRefForm').onsubmit=async e=>{e.preventDefault();const raw=$('#minRef').value.trim();const p=parseRef(raw);if(!p){toast(`Could not recognise “${raw}” — try a form like John 3:16 or jn 3 16`,'error');return}const v=await getPassage(p,$('#minTr').value);if(!v){toast(`${books[p.book].name} ${p.chapter}${p.verse?':'+p.verse:''} is outside this chapter — ${books[p.book].name} ${p.chapter} has fewer verses`,'error');return}state.ministry.current=v;save();await sendPresentation(v);closeModal();renderMinistry();toast(`${v.ref} is live`,'success')}}
 /* Delegate step navigation to the server so it can cross chapter and book boundaries.
    Without a hub there is no server to ask, so walk the canon locally from the same
    bundled data — the presenter must never press "Next" on a stage and get nothing. */
-async function minStep(d){
-  if(!hub().isLive(hubState))return localStep(d);
+async function minStep(d,quiet){
+  if(!hub().isLive(hubState))return localStep(d,quiet);
   const out=await sessionAction({type:d>0?'next':'prev'});
   if(out&&out.ok!==false&&out.error)return toast(out.error,'error');
   await syncFromHub();
-  renderMinistry();
+  if(quiet)updateMinistryPreview(state.ministry.current);else renderMinistry();
+  return state.ministry.current;
 }
 /* Local equivalent of the hub's next/prev, crossing chapter and book boundaries. */
-async function localStep(d){
+async function localStep(d,quiet){
   const cur=state.ministry.current;
   if(!cur||cur.book==null)return toast('Send a verse first','error');
   const tr=cur.translation||state.reader.translation;
-  let bi=cur.book,ch=cur.chapter,v=(cur.verse||1)+d;
+  /* after a range, "next" continues from the END of the range */
+  let bi=cur.book,ch=cur.chapter,v=(d>0?(cur.verseEnd||cur.verse||1):(cur.verse||1))+d;
   if(v<1){
     if(ch===1){if(bi===0)return toast('Start of the Bible','error');bi--;ch=books[bi].chapters}
     else ch--;
@@ -152,11 +217,12 @@ async function localStep(d){
     else ch++;
     v=1;
   }
-  const next=await getVerse(`${books[bi].name} ${ch}:${v}`,tr);
+  const next=await getPassage({book:bi,chapter:ch,verse:v,verseEnd:null},tr);
   if(!next||!next.text)return toast('Cannot advance','error');
   state.ministry.current=next;save();
   await sendPresentation(next);
-  renderMinistry();
+  if(quiet)updateMinistryPreview(next);else renderMinistry();
+  return next;
 }
 async function syncFromHub(){
   if(!sessionCode)return;

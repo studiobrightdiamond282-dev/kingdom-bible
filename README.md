@@ -4,6 +4,31 @@
 
 A premium, local-first Progressive Web App for Bible reading, Scripture study, prayer journaling, reading plans, memorization, and professional church Scripture presentation.
 
+## New in v1.2
+
+- **Shared Scripture reference engine** (`public/bible-ref.js`) used by the reader, Search,
+  Ministry Mode, the phone remote (via `server.js`) and Voice Preacher Mode. It understands
+  `John 3:16`, `jn 3 16`, `Jn.3.16`, `1john2:5`, ranges (`John 3:16-18`), whole chapters
+  (`Psalm 23`), misspellings (`jhon`, `revelations`) and spoken forms
+  (“the book of John chapter number one verse three”). Matching runs in strict-first tiers:
+  exact → prefix → subsequence → edit distance. This removes the "Reference not found"
+  regression: the old parser accepted only an exact book name with a colon.
+- **Voice Preacher Mode (premium, hands-free)** in Ministry Mode: the app listens to the
+  sermon and projects every spoken Bible reference to the audience display within
+  milliseconds of recognition. Spoken commands: “next verse”, “previous verse”,
+  “blank screen”, “show the verse”, “stop listening”. Includes live transcript, per-verse
+  latency readout, instant-send or approve-first mode, translation and accent settings.
+  - Needs Chrome or Edge (Web Speech API) and a secure page (`https://` or
+    `http://localhost:4173`). A plain `http://192.168…` LAN address cannot access the
+    microphone — the card explains this honestly instead of failing silently.
+  - Recognition accuracy belongs to the browser's speech service; recognised references are
+    resolved only against the real canon, never guessed. Free-speech scanning uses the
+    strict matching tiers only, so ordinary preaching cannot hallucinate a verse.
+- Ministry "Send Scripture live" now accepts ranges and whole chapters, and explains
+  exactly why a reference failed instead of a bare "Reference not found".
+- `Permissions-Policy` now grants `microphone=(self)` (and nothing else) in both
+  `server.js` and `vercel.json`.
+
 ## Included in v1.1
 
 - Complete 66-book Bible reader with KJV, ASV, and WEB public-domain translations
@@ -226,5 +251,19 @@ paired phone plus any vMix input that is mid-service.
 
 ## Version
 
-KINGDOM BIBLE v1.1.1 — `package.json`, `server.js` and the service-worker cache version are
+KINGDOM BIBLE v1.2.0 — `package.json`, `server.js` and the service-worker cache version are
 kept in sync, and a smoke test fails the build if they drift.
+
+## Duplicate-folder cleanup (one-time, on the ministry PC)
+
+The canonical source of truth is the Git checkout of
+`studiobrightdiamond282-dev/kingdom-bible` (branch `main`).
+`C:\Users\DELL\Downloads\kingdom-bible-deploy` is a stale copy — never edit or deploy it.
+
+1. In the canonical repo: `git status --short` must be clean.
+2. In the Vercel dashboard: Project → Settings → Git — the project must deploy from
+   `kingdom-bible.git` @ `main`, root directory = the repo root (where `vercel.json` lives).
+3. Rename the old folder to `kingdom-bible-deploy.ARCHIVED-<date>` (or zip it), never merge
+   its files back.
+4. Push / redeploy, hard-refresh (`Ctrl+F5`), verify Search + Reader + Ministry, then delete
+   the archive after one good service.

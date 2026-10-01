@@ -2,9 +2,10 @@
 'use strict';
 /* KINGDOM BIBLE — local-first hub: static hosting, live Scripture presentation, phone remote control */
 const http=require('http'),fs=require('fs'),path=require('path'),crypto=require('crypto'),os=require('os');
+const REF=require('./public/bible-ref.js');
 const ROOT=path.join(__dirname,'public'),DATA=path.join(__dirname,'data');
 const PORT=Number(process.env.PORT||4173),HOST='0.0.0.0';
-const APP='KINGDOM BIBLE',VERSION='1.1.1';
+const APP='KINGDOM BIBLE',VERSION='1.2.0';
 const MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.png':'image/png','.svg':'image/svg+xml','.txt':'text/plain; charset=utf-8','.xml':'application/xml; charset=utf-8'};
 const THEMES=['royal','dark','light','transparent','sunset','noir'];
 const TRANSLATIONS=['kjv','asv','web'];
@@ -14,7 +15,8 @@ function headers(res,type='application/json; charset=utf-8',frameable=false){
   res.setHeader('Content-Type',type);
   res.setHeader('X-Content-Type-Options','nosniff');
   res.setHeader('Referrer-Policy','strict-origin-when-cross-origin');
-  res.setHeader('Permissions-Policy','camera=(), microphone=(), geolocation=(), usb=(), payment=()');
+  /* microphone=(self) is required by Voice Preacher Mode; everything else stays denied */
+  res.setHeader('Permissions-Policy','camera=(), microphone=(self), geolocation=(), usb=(), payment=()');
   /* ALLOWALL is not a real XFO value: when the page is meant to be captured/embedded,
      drop the legacy header entirely and let CSP frame-ancestors carry the policy. */
   if(!frameable)res.setHeader('X-Frame-Options','SAMEORIGIN');
@@ -39,22 +41,14 @@ let _books=null,_bible={},_refCache=new Map();
 function booksList(){return _books||(_books=JSON.parse(fs.readFileSync(path.join(DATA,'books.json'),'utf8')).books)}
 function bibleData(tr){tr=TRANSLATIONS.includes(tr)?tr:'kjv';return _bible[tr]||(_bible[tr]=JSON.parse(fs.readFileSync(path.join(DATA,'bible_'+tr+'.json'),'utf8')))}
 
+/* One reference grammar for the whole product: the same engine the browser,
+   the phone remote and Voice Preacher Mode use (public/bible-ref.js).
+   It understands "jn 3 16", "1john2:5", spoken forms and misspellings —
+   exact -> prefix -> subsequence -> edit distance. */
 function parseRef(input){
   const key=String(input||'').trim().toLowerCase();
   if(_refCache.has(key))return _refCache.get(key);
-  let out=null;
-  const m=key.match(/^(.+?)\s+(\d+)(?::(\d+)(?:\s*[-–—]\s*(\d+))?)?$/);
-  if(m){
-    const q=m[1].replace(/\./g,'').replace(/\s+/g,' ').trim();
-    const list=booksList(),clean=s=>String(s).toLowerCase().replace(/\./g,'');
-    let bi=list.findIndex(b=>clean(b.name)===q||clean(b.abbr)===q||(b.aliases||[]).some(a=>clean(a)===q));
-    if(bi<0)bi=list.findIndex(b=>clean(b.name).startsWith(q)||q.startsWith(clean(b.abbr)));
-    if(bi>=0){
-      const chapter=+m[2],verse=m[3]?+m[3]:null,verseEnd=m[4]?+m[4]:null;
-      if(chapter>=1&&chapter<=list[bi].chapters&&(verse===null||verse>=1))
-        out={book:bi,chapter,verse,verseEnd:verseEnd&&verseEnd>verse?verseEnd:null};
-    }
-  }
+  const out=REF.parse(key,booksList());
   _refCache.set(key,out);return out;
 }
 
@@ -157,7 +151,8 @@ function applyAction(a){
       const cur=state.presentation;
       if(cur.book==null)return{ok:false,error:'Send a verse first'};
       const list=booksList(),bk=list[cur.book],chs=bibleData(cur.translation).books[cur.book];
-      let bi=cur.book,ch=cur.chapter,v=(cur.verse||1)+(a.type==='next'?1:-1);
+      /* after a range, "next" continues from the END of the range */
+      let bi=cur.book,ch=cur.chapter,v=(a.type==='next'?(cur.verseEnd||cur.verse||1):(cur.verse||1))+(a.type==='next'?1:-1);
       if(v<1){if(ch===1){if(bi===0)return{ok:false,error:'Start of Bible'};bi--;ch=list[bi].chapters}else ch--;v=bibleData(cur.translation).books[bi][ch-1].length}
       if(v>chs[ch-1].length){if(ch>=bk.chapters){if(bi===list.length-1)return{ok:false,error:'End of Bible'};bi++;ch=1}else ch++;v=1}
       const r=resolve(list[bi].name+' '+ch+':'+v,cur.translation);

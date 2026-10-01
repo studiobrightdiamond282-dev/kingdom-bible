@@ -35,6 +35,22 @@ assert(css.includes('.remote-body'),'phone remote styles missing');
 assert(css.includes('.connect-card'),'presenter connect card styles missing');
 assert(app.includes('connectCardHtml')&&app.includes('drawQR'),'presenter QR wiring missing');
 
+/* ---- shared reference engine + Voice Preacher Mode ---- */
+assert(fs.existsSync(path.join(pub,'bible-ref.js')),'Missing bible-ref.js (shared reference engine)');
+assert(fs.existsSync(path.join(pub,'voice.js')),'Missing voice.js (Voice Preacher Mode)');
+assert(html.includes('/bible-ref.js'),'index.html must load bible-ref.js');
+assert(html.includes('/voice.js'),'index.html must load voice.js');
+assert(html.indexOf('/bible-ref.js')<html.indexOf('/app.js'),'bible-ref.js must load before app.js');
+assert(swSrc0.includes('/bible-ref.js')&&swSrc0.includes('/voice.js'),'the service worker must precache the reference engine and voice module');
+assert(app.includes('KingdomRef'),'app.js must use the shared reference engine');
+assert(app.includes('bindVoice')&&app.includes('getPassage'),'Voice Mode + passage resolution wiring missing');
+const serverSrc1=fs.readFileSync(path.join(root,'server.js'),'utf8');
+assert(serverSrc1.includes("require('./public/bible-ref.js')"),'server.js must use the shared reference engine');
+/* Voice Preacher Mode needs the microphone for THIS origin only */
+assert(serverSrc1.includes('microphone=(self)'),'server.js must allow microphone for Voice Preacher Mode');
+const vercelCfg=fs.readFileSync(path.join(root,'vercel.json'),'utf8');
+assert(vercelCfg.includes('microphone=(self)'),'vercel.json must allow microphone for Voice Preacher Mode');
+
 /* Play Store sensitive-permission guard: no Notification.requestPermission anywhere */
 for(const f of ['app.js','remote.js','sw.js']){
   const src=fs.readFileSync(path.join(pub,f),'utf8');
@@ -55,7 +71,7 @@ assert(mf.name&&mf.short_name&&mf.start_url&&mf.display,'manifest is incomplete'
 const pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
 const swSrc=fs.readFileSync(path.join(pub,'sw.js'),'utf8');
 const serverSrc=fs.readFileSync(path.join(root,'server.js'),'utf8');
-assert.equal(pkg.version,'1.1.1','package.json version');
+assert.equal(pkg.version,'1.2.0','package.json version');
 assert(serverSrc.includes("VERSION='"+pkg.version+"'"),'server.js must report the same version as package.json');
 assert(swSrc.includes(`kingdom-bible-v${pkg.version}`),'sw.js cache version must match package.json so updates are picked up');
 
@@ -70,6 +86,7 @@ console.log('✓ 66 canonical books');console.log('✓ 1,189 chapters');console.
 console.log('✓ KJV, ASV and WEB data available');console.log('✓ Cross references validated');
 console.log('✓ PWA shell, manifest and asset links present');
 console.log('✓ Ministry remote (QR, pairing, LAN) wired');
+console.log('✓ Shared reference engine + Voice Preacher Mode wired');
 console.log('✓ No sensitive-permission requests');
 console.log('✓ Version aligned across package, server and service worker');
 console.log('All smoke tests passed.');
