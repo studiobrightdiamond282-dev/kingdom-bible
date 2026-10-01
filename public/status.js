@@ -1,0 +1,1 @@
+fetch('/health').then(r=>r.json()).then(d=>{document.querySelectorAll('.row')[3].querySelector('strong').textContent=d.presentation==='operational'?'Operational':'Unavailable'}).catch(()=>{const x=document.querySelectorAll('.row')[3].querySelector('strong');x.textContent='Unavailable';x.className=''})
