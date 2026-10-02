@@ -1,0 +1,42 @@
+# dependencies
+node_modules/
+
+# secrets — only the template is tracked
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# credentials / signing material
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+service-account*.json
+
+# stray pasted screenshots — not part of the app
+uploads/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+
+# logs / temp
+*.log
+npm-debug.log*
+coverage/
+.tmp/
+.tmpview/
+*.tmp.vercel/
+.vercel/
+# NOTE: keep this AFTER the secrets block but re-open .env.example below,
+# otherwise `.env*` would re-ignore the template that `!.env.example` allowed.
+.env
+.env.local
+.env.*.local
+!.env.example

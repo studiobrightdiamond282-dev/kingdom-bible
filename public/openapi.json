@@ -1,0 +1,131 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "KINGDOM BIBLE Local API",
+    "version": "1.2.1",
+    "description": "Local-first ministry hub: LAN discovery, service-code pairing, server-side Scripture resolution and live presentation streaming. Every mutating route requires the service code; nothing leaves the local machine."
+  },
+  "paths": {
+    "/api/network": {
+      "get": {
+        "summary": "LAN addresses and port for phone/vMix connection",
+        "responses": { "200": { "description": "Discovery payload" } }
+      }
+    },
+    "/api/session/start": {
+      "post": {
+        "summary": "Start a live service session and return its pairing code",
+        "requestBody": {
+          "required": false,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SessionStart" } } }
+        },
+        "responses": { "200": { "description": "New service code" } }
+      }
+    },
+    "/api/session/status": {
+      "post": {
+        "summary": "Validate a service code and return the current live state",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CodeOnly" } } }
+        },
+        "responses": {
+          "200": { "description": "Current state" },
+          "401": { "description": "Incorrect service code" }
+        }
+      }
+    },
+    "/api/remote/action": {
+      "post": {
+        "summary": "Apply a remote action (send verse, next/prev, blank, theme)",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RemoteAction" } } }
+        },
+        "responses": {
+          "200": { "description": "Applied" },
+          "400": { "description": "Invalid or blocked action" },
+          "401": { "description": "Incorrect service code" }
+        }
+      }
+    },
+    "/api/verse": {
+      "get": {
+        "summary": "Resolve a reference server-side so phones never download the full Bible",
+        "parameters": [
+          { "name": "ref", "in": "query", "required": true, "schema": { "type": "string" }, "example": "John 3:16-18" },
+          { "name": "tr", "in": "query", "schema": { "type": "string", "enum": ["kjv", "asv", "web"] } }
+        ],
+        "responses": {
+          "200": { "description": "Resolved passage" },
+          "404": { "description": "Reference not found" }
+        }
+      }
+    },
+    "/api/books": {
+      "get": { "summary": "Book names, abbreviations and aliases", "responses": { "200": { "description": "Book list" } } }
+    },
+    "/api/state": {
+      "get": { "summary": "Current live state (read-only)", "responses": { "200": { "description": "Live state" } } }
+    },
+    "/api/stream": {
+      "get": {
+        "summary": "Server-sent live updates for the audience display",
+        "parameters": [{ "name": "code", "in": "query", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "text/event-stream" },
+          "401": { "description": "Incorrect service code" }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "SessionStart": {
+        "type": "object",
+        "properties": { "pin": { "type": "string", "description": "Optional 4-6 character code; generated when omitted" } }
+      },
+      "CodeOnly": {
+        "type": "object",
+        "required": ["code"],
+        "properties": { "code": { "type": "string", "minLength": 4, "maxLength": 6 } }
+      },
+      "RemoteAction": {
+        "type": "object",
+        "required": ["code", "action"],
+        "properties": {
+          "code": { "type": "string" },
+          "action": {
+            "type": "object",
+            "properties": {
+              "type": { "type": "string", "enum": ["presentation", "next", "prev", "blank"] },
+              "payload": { "$ref": "#/components/schemas/Presentation" }
+            }
+          }
+        }
+      },
+      "Presentation": {
+        "type": "object",
+        "properties": {
+          "ref": { "type": "string", "maxLength": 80 },
+          "label": { "type": "string", "maxLength": 120 },
+          "text": { "type": "string", "maxLength": 4000 },
+          "verses": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": { "n": { "type": "integer" }, "text": { "type": "string" } }
+            }
+          },
+          "book": { "type": "integer", "minimum": 0, "description": "0 = Genesis; enables next/prev navigation" },
+          "chapter": { "type": "integer", "minimum": 1 },
+          "verse": { "type": "integer", "minimum": 1 },
+          "translation": { "type": "string", "enum": ["kjv", "asv", "web"] },
+          "theme": { "type": "string", "enum": ["royal", "dark", "light", "sunset", "noir", "transparent"] },
+          "church": { "type": "string", "maxLength": 80 },
+          "blank": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}

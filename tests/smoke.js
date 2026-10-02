@@ -1,0 +1,106 @@
+#!/usr/bin/env node
+const fs=require('fs'),path=require('path'),assert=require('assert');
+const root=path.join(__dirname,'..'),pub=path.join(root,'public');
+const sumVerses=books=>books.reduce((n,b)=>n+b.reduce((m,c)=>m+c.length,0),0);
+const must=['index.html','styles.css','app.js','sw.js','manifest.json','offline.html','assets/logo.png','data/books.json','data/bible_kjv.json','data/bible_asv.json','data/bible_web.json'];
+for(const f of must)assert(fs.existsSync(path.join(pub,f)),`Missing ${f}`);
+const books=JSON.parse(fs.readFileSync(path.join(pub,'data/books.json'))).books;
+assert.equal(books.length,66);assert.equal(books.reduce((n,b)=>n+b.chapters,0),1189);
+for(const tr of ['kjv','asv','web']){const d=JSON.parse(fs.readFileSync(path.join(pub,`data/bible_${tr}.json`)));assert.equal(d.books.length,66);assert.equal(d.books.length,books.length);assert(d.books[42][2][15].length>20,`${tr} John 3:16 missing`);assert(sumVerses(d.books)>=31102,`${tr} canonical verse slots incomplete`)}
+const kjv=JSON.parse(fs.readFileSync(path.join(pub,'data/bible_kjv.json')));assert.equal(kjv.books.flat(2).length,31102);assert(kjv.books[0][0][0].startsWith('In the beginning'));
+const x=JSON.parse(fs.readFileSync(path.join(pub,'data/xrefs/22.json')));assert(x['Isaiah 53:5']?.some(r=>r.startsWith('1 Peter')));
+const html=fs.readFileSync(path.join(pub,'index.html'),'utf8'),app=fs.readFileSync(path.join(pub,'app.js'),'utf8');assert(html.includes('KINGDOM BIBLE'));assert(app.includes('renderBible'));assert(app.includes('renderMinistry'));
+const swSrc0=fs.readFileSync(path.join(pub,'sw.js'),'utf8');
+
+/* ---- ministry remote + vMix capture ---- */
+assert(fs.existsSync(path.join(pub,'remote.html')),'Missing remote.html');
+assert(fs.existsSync(path.join(pub,'remote.js')),'Missing remote.js');
+assert(fs.existsSync(path.join(pub,'qr.js')),'Missing qr.js');
+assert(fs.existsSync(path.join(pub,'hub-probe.js')),'Missing hub-probe.js');
+assert(html.includes('/qr.js'),'index.html must load qr.js');
+/* the probe must load before app.js: app.js reads window.KingdomHub on first paint */
+assert(html.includes('/hub-probe.js'),'index.html must load hub-probe.js');
+assert(html.indexOf('/hub-probe.js')<html.indexOf('/app.js'),'hub-probe.js must load before app.js');
+assert(swSrc0.includes('/hub-probe.js'),'the service worker must precache hub-probe.js');
+const remote=fs.readFileSync(path.join(pub,'remote.js'),'utf8');
+for(const ep of ['/api/session/status','/api/remote/action','/api/verse','/api/stream']){
+  assert(remote.includes(ep)||app.includes(ep),`remote flow missing ${ep}`);
+}
+const css=fs.readFileSync(path.join(pub,'styles.css'),'utf8');
+assert(css.includes('user-select:none'),'presentation capture must block text selection');
+assert(css.includes('body.presentation-body'),'presentation capture styles missing');
+assert(css.includes('transform-origin:center center'),'presentation block needs a transform origin for long-passage scaling');
+assert(css.includes('body.presentation-body.is-debug'),'presentation status dot must be opt-in so it never renders into a vMix capture');
+assert(css.includes('.remote-body'),'phone remote styles missing');
+assert(css.includes('.connect-card'),'presenter connect card styles missing');
+assert(app.includes('connectCardHtml')&&app.includes('drawQR'),'presenter QR wiring missing');
+
+/* ---- shared reference engine + Voice Preacher Mode ---- */
+assert(fs.existsSync(path.join(pub,'bible-ref.js')),'Missing bible-ref.js (shared reference engine)');
+assert(fs.existsSync(path.join(pub,'voice.js')),'Missing voice.js (Voice Preacher Mode)');
+assert(fs.existsSync(path.join(pub,'premium.js')),'Missing premium.js (accounts and subscriptions)');
+assert(fs.existsSync(path.join(pub,'admin.html'))&&fs.existsSync(path.join(pub,'admin.js')),'Missing admin portal');
+assert(fs.existsSync(path.join(pub,'privacy.html'))&&fs.existsSync(path.join(pub,'refund.html')),'Missing legal policy pages');
+const serverPremiumSrc=fs.readFileSync(path.join(root,'server.js'),'utf8');
+for(const ep of ['/api/auth/register','/api/auth/login','/api/payments/initialize','/api/wallet/withdraw','/api/admin/overview','/api/ai/ask'])assert(serverPremiumSrc.includes(ep),`premium endpoint missing ${ep}`);
+assert(serverPremiumSrc.includes('PAYSTACK_SECRET_KEY')&&!serverPremiumSrc.includes('pk_live_15b415df90f55aed4082c964b0fcb61daa642d41'),'live payment credentials must never be hard-coded');
+assert(html.includes('/bible-ref.js'),'index.html must load bible-ref.js');
+assert(html.includes('/voice.js'),'index.html must load voice.js');
+assert(html.includes('/premium.js'),'index.html must load premium.js');
+assert(html.indexOf('/bible-ref.js')<html.indexOf('/app.js'),'bible-ref.js must load before app.js');
+assert(swSrc0.includes('/bible-ref.js')&&swSrc0.includes('/voice.js')&&swSrc0.includes('/premium.js'),'the service worker must precache the reference, voice, and premium modules');
+assert(app.includes('KingdomRef'),'app.js must use the shared reference engine');
+assert(app.includes('bindVoice')&&app.includes('getPassage'),'Voice Mode + passage resolution wiring missing');
+assert(app.includes('function openManual')&&app.includes('id=\"openManual\"'),'Ministry page must expose the User Manual');
+assert(html.includes('data-admin-trigger')&&app.includes("location.href='/admin'"),'admin portal must use the long-hold logo entrance');
+assert(app.includes('id=\"profileManual\"')&&app.includes('data-cmanual'),'Profile row and Ctrl+K palette must expose the User Manual');
+for(const phrase of ['wrong mic','Voicemeeter','https://','localhost','vMix','OBS','QR'])assert(app.toLowerCase().includes(phrase.toLowerCase()),`User Manual missing ${phrase}`);
+const voiceSrc=fs.readFileSync(path.join(pub,'voice.js'),'utf8');
+assert(voiceSrc.includes('FUSE_MS=350')&&voiceSrc.includes('CHAPTER_HOLD_MS=1100'),'Voice Scripture lock fuse timings missing');
+assert(voiceSrc.includes('dispatchKeys')&&voiceSrc.includes('dispatchKeys.add(key)'),'Voice dedupe key must lock at dispatch time');
+const serverSrc1=fs.readFileSync(path.join(root,'server.js'),'utf8');
+assert(serverSrc1.includes("require('./public/bible-ref.js')"),'server.js must use the shared reference engine');
+/* Voice Preacher Mode needs the microphone for THIS origin only */
+assert(serverSrc1.includes('microphone=(self)'),'server.js must allow microphone for Voice Preacher Mode');
+const vercelCfg=fs.readFileSync(path.join(root,'vercel.json'),'utf8');
+assert(vercelCfg.includes('microphone=(self)'),'vercel.json must allow microphone for Voice Preacher Mode');
+
+/* Play Store sensitive-permission guard: no Notification.requestPermission anywhere */
+for(const f of ['app.js','remote.js','sw.js']){
+  const src=fs.readFileSync(path.join(pub,f),'utf8');
+  assert(!/Notification\s*\.\s*requestPermission/.test(src),`${f} must not request notification permission (Play Store sensitive-permission warning)`);
+}
+assert(fs.existsSync(path.join(pub,'.well-known/assetlinks.json')),'Digital Asset Links missing (required for Play Store TWA verification)');
+/* a placeholder fingerprint silently fails Play verification, so it must not ship */
+const al=JSON.parse(fs.readFileSync(path.join(pub,'.well-known/assetlinks.json'),'utf8'));
+assert(!/REPLACE_WITH|TODO|YOUR_/.test(JSON.stringify(al)),'assetlinks.json still contains a placeholder fingerprint');
+assert(fs.existsSync(path.join(root,'scripts/assetlinks.js')),'run "npm run assetlinks -- <keystore>" to generate the release fingerprint');
+assert(fs.existsSync(path.join(pub,'.well-known/assetlinks.json')),'assetlinks.json must be served');
+const mf=JSON.parse(fs.readFileSync(path.join(pub,'manifest.json'),'utf8'));
+assert(mf.icons.some(i=>i.purpose==='maskable'),'manifest needs a maskable icon');
+assert(mf.icons.some(i=>i.sizes==='512x512'),'manifest needs a 512x512 icon');
+assert(mf.name&&mf.short_name&&mf.start_url&&mf.display,'manifest is incomplete');
+
+/* version must not drift between the package, the service worker and the server */
+const pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
+const swSrc=fs.readFileSync(path.join(pub,'sw.js'),'utf8');
+const serverSrc=fs.readFileSync(path.join(root,'server.js'),'utf8');
+assert.equal(pkg.version,'1.2.1','package.json version');
+assert(serverSrc.includes("VERSION='"+pkg.version+"'"),'server.js must report the same version as package.json');
+assert(swSrc.includes(`kingdom-bible-v${pkg.version}`),'sw.js cache version must match package.json so updates are picked up');
+
+/* service worker must never serve a cached verse to the live projector */
+const sw=fs.readFileSync(path.join(pub,'sw.js'),'utf8');
+assert(sw.includes('/present')&&sw.includes('network only'),'service worker must treat /present as network-only');
+
+/* the presenter must not fall back to a code-less, localhost-only display URL */
+assert(!/window\.open\('\/present'/.test(app),'presenter must open the LAN display URL with the service code');
+
+console.log('✓ 66 canonical books');console.log('✓ 1,189 chapters');console.log('✓ 31,102 KJV verses');
+console.log('✓ KJV, ASV and WEB data available');console.log('✓ Cross references validated');
+console.log('✓ PWA shell, manifest and asset links present');
+console.log('✓ Ministry remote (QR, pairing, LAN) wired');
+console.log('✓ Shared reference engine + Voice Preacher Mode wired');
+console.log('✓ No sensitive-permission requests');
+console.log('✓ Version aligned across package, server and service worker');
+console.log('All smoke tests passed.');

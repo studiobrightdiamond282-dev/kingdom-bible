@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
+<meta name="theme-color" content="#07142f" />
+<meta name="description" content="KINGDOM BIBLE ministry remote control." />
+<title>Ministry Remote · KINGDOM BIBLE</title>
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body class="remote-body">
+<header class="remote-top">
+  <img src="/assets/logo.png" alt="" />
+  <div><strong>KINGDOM</strong><small>MINISTRY REMOTE</small></div>
+  <span id="linkDot" class="remote-dot" title="connection"></span>
+</header>
+
+<main class="remote-wrap">
+
+  <!-- pairing -->
+  <section id="pairPane" class="remote-card">
+    <h1>Join the service</h1>
+    <p class="remote-sub">Enter the 6-character code shown on the presenter screen.</p>
+    <input id="codeInput" class="remote-input code" inputmode="text" autocapitalize="characters"
+           autocomplete="off" spellcheck="false" maxlength="6" placeholder="ABC123" />
+    <button id="pairBtn" class="remote-btn primary">Connect</button>
+    <p id="pairMsg" class="remote-msg" role="status"></p>
+    <button id="pairRetry" class="remote-btn ghost">Check again</button>
+  </section>
+
+  <!-- live control -->
+  <section id="ctlPane" hidden>
+    <div class="remote-card live-now">
+      <div class="rn-label">ON SCREEN NOW</div>
+      <blockquote id="nowText">Nothing yet</blockquote>
+      <cite id="nowRef"></cite>
+    </div>
+
+    <div class="remote-card">
+      <label class="rn-label" for="refInput">SEND A VERSE</label>
+      <div class="rn-row">
+        <input id="refInput" class="remote-input" placeholder="John 3:16" autocomplete="off"
+               autocapitalize="words" spellcheck="false" enterkeyhint="send" />
+        <button id="sendBtn" class="remote-btn primary square">Send</button>
+      </div>
+      <div class="rn-suggest" id="suggest"></div>
+      <div class="rn-row seg" id="trSeg">
+        <button data-tr="kjv" class="on">KJV</button>
+        <button data-tr="asv">ASV</button>
+        <button data-tr="web">WEB</button>
+      </div>
+      <p class="remote-msg" id="sendMsg" role="status"></p>
+    </div>
+
+    <div class="remote-card">
+      <div class="rn-grid">
+        <button class="remote-btn ghost" data-act="prev">◀ Back</button>
+        <button class="remote-btn ghost" data-act="blank">Blank</button>
+        <button class="remote-btn ghost" data-act="next">Next ▶</button>
+      </div>
+    </div>
+
+    <div class="remote-card">
+      <div class="rn-label">LOOK</div>
+      <div class="rn-seg-wrap" id="themeSeg">
+        <button data-theme="royal" class="on">Royal</button>
+        <button data-theme="dark">Dark</button>
+        <button data-theme="light">Light</button>
+        <button data-theme="sunset">Sunset</button>
+        <button data-theme="transparent">Key</button>
+      </div>
+    </div>
+
+    <button id="leaveBtn" class="remote-btn danger">Disconnect</button>
+  </section>
+</main>
+<div id="toast" class="remote-toast" role="status" aria-live="polite"></div>
+<script src="/remote.js"></script>
+</body>
+</html>

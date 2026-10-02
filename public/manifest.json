@@ -1,0 +1,29 @@
+{
+  "name": "KINGDOM BIBLE",
+  "short_name": "KINGDOM",
+  "description": "Read. Study. Understand. Live the Word. A complete Bible with study tools, prayer journal and live ministry presentation.",
+  "id": "/",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "orientation": "any",
+  "background_color": "#020617",
+  "theme_color": "#07142f",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": ["books", "education", "lifestyle"],
+  "prefer_related_applications": false,
+  "icons": [
+    {"src":"/icons/icon-192.png","sizes":"192x192","type":"image/png","purpose":"any"},
+    {"src":"/icons/icon-512.png","sizes":"512x512","type":"image/png","purpose":"any"},
+    {"src":"/icons/maskable-512.png","sizes":"512x512","type":"image/png","purpose":"maskable"},
+    {"src":"/icons/icon-180.png","sizes":"180x180","type":"image/png","purpose":"any"}
+  ],
+  "shortcuts": [
+    {"name":"Read Bible","short_name":"Read","url":"/#bible","icons":[{"src":"/icons/icon-192.png","sizes":"192x192"}]},
+    {"name":"Search Scripture","short_name":"Search","url":"/#search","icons":[{"src":"/icons/icon-192.png","sizes":"192x192"}]},
+    {"name":"Prayer Journal","short_name":"Prayer","url":"/#prayer","icons":[{"src":"/icons/icon-192.png","sizes":"192x192"}]},
+    {"name":"Ministry Mode","short_name":"Ministry","url":"/#ministry","icons":[{"src":"/icons/icon-192.png","sizes":"192x192"}]}
+  ]
+}
