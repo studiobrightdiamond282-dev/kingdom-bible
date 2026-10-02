@@ -215,7 +215,42 @@ function entitlementOf(u){
 function findUser(id){return premiumStore.users.find(u=>u.id===id)}
 function sessionRecord(req){const a=auth(req);if(!a)return null;if(a.role==='admin')return{...a,user:null};const user=findUser(a.userId);return user?{...a,user}:null}
 function requireAuth(req,res){const s=sessionRecord(req);if(!s){json(res,401,{ok:false,error:'Please sign in'});return null}return s}
-function requireAdmin(req,res){const s=sessionRecord(req);if(!s||s.role!=='admin'){json(res,403,{ok:false,error:'Administrator access required'});return null}return s}
+function requireAdmin(req,res){const g=adminGate(req);if(!g.ok){denyAdmin(res,g);return null}const s=sessionRecord(req);if(!s||s.role!=='admin'){json(res,403,{ok:false,error:'Administrator access required'});return null}return s}
+/* ---------- admin network gate ----------
+   The hub is published to the open internet through a Tailscale Funnel, so /admin
+   would otherwise be reachable by anyone who guesses the path. IP filtering looks
+   like the obvious fix but does NOT work here: Tailscale proxies Funnel traffic
+   from the local tailscaled process, so every internet visitor arrives with
+   `remoteAddress === 127.0.0.1` — measured, not assumed. An allowlist on that would
+   either lock the owner out or admit the whole internet.
+
+   What does work is Tailscale's identity headers (tailscale.com/s/serve-headers).
+   tailscaled injects `Tailscale-User-Login` for tailnet members and strips any
+   client-supplied copy of these headers, so they cannot be forged over HTTP.
+   They are only trustworthy when the request actually arrived over the tunnel, so
+   we additionally require a loopback peer:
+
+     A) not through the tunnel at all (no `Tailscale-Headers-Info`) AND loopback
+        => a real local browser on this machine;
+     B) through the tunnel AND the identity login is on ADMIN_TAILNET_LOGINS
+        => a tailnet member, anywhere.
+
+   Everything else — including any visitor arriving over Funnel from the open web,
+   who has no identity header — is refused. Fails closed. */
+const ADMIN_TAILNET_LOGINS=new Set(String(process.env.ADMIN_TAILNET_LOGINS||'').split(',').map(s=>s.trim().toLowerCase()).filter(Boolean));
+function adminGate(req){
+  const loopback=['127.0.0.1','::1','::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
+  const viaTunnel=Boolean(req.headers['tailscale-headers-info']);
+  if(!loopback)return{ok:false,why:'This computer is not the ministry hub'};
+  if(!viaTunnel)return{ok:true,how:'local'};
+  const login=String(req.headers['tailscale-user-login']||'').trim().toLowerCase();
+  if(login&&ADMIN_TAILNET_LOGINS.has(login))return{ok:true,how:'tailnet:'+login};
+  return{ok:false,why:'The administrator portal is private to this Tailscale network'};
+}
+function denyAdmin(res,g){return json(res,403,{ok:false,error:g.why||'Administrator portal unavailable'})}
+/* minimal HTML escape for the server-rendered block page; `esc` only exists in the
+   browser bundles, so referencing it here threw a ReferenceError (HTTP 500). */
+const escHtml=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function addWallet(u,amount,type,description,meta={}){u.wallet=u.wallet||{balance:0,ledger:[]};u.wallet.balance+=amount;u.wallet.ledger.unshift({id:uid('ledger'),amount,type,description,date:new Date().toISOString(),meta});u.wallet.ledger=u.wallet.ledger.slice(0,300)}
 function startUser(email,name,password,referredBy){const now=Date.now(),u={id:uid('usr'),email,name:name||email.split('@')[0],passwordHash:passwordHash(password),role:'user',referralCode:referralCode(),referredBy:referredBy||'',referralRewarded:false,trialStartedAt:now,trialEndsAt:now+30*86400000,subscription:null,wallet:{balance:0,ledger:[]},ai:{month:'',used:0},createdAt:new Date(now).toISOString()};premiumStore.users.push(u);return u}
 function planBy(id){return PREMIUM_PLANS[String(id||'').toLowerCase()]||null}
@@ -387,7 +422,16 @@ const server=http.createServer(async(req,res)=>{
       if(p==='/'||p==='/index.html')f=path.join(ROOT,'index.html');
       else if(p==='/remote')f=path.join(ROOT,'remote.html');
       else if(p==='/present'||p==='/present/')f=path.join(ROOT,'index.html');
-      else if(p==='/admin'||p==='/admin/')f=path.join(ROOT,'admin.html');
+      else if(p==='/admin'||p==='/admin/'){
+        /* The portal shell itself is gated too, so an outsider cannot even load the
+           login form and enumerate the surface. */
+        const g=adminGate(req);
+        if(!g.ok){
+          const html='<!doctype html><meta charset="utf-8"><title>Administrator</title><body style="font:16px system-ui;background:#07142f;color:#e8ecff;display:grid;place-items:center;height:100vh;margin:0"><div style="max-width:32rem;padding:2rem;text-align:center"><h1 style="font-size:1.25rem;margin:0 0 .75rem">Administrator portal is private</h1><p style="opacity:.75;line-height:1.6">'+escHtml(g.why||'Not available')+'</p></div>';
+          res.writeHead(403,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});return res.end(html);
+        }
+        f=path.join(ROOT,'admin.html');
+      }
       else if(p==='/privacy')f=path.join(ROOT,'privacy.html');
       else if(p==='/refund')f=path.join(ROOT,'refund.html');
       else f=path.join(ROOT,path.normalize(p).replace(/^(\.\.[\\/])+/,''));
