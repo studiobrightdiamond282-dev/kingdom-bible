@@ -44,3 +44,6 @@ coverage/
 .vercel
 # agent handover note — contains live Paystack/Cloudflare secrets, never commit
 HANDOVER.md
+
+# local premium store — real accounts, referral wallets, audit logs, payouts
+.data/
