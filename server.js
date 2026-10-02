@@ -224,6 +224,25 @@ function businessDaysFrom(date,n){const d=new Date(date);let left=n;while(left){
 function monthKey(){const d=new Date();return d.getUTCFullYear()+'-'+String(d.getUTCMonth()+1).padStart(2,'0')}
 function aiAllowance(u){const e=entitlementOf(u);if(e.status==='admin')return 100000;if(e.status==='expired')return 0;if(e.status==='trial')return 25;return currentPlanFor(u)?.aiMonthly||0}
 async function paystack(pathname,options={}){if(!PREMIUM_CONFIG.paystackSecretKey)throw new Error('PAYSTACK_SECRET_KEY is not configured');const r=await fetch('https://api.paystack.co'+pathname,{...options,headers:{Authorization:'Bearer '+PREMIUM_CONFIG.paystackSecretKey,'Content-Type':'application/json',...(options.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok||d.status===false)throw new Error(d.message||'Paystack request failed');return d}
+/* AI providers on a free tier return 429/503 whenever demand spikes. Measured in
+   production use: the very same request succeeded seconds after a 503, so a single
+   short retry clears almost every capacity blip instead of charging the user a
+   failed question. A 401 (bad key) is never retried — that is a real fault and the
+   operator needs to see it immediately. */
+const AI_SYSTEM='You are a careful Bible study assistant for KINGDOM BIBLE. Answer with humility, distinguish Scripture from interpretation, cite references when possible, encourage reading context, and never claim divine authority. Do not provide medical, legal, financial, or emergency instructions as a substitute for professionals.';
+async function askAi(question){
+  const body=JSON.stringify({model:PREMIUM_CONFIG.aiModel,messages:[{role:'system',content:AI_SYSTEM},{role:'user',content:question}],temperature:.35,max_tokens:900});
+  let status=0,why='';
+  for(let attempt=0;attempt<2;attempt++){
+    if(attempt)await new Promise(s=>setTimeout(s,900));
+    const r=await fetch(PREMIUM_CONFIG.aiApiUrl,{method:'POST',headers:{Authorization:'Bearer '+PREMIUM_CONFIG.aiApiKey,'Content-Type':'application/json'},body});
+    const d=await r.json().catch(()=>({}));
+    if(r.ok){const answer=d.choices?.[0]?.message?.content;if(answer)return answer;why='the provider returned an empty answer';status=r.status;continue}
+    status=r.status;why=d.error?.message||d.message||`empty body (${r.statusText||'no status text'})`;
+    if(status!==429&&status!==503)break;
+  }
+  throw new Error(`AI provider unavailable (HTTP ${status}): ${String(why).slice(0,180)}`);
+}
 async function settlePayment(reference,verified){
   const tx=premiumStore.transactions.find(x=>x.reference===reference);if(!tx||tx.status==='success')return tx;
   if(!verified)return tx;
@@ -304,7 +323,7 @@ const server=http.createServer(async(req,res)=>{
       const allowance=s.role==='admin'?100000:aiAllowance(s.user),used=s.role==='admin'?0:s.user.ai?.month===monthKey()?s.user.ai.used:0;if(used>=allowance)return json(res,402,{ok:false,error:'Your AI allowance is exhausted for this period',upgrade:true});
       if(!PREMIUM_CONFIG.aiApiKey)return json(res,503,{ok:false,error:'AI_API_KEY is not configured on the server'});
       const b=await body(req),question=String(b.question||'').trim().slice(0,4000);if(!question)return json(res,400,{ok:false,error:'Ask a Bible study question'});
-      try{const r=await fetch(PREMIUM_CONFIG.aiApiUrl,{method:'POST',headers:{Authorization:'Bearer '+PREMIUM_CONFIG.aiApiKey,'Content-Type':'application/json'},body:JSON.stringify({model:PREMIUM_CONFIG.aiModel,messages:[{role:'system',content:'You are a careful Bible study assistant for KINGDOM BIBLE. Answer with humility, distinguish Scripture from interpretation, cite references when possible, encourage reading context, and never claim divine authority. Do not provide medical, legal, financial, or emergency instructions as a substitute for professionals.'},{role:'user',content:question}],temperature:.35,max_tokens:900})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error?.message||'AI provider request failed');const answer=d.choices?.[0]?.message?.content;if(!answer)throw new Error('AI provider returned no answer');let remaining=allowance;if(s.role!=='admin'){s.user.ai=s.user.ai?.month===monthKey()?s.user.ai:{month:monthKey(),used:0};s.user.ai.used++;remaining=Math.max(0,allowance-s.user.ai.used);savePremiumStore()}audit('ai.question',s.role==='admin'?s.email:s.user.id,{month:monthKey()});return json(res,200,{ok:true,answer,remaining});}catch(e){return json(res,502,{ok:false,error:e.message})}
+      try{const answer=await askAi(question);let remaining=allowance;if(s.role!=='admin'){s.user.ai=s.user.ai?.month===monthKey()?s.user.ai:{month:monthKey(),used:0};s.user.ai.used++;remaining=Math.max(0,allowance-s.user.ai.used);savePremiumStore()}audit('ai.question',s.role==='admin'?s.email:s.user.id,{month:monthKey()});return json(res,200,{ok:true,answer,remaining});}catch(e){return json(res,502,{ok:false,error:e.message})}
     }
     if(p==='/api/admin/overview'&&req.method==='GET'){
       if(!requireAdmin(req,res))return;return json(res,200,{ok:true,notifications:premiumStore.notifications.slice(0,50),withdrawals:premiumStore.withdrawals.slice(0,100),users:premiumStore.users.map(publicUser),audit:premiumStore.audit.slice(0,150),plans:Object.values(PREMIUM_PLANS).map(({aiMonthly,...x})=>x)});
