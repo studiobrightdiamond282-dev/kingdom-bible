@@ -87,6 +87,15 @@ function normalize(input,opts){
   s=s.replace(/[^a-z0-9\s:\-]/g,' ');                /* strip punctuation      */
   s=s.replace(/(\d)(st|nd|rd|th)\b/g,'$1');          /* 1st -> 1               */
   s=s.replace(/([a-z])-(?=[a-z])/g,'$1 ');           /* twenty-three           */
+  /* A hyphen is only meaningful as a RANGE marker between two digits
+     ("John 3:16-18"). Anywhere else it is a stray separator, and leaving it
+     in place let compact() glue it onto the book name: "John -3:16" became
+     "john3", which prefix-matched "john" and silently answered John 16
+     instead of John 3:16. Demote every other hyphen to a space so the input
+     is read the way it was meant. */
+  s=s.replace(/(\d)-(\d)/g,'$1\u0000$2');            /* protect real ranges    */
+  s=s.replace(/-/g,' ');
+  s=s.replace(/\u0000/g,'-');
   s=s.replace(/([a-z])(?=\d)/g,'$1 ').replace(/(\d)(?=[a-z])/g,'$1 '); /* 1john */
   let toks=s.split(/\s+/).filter(Boolean);
   /* ordinal words and roman numerals before numbered books */
@@ -164,6 +173,13 @@ function matchBook(q,books,opts){
     if(pre.length>1&&!fuzzy)return -1;
   }
   if(!fuzzy)return -1;
+  /* Short queries must never reach the fuzzy tiers. At 1-3 characters almost
+     every abbreviation in the canon is within edit distance 1, so "abc 1:1"
+     resolved to Acts (via the alias "ac") and "x 1:1" to Exodus (via "ex") —
+     a confident wrong verse instead of a "Reference not found". A real book
+     token needs at least 4 characters before a guess is defensible; below
+     that, only the exact and unique-prefix tiers above may match. */
+  if(qc.length<4)return -1;
   if(qc.length>=4){                                                     /* subsequence */
     const sub=ix.filter(e=>isSubseq(qc,e.name));
     if(sub.length===1)return sub[0].i;

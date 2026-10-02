@@ -77,6 +77,31 @@ ok('"stop listening"',R.command('you can stop listening now')==='stop');
 ok('plain preaching is never a command',R.command('the next thing Jesus said was wonderful')===null);
 ok('"the last verse of the chapter" is never a command',R.command('the last verse of the chapter says')===null);
 
+console.log('\n--- regression: nonsense must never resolve to a real book ---');
+/* A short token sits within edit distance 1 of half the abbreviations in the
+   canon. "abc" was Acts (alias "ac") and "x" was Exodus (alias "ex"), so a
+   typo projected a confident WRONG verse to the congregation instead of an
+   honest "Reference not found". Only exact / unique-prefix may match. */
+ok('"abc 1:1" is not a book',P('abc 1:1')===null,P('abc 1:1'));
+ok('"x 1:1" is not a book',P('x 1:1')===null,P('x 1:1'));
+ok('"zzz 1:1" is not a book',P('zzz 1:1')===null);
+ok('"hello 2:2" is not a book',P('hello 2:2')===null);
+ok('a 3-char token never fuzzy-matches',R.matchBook('abc',books)===-1&&R.matchBook('x',books)===-1);
+ok('but a 4-char typo still resolves (jhon -> John)',R.matchBook('jhon',books)===42);
+ok('real abbreviations still resolve (jn, ex, ps)',
+  R.matchBook('jn',books)===42&&R.matchBook('ex',books)===1&&R.matchBook('jon',books)===31);
+
+console.log('\n--- regression: a stray hyphen must not swallow the chapter ---');
+/* "John -3:16" used to normalize to "john-3:16", fail REF_RE, and retry as
+   "john-3 16" -> book "john3" -> prefix John, chapter 16: a silent wrong
+   passage. A hyphen between digits is a range; every other hyphen is noise. */
+ok('"John -3:16" is John 3:16',eq(P('John -3:16'),42,3,16),P('John -3:16'));
+ok('"John - 3:16" is John 3:16',eq(P('John - 3:16'),42,3,16),P('John - 3:16'));
+ok('a trailing hyphen is ignored',eq(P('John 3:16-'),42,3,16),P('John 3:16-'));
+ok('a genuine range is preserved',eq(P('John 3:16-18'),42,3,16,18),P('John 3:16-18'));
+ok('an en-dash range is preserved',eq(P('John 3:16\u201318'),42,3,16,18),P('John 3:16\u201318'));
+ok('"twenty-three" is still a number',R.normalize('matthew twenty-three').includes('23'),R.normalize('matthew twenty-three'));
+
 console.log('\n--- formatting ---');
 ok('format John 3:16',R.format({book:42,chapter:3,verse:16,verseEnd:null},books)==='John 3:16');
 ok('format a range',R.format({book:42,chapter:3,verse:16,verseEnd:18},books)==='John 3:16-18');
