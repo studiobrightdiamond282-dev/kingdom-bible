@@ -62,6 +62,10 @@ ok('"now verse twenty five" is a contextual verse jump',(()=>{const r=S('now ver
 ok('ordinary preaching produces nothing',S('God is good all the time and all the time God is good')===null,S('God is good all the time and all the time God is good'));
 ok('a chapter beyond the canon is ignored',(()=>{const r=S('in john 95 we see');return r===null||r.type!=='ref'})(),S('in john 95 we see'));
 ok('fuzzy guessing is OFF for speech',(()=>{const r=S('the lion 3 16');return r===null||r.type!=='ref'})(),S('the lion 3 16'));
+ok('complete verse at the frame edge is marked atEnd',(()=>{const r=S('John 3:16');return r&&r.type==='ref'&&r.atEnd===true})(),S('John 3:16'));
+ok('complete verse followed by more speech is not atEnd',(()=>{const r=S('John 3:16 and the promise continues');return r&&r.type==='ref'&&r.verse===16&&r.atEnd===false})(),S('John 3:16 and the promise continues'));
+ok('chapter-only reference carries atEnd',(()=>{const r=S('John chapter three');return r&&r.type==='ref'&&r.verse===null&&r.atEnd===true})(),S('John chapter three'));
+ok('contextual verse atEnd tracks trailing speech',(()=>{const a=S('now verse twenty five'),b=S('now verse twenty five for the next point');return a&&a.type==='verse'&&a.atEnd===true&&b&&b.type==='verse'&&b.atEnd===false})());
 
 console.log('\n--- presenter voice commands ---');
 ok('"next verse"',R.command('let us go to the next verse')==='next');

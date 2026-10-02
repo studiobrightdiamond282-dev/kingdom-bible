@@ -26,7 +26,11 @@ const SR=g.SpeechRecognition||g.webkitSpeechRecognition;
 const LSV='kingdomVoice.v1';
 const LANGS=[['en-US','English (US)'],['en-GB','English (UK)'],['en-NG','English (Nigeria)'],['en-GH','English (Ghana)'],['en-ZA','English (South Africa)'],['en-IN','English (India)'],['en-AU','English (Australia)']];
 let hooks=null,rec=null,wantListen=false,starting=false,restartTimer=null;
-let finalTail='',pending={key:'',n:0},lastSent={key:'',at:0},entries=[],entrySeq=0;
+let finalTail='',fuseTimer=null,pending={key:'',hit:null},dispatchKeys=new Set(),entries=[],entrySeq=0;
+/* A short edge fuse lets the recogniser append a verse without making the
+   preacher wait for a pause. Chapter-only references get a longer hold because
+   the next frame often contains the verse. */
+const FUSE_MS=350,CHAPTER_HOLD_MS=1100;
 const settings=Object.assign({lang:'en-US',auto:true,tr:''},load());
 function load(){try{return JSON.parse(localStorage.getItem(LSV)||'{}')}catch{return{}}}
 function persist(){try{localStorage.setItem(LSV,JSON.stringify(settings))}catch{}}
@@ -78,8 +82,8 @@ function logHtml(){
   if(!entries.length)return '<div class="vlog">Detected references and commands will appear here.</div>';
   return entries.map(e=>`<div class="vlog ${e.cls||''}">${e.icon||''}<span>${esc(e.msg)}</span>${e.hit?`<button class="secondary-btn small-btn" data-vsend="${e.id}">Send</button>`:''}${e.ms!=null?`<span class="t">${e.ms} ms</span>`:''}</div>`).join('');
 }
-function addLog(msg,cls,ms,hit,icon){
-  entries.unshift({id:++entrySeq,msg,cls,ms:ms==null?null:ms,hit:hit||null,icon:icon||''});
+function addLog(msg,cls,ms,hit,icon,key){
+  entries.unshift({id:++entrySeq,msg,cls,ms:ms==null?null:ms,hit:hit||null,key:key||'',icon:icon||''});
   entries=entries.slice(0,8);
   const el=$('#voiceLog');if(el)el.innerHTML=logHtml();
 }
@@ -102,7 +106,7 @@ function setTranscript(fin,interim){
 function start(){
   if(!available()||wantListen)return;
   wantListen=true;
-  finalTail='';pending={key:'',n:0};
+  finalTail='';clearPending();dispatchKeys.clear();
   spin();
   setStatus('Listening',true);
   addLog('Microphone on — listening for Scripture references','', null,null,'');
@@ -124,7 +128,7 @@ function spin(){
   }
 }
 function stop(silent){
-  wantListen=false;clearTimeout(restartTimer);
+  wantListen=false;clearTimeout(restartTimer);clearPending();
   if(rec){try{rec.onend=null;rec.stop()}catch{}rec=null}
   setStatus('Ready',false);setTranscript('','');
   if(!silent)addLog('Microphone off','');
@@ -158,8 +162,32 @@ function onResult(e){
   }
   if(finals.trim())finalTail=(finalTail+' '+finals).slice(-240);
   setTranscript(finalTail,interim);
+  /* SpeechRecognition can deliver a final result and a newer interim result
+     in the same event. Scan both: interim frames are not a preview to ignore,
+     they are the earliest usable Scripture signal. */
   if(finals.trim())handleSegment(finals,true);
-  else if(interim.trim())handleSegment(interim,false);
+  if(interim.trim())handleSegment(interim,false);
+}
+function clearPending(){
+  if(fuseTimer){clearTimeout(fuseTimer);fuseTimer=null}
+  pending={key:'',hit:null};
+}
+function keyFor(hit){
+  if(hit.ctx||hit.type==='verse')return 'v:'+hit.verse+':'+(hit.verseEnd||'');
+  return ['r',hit.book,hit.chapter,hit.verse,hit.verseEnd].join(':');
+}
+function schedule(hit,key,delay){
+  /* Repeated interim frames for the same edge reference must not keep moving
+     the fuse. A new, more complete reference replaces the old candidate. */
+  if(pending.key===key&&fuseTimer)return;
+  clearPending();
+  pending={key,hit};
+  fuseTimer=setTimeout(()=>{
+    fuseTimer=null;
+    const next=pending;
+    pending={key:'',hit:null};
+    if(next.hit)dispatch(next.hit,next.key);
+  },delay);
 }
 function handleSegment(text,isFinal){
   if(!hooks||!g.KingdomRef)return;
@@ -167,49 +195,56 @@ function handleSegment(text,isFinal){
     const cmd=g.KingdomRef.command(text);
     if(cmd)return runCommand(cmd);
   }
+  /* scan() is intentionally called for every interim frame. A complete
+     book+chapter+verse followed by more words is safe to dispatch now; waiting
+     for isFinal made Voice Mode lag until the preacher paused. */
   const hit=g.KingdomRef.scan(text,hooks.books);
   if(!hit)return;
+  const key=keyFor(hit);
+  if(dispatchKeys.has(key)){clearPending();return}
+  if(hit.type==='ref'&&hit.verse==null){
+    schedule(hit,key,CHAPTER_HOLD_MS);
+    return;
+  }
   if(hit.type==='verse'){
-    /* "…now verse 25" — jump within the passage already on the display */
-    if(!isFinal)return;
-    const key='v:'+hit.verse+':'+(hit.verseEnd||'');
-    if(lastSent.key===key&&Date.now()-lastSent.at<4000)return;
-    return dispatch({ctx:true,verse:hit.verse,verseEnd:hit.verseEnd},key);
+    /* "…now verse 25" — jump within the passage already on the display. */
+    if(hit.atEnd!==false)schedule({...hit,ctx:true},key,FUSE_MS);
+    else{clearPending();dispatch({...hit,ctx:true},key)}
+    return;
   }
-  const key=['r',hit.book,hit.chapter,hit.verse,hit.verseEnd].join(':');
-  if(lastSent.key===key&&Date.now()-lastSent.at<4000)return;
-  if(!isFinal){
-    /* interim text changes mid-word; require a complete verse that stayed
-       stable across two interim frames before firing, so the display never
-       flashes a half-spoken reference */
-    if(hit.verse==null)return;
-    if(pending.key===key)pending.n++;else pending={key,n:1};
-    if(pending.n<2)return;
-  }
-  dispatch(hit,key);
+  if(hit.atEnd===false){
+    clearPending();
+    dispatch(hit,key);
+  }else schedule(hit,key,FUSE_MS);
 }
 function dispatch(hit,key){
+  /* Lock before any async resolver/display work. The recogniser commonly emits
+     the same verse again while the first send is still in flight. */
+  if(key&&dispatchKeys.has(key))return;
+  if(key)dispatchKeys.add(key);
   if(!settings.auto){
-    lastSent={key,at:Date.now()};
     const label=hit.ctx?('verse '+hit.verse+(hit.verseEnd?'-'+hit.verseEnd:'')):(g.KingdomRef.format(hit,hooks.books)||'reference');
-    addLog('Heard “'+label+'” — approve to send',' ',null,hit,'');
+    addLog('Heard “'+label+'” — approve to send',' ',null,hit,'',key);
     return;
   }
   fire(hit,key);
 }
 function fire(hit,key){
+  /* Manual approval normally arrives with a key already locked by dispatch().
+     Keep this guard for direct callers so every path has dispatch-time locking. */
+  key=key||keyFor(hit);
+  if(key&&!dispatchKeys.has(key))dispatchKeys.add(key);
   const started=(g.performance&&performance.now)?performance.now():Date.now();
   const done=v=>{
     if(v&&v.ref){
-      lastSent={key:key||'',at:Date.now()};
-      pending={key:'',n:0};
-      const ms=Math.round(((g.performance&&performance.now)?performance.now():Date.now())-started);
+      const ms=Math.round(((g.performance&&performance.now)?g.performance.now():Date.now())-started);
       addLog(v.ref+' sent to the display','hit',ms,null,'▣');
     }else addLog('Heard a reference but it is outside this chapter — nothing was sent','miss');
   };
   const p=hit.ctx?hooks.gotoVerse(hit.verse,hit.verseEnd,settings.tr):hooks.present(hit,settings.tr);
   Promise.resolve(p).then(done).catch(()=>done(null));
 }
+
 function runCommand(cmd){
   if(cmd==='stop'){stop();notify('Voice listening stopped');return}
   const label={next:'Next verse',prev:'Previous verse',blank:'Screen blanked',show:'Verse restored'}[cmd];
@@ -230,7 +265,7 @@ function bind(h){
   if(logEl)logEl.onclick=e=>{
     const b=e.target.closest('[data-vsend]');if(!b)return;
     const entry=entries.find(x=>String(x.id)===b.dataset.vsend);
-    if(entry&&entry.hit){fire(entry.hit,null);entry.hit=null;logEl.innerHTML=logHtml()}
+    if(entry&&entry.hit){fire(entry.hit,entry.key);entry.hit=null;logEl.innerHTML=logHtml()}
   };
   /* a re-render must reflect the true module state, never reset it */
   setStatus(wantListen?'Listening':'Ready',wantListen);

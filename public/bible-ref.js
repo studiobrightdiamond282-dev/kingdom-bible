@@ -79,7 +79,8 @@ function wordsToDigits(toks){
 }
 
 /* ---- normalisation pipeline --------------------------------------------- */
-function normalize(input){
+function normalize(input,opts){
+  const keepFiller=!!(opts&&opts.keepFiller);
   let s=String(input||'').toLowerCase();
   s=s.replace(/[\u2013\u2014\u2212]/g,'-');          /* en/em dash -> hyphen   */
   s=s.replace(/(\d)\s*[.,]\s*(\d)/g,'$1:$2');        /* "3.16" / "3,16" -> 3:16*/
@@ -103,7 +104,7 @@ function normalize(input){
     if(RANGE.has(t)&&/\d$/.test(prev)&&/^\d/.test(next)){out.push('-');continue}
     if(VERSEWORD.has(t)){out.push(':');continue}
     if(t==='chapter'||t==='chapters')continue;
-    if(FILLER.has(t))continue;
+    if(!keepFiller&&FILLER.has(t))continue;
     out.push(t);
   }
   return out.join(' ')
@@ -213,11 +214,31 @@ function parse(input,books,opts){
 
 /* ---- scan free speech for the most recent reference ----------------------
    Strict book matching only — a sermon must never trigger a fuzzy guess.
-   -> {type:'ref',book,chapter,verse,verseEnd}
-   -> {type:'verse',verse,verseEnd}   ("...now verse twenty five" — caller
+   `atEnd` is true when the recognised reference is the last thing in this
+   speech frame. Voice Preacher Mode uses it as a fuse: a complete verse that
+   is followed by more speech dispatches now, while a reference at the edge of
+   a frame gets a short chance to grow before it is sent.
+   -> {type:'ref',book,chapter,verse,verseEnd,atEnd}
+   -> {type:'verse',verse,verseEnd,atEnd} ("...now verse twenty five" — caller
       resolves it against the verse currently on the display)
    -> null */
 const SCAN_RE=/((?:[1-3]\s)?[a-z]+(?:\s[a-z]+){0,2})\s(\d{1,3})(?:[:\s](\d{1,3})(?:-(\d{1,3}))?)?(?=[\s:]|$)/g;
+function frameAtEnd(text,s,m,hit){
+  /* normalize() removes harmless spoken fillers for matching. Re-run it while
+     retaining those words so "John 3:16 with us" is not mistaken for an edge
+     reference merely because "with" and "us" are parser filler. */
+  const edge=normalize(text,{keepFiller:true});
+  if(edge.endsWith(m[0]))return true;
+  const markers=[];
+  if(hit.verseEnd!=null)markers.push('-'+hit.verseEnd);
+  if(hit.verse!=null)markers.push(':'+hit.verse,' '+hit.verse);
+  else markers.push(' '+hit.chapter);
+  for(const marker of markers){
+    const i=edge.lastIndexOf(marker);
+    if(i>=0)return edge.slice(i+marker.length).trim()==='';
+  }
+  return m.index+m[0].length===s.length;
+}
 function scan(text,books){
   if(!Array.isArray(books)||!books.length)return null;
   const s=normalize(text);
@@ -231,18 +252,26 @@ function scan(text,books){
       const bi=matchBook(words.slice(k).join(' '),books,{fuzzy:false});
       if(bi>=0)hit=refine(bi,+m[2],m[3]?+m[3]:null,m[4]?+m[4]:null,books);
     }
-    if(hit)best={type:'ref',book:hit.book,chapter:hit.chapter,verse:hit.verse,verseEnd:hit.verseEnd};
+    if(hit){
+      /* normalize strips punctuation and trailing whitespace, so the end of the
+         match is a reliable indication that the recogniser has more words in
+         this frame. Do not wait for isFinal: this is deliberately per-frame. */
+      best={type:'ref',book:hit.book,chapter:hit.chapter,verse:hit.verse,
+        verseEnd:hit.verseEnd,atEnd:frameAtEnd(text,s,m,hit)};
+    }
     /* the phrase may have eaten a numbered-book prefix ("reading 1 john 2 5"):
        retry from inside the failed phrase */
     else SCAN_RE.lastIndex=m.index+words[0].length+1;
   }
   if(best)return best;
   let vm=null;
-  const vre=/:(\d{1,3})(?:-(\d{1,3}))?/g;let v;
+  const vre=/:([0-9]{1,3})(?:-([0-9]{1,3}))?/g;let v;
   while((v=vre.exec(s)))vm=v;
   if(vm){
-    const verse=+vm[1],verseEnd=vm[2]?+vm[2]:null;
-    if(verse>=1&&verse<=200)return{type:'verse',verse,verseEnd:verseEnd&&verseEnd>verse?verseEnd:null};
+    const verse=+vm[1],verseEnd=vm[2]?+vm[2]:null,edge=normalize(text,{keepFiller:true});
+    const marker=verseEnd&&verseEnd>verse?'-'+verseEnd:':'+verse;
+    const atEnd=edge.endsWith(marker)||edge.endsWith(' '+verse);
+    if(verse>=1&&verse<=200)return{type:'verse',verse,verseEnd:verseEnd&&verseEnd>verse?verseEnd:null,atEnd};
   }
   return null;
 }
@@ -267,5 +296,5 @@ function format(p,books){
   return base+':'+p.verse+(p.verseEnd?'-'+p.verseEnd:'');
 }
 
-return{normalize,parse,scan,command,matchBook,format,wordsToDigits,compact,VERSION:'1.2.0'};
+return{normalize,parse,scan,command,matchBook,format,wordsToDigits,compact,VERSION:'1.2.1'};
 });

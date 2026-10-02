@@ -38,12 +38,26 @@ assert(app.includes('connectCardHtml')&&app.includes('drawQR'),'presenter QR wir
 /* ---- shared reference engine + Voice Preacher Mode ---- */
 assert(fs.existsSync(path.join(pub,'bible-ref.js')),'Missing bible-ref.js (shared reference engine)');
 assert(fs.existsSync(path.join(pub,'voice.js')),'Missing voice.js (Voice Preacher Mode)');
+assert(fs.existsSync(path.join(pub,'premium.js')),'Missing premium.js (accounts and subscriptions)');
+assert(fs.existsSync(path.join(pub,'admin.html'))&&fs.existsSync(path.join(pub,'admin.js')),'Missing admin portal');
+assert(fs.existsSync(path.join(pub,'privacy.html'))&&fs.existsSync(path.join(pub,'refund.html')),'Missing legal policy pages');
+const serverPremiumSrc=fs.readFileSync(path.join(root,'server.js'),'utf8');
+for(const ep of ['/api/auth/register','/api/auth/login','/api/payments/initialize','/api/wallet/withdraw','/api/admin/overview','/api/ai/ask'])assert(serverPremiumSrc.includes(ep),`premium endpoint missing ${ep}`);
+assert(serverPremiumSrc.includes('PAYSTACK_SECRET_KEY')&&!serverPremiumSrc.includes('pk_live_15b415df90f55aed4082c964b0fcb61daa642d41'),'live payment credentials must never be hard-coded');
 assert(html.includes('/bible-ref.js'),'index.html must load bible-ref.js');
 assert(html.includes('/voice.js'),'index.html must load voice.js');
+assert(html.includes('/premium.js'),'index.html must load premium.js');
 assert(html.indexOf('/bible-ref.js')<html.indexOf('/app.js'),'bible-ref.js must load before app.js');
-assert(swSrc0.includes('/bible-ref.js')&&swSrc0.includes('/voice.js'),'the service worker must precache the reference engine and voice module');
+assert(swSrc0.includes('/bible-ref.js')&&swSrc0.includes('/voice.js')&&swSrc0.includes('/premium.js'),'the service worker must precache the reference, voice, and premium modules');
 assert(app.includes('KingdomRef'),'app.js must use the shared reference engine');
 assert(app.includes('bindVoice')&&app.includes('getPassage'),'Voice Mode + passage resolution wiring missing');
+assert(app.includes('function openManual')&&app.includes('id=\"openManual\"'),'Ministry page must expose the User Manual');
+assert(html.includes('data-admin-trigger')&&app.includes("location.href='/admin'"),'admin portal must use the long-hold logo entrance');
+assert(app.includes('id=\"profileManual\"')&&app.includes('data-cmanual'),'Profile row and Ctrl+K palette must expose the User Manual');
+for(const phrase of ['wrong mic','Voicemeeter','https://','localhost','vMix','OBS','QR'])assert(app.toLowerCase().includes(phrase.toLowerCase()),`User Manual missing ${phrase}`);
+const voiceSrc=fs.readFileSync(path.join(pub,'voice.js'),'utf8');
+assert(voiceSrc.includes('FUSE_MS=350')&&voiceSrc.includes('CHAPTER_HOLD_MS=1100'),'Voice Scripture lock fuse timings missing');
+assert(voiceSrc.includes('dispatchKeys')&&voiceSrc.includes('dispatchKeys.add(key)'),'Voice dedupe key must lock at dispatch time');
 const serverSrc1=fs.readFileSync(path.join(root,'server.js'),'utf8');
 assert(serverSrc1.includes("require('./public/bible-ref.js')"),'server.js must use the shared reference engine');
 /* Voice Preacher Mode needs the microphone for THIS origin only */
@@ -71,7 +85,7 @@ assert(mf.name&&mf.short_name&&mf.start_url&&mf.display,'manifest is incomplete'
 const pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
 const swSrc=fs.readFileSync(path.join(pub,'sw.js'),'utf8');
 const serverSrc=fs.readFileSync(path.join(root,'server.js'),'utf8');
-assert.equal(pkg.version,'1.2.0','package.json version');
+assert.equal(pkg.version,'1.2.1','package.json version');
 assert(serverSrc.includes("VERSION='"+pkg.version+"'"),'server.js must report the same version as package.json');
 assert(swSrc.includes(`kingdom-bible-v${pkg.version}`),'sw.js cache version must match package.json so updates are picked up');
 

@@ -19,6 +19,18 @@
       "destination": "/index.html"
     },
     {
+      "source": "/admin",
+      "destination": "/admin.html"
+    },
+    {
+      "source": "/privacy",
+      "destination": "/privacy.html"
+    },
+    {
+      "source": "/refund",
+      "destination": "/refund.html"
+    },
+    {
       "source": "/control",
       "destination": "/index.html"
     },

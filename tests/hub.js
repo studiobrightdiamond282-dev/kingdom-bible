@@ -57,14 +57,17 @@ const htmlOnApi={status:200,json:false,body:null};
   ok('the connect card branches on the hub state',/if\(!live\)/.test(app));
   /* the offline branch returns early, so the green pill is only ever reachable online */
   const offlineAt=app.indexOf('hub-pill-off');
-  const livePillAt=app.indexOf('<span class="status-dot"></span> Live</span>');
-  ok('the offline card is rendered before the live card',offlineAt>0&&livePillAt>offlineAt,
-     'offline@'+offlineAt+' live@'+livePillAt);
+  const livePillAt=app.indexOf("ready?'Live':'Needs Wi-Fi'");
+  ok('the offline card is rendered before the LAN-ready card',offlineAt>0&&livePillAt>offlineAt,
+     'offline@'+offlineAt+' lan-ready@'+livePillAt);
   ok('the offline branch returns before the live card is built',
     /if\(!live\)\{[\s\S]*?return `<section class="card connect-card hub-offline-card">[\s\S]*?`;\s*\}/.test(app));
   ok('the "Live session" pill is conditional on a live hub',
     /isLive\(hubState\)\?'<span class="status-dot"><\/span> Live session':'<span class="status-dot off"><\/span> This computer only'/.test(app));
   ok('a blank QR canvas is removed rather than shown',/qr-wrap'\)\?\.remove\(\)/.test(app));
+  ok('the phone link embeds the service code exactly once',/origin\+'\/remote\?code='/.test(app)&&/drawQR\(full/.test(app));
+  ok('the old copy-link fallback is visible',/Direct phone link/.test(app)&&/Open phone remote/.test(app)&&/Copy link/.test(app));
+  ok('localhost is never placed in the phone QR',/localHost/.test(app)&&/QR is intentionally hidden until a real LAN link/.test(app));
   ok('a retry control exists on the presenter card',/id="hubRetry"/.test(app)&&/id="hubRetry"/.test(app));
   ok('the phone remote can retry without reloading',/pairRetry/.test(remote));
   ok('the remote does not assume the hub is online',/let hubOnline=false/.test(remote)&&!/let hubOnline=true/.test(remote));

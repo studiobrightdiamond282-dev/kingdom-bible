@@ -4,6 +4,28 @@
 
 A premium, local-first Progressive Web App for Bible reading, Scripture study, prayer journaling, reading plans, memorization, and professional church Scripture presentation.
 
+## New in v1.2.1
+
+- **Scripture lock for Voice Preacher Mode** scans every interim speech frame. A complete
+  book + chapter + verse dispatches immediately when more speech follows; edge references
+  use a 350 ms fuse, chapter-only references use a 1.1 second hold, and the dedupe key is
+  locked at dispatch so one verse cannot fire twice. `KingdomRef.scan()` exposes `atEnd` for
+  this timing decision.
+- **In-app User Manual** is available from the Ministry page, Profile, and the `Ctrl/Cmd + K`
+  command palette. It covers navigation, reading, search, Ministry setup, Voice Mode and
+  microphone/Voicemeeter troubleshooting, secure microphone origins, phone QR pairing, and
+  vMix/OBS browser-source setup.
+- **KINGDOM BIBLE PRO foundation** adds a 30-day trial with a seven-day warning, Silver
+  (₦2,500), Gold (₦5,000), Premium (₦10,000), and Unlimited (₦20,000) monthly plans,
+  Paystack server-side checkout boundaries, referral wallets, three-working-day withdrawal
+  review, admin free-access grants, secure admin portal entry, profile photo upload, WhatsApp
+  support, and privacy/refund pages. Payment and AI secrets are deployment environment values;
+  no live credential is committed.
+- AI study access uses plan fair-use allowances rather than an unsafe promise of unlimited
+  paid API usage. The optional provider is configured with `AI_API_KEY`, `AI_API_URL`, and
+  `AI_MODEL`. Admin audit records cover security, payment, referral, and withdrawal events;
+  the app does not secretly record every page visit, location, microphone audio, or reading page.
+
 ## New in v1.2
 
 - **Shared Scripture reference engine** (`public/bible-ref.js`) used by the reader, Search,
@@ -60,7 +82,7 @@ Open `http://localhost:4173`.
 ## Test
 
 ```bash
-npm test                  # smoke + QR round-trip + display auto-fit (no server needed)
+npm test                  # smoke + reference/voice timing + QR + display auto-fit (no server needed)
 node tests/integration.js # full remote/display flow (needs `npm start` running)
 npm run test:all          # everything
 ```
@@ -80,9 +102,10 @@ Open **Ministry Mode**. The server runs a **live service session**, so a phone o
 Wi-Fi can drive the audience display.
 
 1. `npm start` prints a LAN address such as `http://192.168.100.5:4173`.
-2. The "Connect a phone remote" card shows a **service code**, a **QR code** and the **phone address**.
-3. On the phone, scan the QR **or** type the address and enter the 6-character code.
-4. Type a reference (`John 3:16`), pick a translation, press **Send**.
+2. The "Connect a phone remote" card shows a **service code**, a QR code, and a **direct phone link**.
+3. Use **Open phone remote** or **Copy link** first. The direct link already contains the service code. If scanning fails, type that full link on the phone; never use `localhost` on the phone.
+4. If the card says "Needs Wi-Fi", connect the ministry computer to the same Wi-Fi as the phone, open the app from its LAN address, and allow Node.js through the firewall. Do not use a guest network that isolates devices.
+5. Type a reference (`John 3:16`), pick a translation, press **Send**.
 
 The phone can send verses, step next/previous (crossing chapter and book boundaries),
 blank the screen, and switch look. Verses resolve **server-side**, so the phone never
@@ -145,6 +168,27 @@ streams to devices on the same Wi-Fi with no internet and no cloud account.
 The static build detects the missing API and tells the user to start the hub rather than
 showing a raw `HTTP 404`.
 
+## Premium deployment configuration
+
+The premium account foundation is server-side and must not be deployed as a static-only site.
+Copy `.env.example` into deployment secrets and set a new admin password. The supplied
+Paystack `pk_live` value is a publishable key, but it should still be injected through
+`PAYSTACK_PUBLIC_KEY`; the matching `PAYSTACK_SECRET_KEY` must remain server-only. Never
+commit either key or an admin password.
+
+The included `server.js` provides account sessions, a 30-day trial, the seven-day warning,
+Paystack initialize/verify boundaries, referral wallet entries, withdrawal requests, admin
+free-access grants, and an in-app audit log. The JSON store is suitable for local testing only;
+production should move it to PostgreSQL or another durable database before taking payments.
+The AI assistant is optional and requires `AI_API_KEY`; its “Unlimited” plan is fair-use capped
+so provider costs cannot grow without control.
+
+The administrator portal is at `/admin`. Holding the Kingdom Bible logo for 2.5 seconds only
+opens that route; actual access still requires `ADMIN_EMAIL` and `ADMIN_PASSWORD`. The admin
+can grant free access, review withdrawals, and mark payments complete. Hidden page-by-page
+surveillance is intentionally not implemented: audit logs cover authentication, payment,
+referral, withdrawal, and security events and are explained in the Privacy Policy.
+
 ## Google Play compliance
 
 Two messages appear in Play Console for a sideloaded build. Both are addressed:
@@ -201,7 +245,7 @@ Never place provider secrets in browser code. Use the names in `.env.example` on
 `GET /health` returns service status without secrets or stack traces:
 
 ```json
-{"ok":true,"app":"KINGDOM BIBLE","version":"1.1.1","presentation":"operational",
+{"ok":true,"app":"KINGDOM BIBLE","version":"1.2.1","presentation":"operational",
  "sessionActive":true,"listeners":1,"uptime":412,"serverTime":1757404800000}
 ```
 
@@ -251,7 +295,7 @@ paired phone plus any vMix input that is mid-service.
 
 ## Version
 
-KINGDOM BIBLE v1.2.0 — `package.json`, `server.js` and the service-worker cache version are
+KINGDOM BIBLE v1.2.1 — `package.json`, `server.js` and the service-worker cache version are
 kept in sync, and a smoke test fails the build if they drift.
 
 ## Duplicate-folder cleanup (one-time, on the ministry PC)
