@@ -363,6 +363,24 @@ const server=http.createServer(async(req,res)=>{
     if(p==='/api/admin/overview'&&req.method==='GET'){
       if(!requireAdmin(req,res))return;return json(res,200,{ok:true,notifications:premiumStore.notifications.slice(0,50),withdrawals:premiumStore.withdrawals.slice(0,100),users:premiumStore.users.map(publicUser),audit:premiumStore.audit.slice(0,150),plans:Object.values(PREMIUM_PLANS).map(({aiMonthly,...x})=>x)});
     }
+    /* The portal could render notifications but had no way to clear them, so the
+       unread badge could only ever grow. Marking read is also the audit signal that
+       somebody actually reviewed the item. */
+    if(p==='/api/admin/notifications/read-all'&&req.method==='POST'){
+      const s=requireAdmin(req,res);if(!s)return;
+      const unread=(premiumStore.notifications||[]).filter(x=>!x.read).length;
+      premiumStore.notifications=premiumStore.notifications.map(x=>({...x,read:true}));
+      savePremiumStore();audit('notifications.readAll',s.email,{count:unread});
+      return json(res,200,{ok:true,count:unread});
+    }
+    const markRead=p.match(/^\/api\/admin\/notifications\/([^/]+)\/read$/);
+    if(markRead&&req.method==='POST'){
+      const s=requireAdmin(req,res);if(!s)return;
+      const n=(premiumStore.notifications||[]).find(x=>x.id===markRead[1]);
+      if(!n)return json(res,404,{ok:false,error:'Notification not found'});
+      n.read=true;savePremiumStore();audit('notification.read',s.email,{notificationId:n.id,type:n.type});
+      return json(res,200,{ok:true,notification:n});
+    }
     const grant=p.match(/^\/api\/admin\/users\/([^/]+)\/entitlement$/);
     if(grant&&req.method==='POST'){
       const s=requireAdmin(req,res);if(!s)return;const u=findUser(grant[1]);if(!u)return json(res,404,{ok:false,error:'User not found'});const b=await body(req),months=Math.max(1,Math.min(12,Number(b.freeMonths)||1)),plan=planBy(b.plan)||PREMIUM_PLANS.unlimited;
