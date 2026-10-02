@@ -44,6 +44,12 @@ assert(fs.existsSync(path.join(pub,'privacy.html'))&&fs.existsSync(path.join(pub
 const serverPremiumSrc=fs.readFileSync(path.join(root,'server.js'),'utf8');
 for(const ep of ['/api/auth/register','/api/auth/login','/api/payments/initialize','/api/wallet/withdraw','/api/admin/overview','/api/ai/ask'])assert(serverPremiumSrc.includes(ep),`premium endpoint missing ${ep}`);
 assert(serverPremiumSrc.includes('PAYSTACK_SECRET_KEY')&&!serverPremiumSrc.includes('pk_live_15b415df90f55aed4082c964b0fcb61daa642d41'),'live payment credentials must never be hard-coded');
+/* Paystack "pass fees to customers" makes the verified amount the GROSS the
+   customer paid (Nigeria: 1.5% + NGN 100), so a Silver plan charges 263,960
+   kobo instead of 250,000. An exact equality check silently rejected every real
+   payment. Guard against that regression coming back. */
+assert(!/Number\(d\.data\.amount\)\s*===\s*tx\.amount\s*\*\s*100/.test(serverPremiumSrc),'payment verify must not require Paystack amount to equal the plan price exactly (fees are added when the customer bears them)');
+assert(/charged\s*>=\s*tx\.amount\s*\*\s*100/.test(serverPremiumSrc),'payment verify must accept any charged amount at least the plan price so Paystack fees do not break checkout');
 assert(html.includes('/bible-ref.js'),'index.html must load bible-ref.js');
 assert(html.includes('/voice.js'),'index.html must load voice.js');
 assert(html.includes('/premium.js'),'index.html must load premium.js');

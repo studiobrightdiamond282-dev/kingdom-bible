@@ -280,7 +280,17 @@ const server=http.createServer(async(req,res)=>{
       const s=requireAuth(req,res);if(!s)return;
       const b=await body(req),reference=String(b.reference||'');if(!reference)return json(res,400,{ok:false,error:'Payment reference is required'});
       const tx=premiumStore.transactions.find(x=>x.reference===reference&&x.userId===s.user.id);if(!tx)return json(res,404,{ok:false,error:'Payment not found'});
-      try{const d=await paystack('/transaction/verify/'+encodeURIComponent(reference));const ok=d.data?.status==='success'&&Number(d.data.amount)===tx.amount*100&&d.data.metadata?.userId===tx.userId;if(!ok)return json(res,400,{ok:false,error:'Payment could not be verified'});await settlePayment(reference,true);return json(res,200,{ok:true,user:publicUser(s.user),message:'Subscription activated'});}catch(e){return json(res,503,{ok:false,error:e.message})}
+      try{const d=await paystack('/transaction/verify/'+encodeURIComponent(reference));
+      /* Paystack's verify `amount` is the GROSS charged to the customer, not the
+         plan price. When the dashboard has "pass fees to customers" enabled that
+         gross includes the transaction fee (Nigeria: 1.5% + NGN 100, so a N2,500
+         Silver plan bills 263,960 kobo rather than 250,000). An exact
+         `=== tx.amount * 100` test therefore rejected every genuine payment.
+         Paystack only ever ADDS the fee, never subtracts it, so requiring the
+         charged amount to be AT LEAST the plan price is correct for both fee
+         modes while still refusing an underpayment. */
+      const charged=Number(d.data?.amount);
+      const ok=d.data?.status==='success'&&Number.isFinite(charged)&&charged>=tx.amount*100&&d.data.metadata?.userId===tx.userId;if(!ok)return json(res,400,{ok:false,error:'Payment could not be verified'});await settlePayment(reference,true);return json(res,200,{ok:true,user:publicUser(s.user),message:'Subscription activated'});}catch(e){return json(res,503,{ok:false,error:e.message})}
     }
     if(p==='/api/wallet/withdraw'&&req.method==='POST'){
       const s=requireAuth(req,res);if(!s||s.role==='admin')return s?json(res,400,{ok:false,error:'Administrator accounts do not need withdrawals'}):null;
