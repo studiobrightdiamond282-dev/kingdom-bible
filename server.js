@@ -452,6 +452,10 @@ const server=http.createServer(async(req,res)=>{
       }
       else if(p==='/privacy')f=path.join(ROOT,'privacy.html');
       else if(p==='/refund')f=path.join(ROOT,'refund.html');
+      /* vercel.json rewrites /status to status.html and the README documents it, but
+         this route was never added here, so the status page 404ed on the ministry PC
+         hub while working on the static deployment. */
+      else if(p==='/status')f=path.join(ROOT,'status.html');
       else f=path.join(ROOT,path.normalize(p).replace(/^(\.\.[\\/])+/,''));
       if(f.startsWith(ROOT)&&fs.existsSync(f)&&fs.statSync(f).isFile()){
         const ext=path.extname(f),st=fs.statSync(f);

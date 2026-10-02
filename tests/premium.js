@@ -19,6 +19,6 @@ async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/heal
   const admin=await request('/api/auth/login',{method:'POST',body:JSON.stringify({email:'stanley.okonkwo282@gmail.com',password:'test-admin-password'})});assert.equal(admin.body.user.role,'admin');
   const overview=await request('/api/admin/overview',{headers:{cookie:admin.cookie}});assert.equal(overview.body.users.length,2);
   const grant=await request('/api/admin/users/'+a.body.user.id+'/entitlement',{method:'POST',headers:{cookie:admin.cookie},body:JSON.stringify({plan:'premium',forever:true})});assert.equal(grant.body.user.status,'active');assert.equal(grant.body.user.plan,'premium');
-  for(const page of ['/admin','/privacy','/refund']){const r=await fetch(base+page);assert.equal(r.status,200,page+' must be served')}
+  for(const page of ['/admin','/privacy','/refund','/status']){const r=await fetch(base+page);assert.equal(r.status,200,page+' must be served')}
   console.log('✓ premium trial, referral wallet, admin grant, and legal routes');
 }catch(e){console.error(e.stack||e);process.exitCode=1}finally{child.kill('SIGTERM');try{fs.unlinkSync(store)}catch{}}})();
