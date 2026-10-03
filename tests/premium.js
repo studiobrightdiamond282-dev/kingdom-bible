@@ -130,5 +130,29 @@ async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/heal
   assert.equal(icon192.headers.get('content-type'),'image/png','the app icon must be a real PNG');
 
   console.log('âœ“ premium trial, referral wallet, admin grant, legal routes, support number, profile photo, keep-me-signed-in, password recovery, update notification');
+/* ---- client account flow: a fresh signup must land on Home, not the plan wall ---- */
+  {
+    const app=fs.readFileSync(path.join(__dirname,'..','public','app.js'),'utf8');
+    const prem=fs.readFileSync(path.join(__dirname,'..','public','premium.js'),'utf8');
+    assert(!/user=d\.user;g\.onAuth&&g\.onAuth\(user\);account\(\)/.test(prem),
+      'sign-in must not open the plan screen immediately after authenticating');
+    assert(!/user=d\.user;g\.onAuth&&g\.onAuth\(user\);account\(\)/.test(prem.split('googleButton')[1]||''),
+      'Google sign-in must not open the plan screen either');
+    assert(/function afterAuth\(u\)\{[\s\S]{0,120}close\(\)/.test(prem),
+      'afterAuth must hand control back to the shell and close the modal');
+    assert(/navigate\('home',true\)/.test(app),'a completed sign-in must navigate to Home');
+    /* applyAccount used to re-assign KingdomPremium.onAuth, silently replacing the
+       shell handler: the gate never closed on signup and sign-out did nothing. */
+    const applyLine=(app.split('function applyAccount')[1]||'').split('\n').find(l=>/accountState=u\?/.test(l))||'';
+    assert(!/KingdomPremium\.onAuth/.test(applyLine),'applyAccount must not overwrite KingdomPremium.onAuth');
+    assert(/if\(!u\)\{applyAccount\(null\)/.test(app),'a sign-out (onAuth null) must clear the account and restore the gate');
+    assert(/id="profileSignOut"/.test(app),'Profile must render a sign-out button');
+    assert(/profileSignOut[\s\S]{0,200}signOut\?\.\(\)/.test(app),'the Profile sign-out button must call KingdomPremium.signOut');
+    assert(/shareApp,signOut,supportText/.test(prem),'premium.js must export signOut');
+    assert(/await signOut\(\)/.test(prem),'the in-modal sign out must reuse the shared signOut helper');
+    assert(/function saveQuiet\(\)/.test(app),'a DOM-free persist must exist for the voice path');
+  }
+
+  console.log('✓ Client account flow: home after sign-in, reachable sign-out');
 }catch(e){console.error(e.stack||e);process.exitCode=1}finally{child.kill('SIGTERM');try{fs.unlinkSync(store)}catch{}}})();
 
