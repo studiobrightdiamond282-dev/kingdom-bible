@@ -299,3 +299,7 @@ button[disabled]{opacity:.5;cursor:not-allowed}
 .update-banner{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;z-index:120;display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:center;padding:12px 16px;border-radius:14px;background:#0f1b3a;border:1px solid color-mix(in srgb,var(--gold),transparent 55%);color:var(--text);box-shadow:0 12px 34px rgba(0,0,0,.45);font-size:13px;max-width:calc(100vw - 24px)}
 .update-banner .icon-btn{width:26px;height:26px;font-size:16px}
 @media(max-width:580px){.update-banner{left:12px;right:12px;transform:none;max-width:none}.referral-input{font-size:12px}}
+
+/* notifications: a real unread marker, only when there is genuinely something to see */
+.icon-btn.has-dot{position:relative}
+.icon-btn.has-dot:after{content:'';position:absolute;top:7px;right:8px;width:8px;height:8px;border-radius:50%;background:var(--danger);box-shadow:0 0 0 2px var(--bg)}

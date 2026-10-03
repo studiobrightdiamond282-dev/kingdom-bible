@@ -151,8 +151,23 @@ async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/heal
     assert(/shareApp,signOut,supportText/.test(prem),'premium.js must export signOut');
     assert(/await signOut\(\)/.test(prem),'the in-modal sign out must reuse the shared signOut helper');
     assert(/function saveQuiet\(\)/.test(app),'a DOM-free persist must exist for the voice path');
+    /* the notification bell used to be a permanent "No new notifications" toast:
+       a dead control that looked live. It must now report real account state. */
+    assert(!/notifBtn'\)\.onclick=\(\)=>toast\('No new notifications'\)/.test(app),
+      'the notification bell must not be a hard-coded "no notifications" toast');
+    assert(/function openNotifications\(\)/.test(app),'the bell must open a real notifications view');
+    assert(/function notifItems\(\)/.test(app),'notifications must be derived from the real account state');
+    assert(/\.classList\.toggle\('has-dot'/.test(app),'the bell must show an unread marker when something needs attention');
+    assert(/bindNotifications\(\);/.test(app.split('KingdomPremium.onAuth=')[1]||''),
+      'the bell must refresh when the account changes');
+    /* stale copy: accounts and photo sync genuinely work now */
+    assert(!/Secure multi-device accounts are not connected/.test(app),
+      'Profile must not still claim accounts are not connected');
+    const css=fs.readFileSync(path.join(__dirname,'..','public','styles.css'),'utf8');
+    assert(/\.icon-btn\.has-dot/.test(css),'the unread marker needs a style');
   }
 
   console.log('✓ Client account flow: home after sign-in, reachable sign-out');
+  console.log('✓ Notifications reflect real account state; stale profile copy removed');
 }catch(e){console.error(e.stack||e);process.exitCode=1}finally{child.kill('SIGTERM');try{fs.unlinkSync(store)}catch{}}})();
 
