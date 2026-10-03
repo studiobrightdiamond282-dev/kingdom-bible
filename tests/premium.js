@@ -188,6 +188,14 @@ async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/heal
     assert(/Continue my free trial/.test(prem),'a trial user must be offered a "Continue my free trial" button');
     assert(/trialContinue[\s\S]{0,80}afterAuth\(user\)/.test(prem),'the continue button must reuse the post-sign-in path');
     assert(/\$\{continueBlock\}/.test(prem),'the continue block must actually be rendered into the modal');
+    /* "Google sign-in is not configured" appeared under the sign-in form on a server
+       that was completely healthy. loadGoogle() judged `config` before it had loaded,
+       then cached the REJECTED promise, so a single early failure (a blip on a phone
+       hotspot) broke Google sign-in for the rest of the page session. */
+    assert(/async function ensureConfig\(\)/.test(prem),'Google sign-in must wait for the config rather than assume it arrived');
+    assert(/googleReady\.catch\(\(\)=>\{googleReady=null\}\)/.test(prem),'a failed Google load must not be cached forever');
+    assert(!/Google sign-in is not configured/.test(prem),'the bare "not configured" message must be replaced with actionable copy');
+    assert(/sign in with your email and password/.test(prem),'a Google failure must tell the reader to use email instead');
     /* applyAccount used to re-assign KingdomPremium.onAuth, silently replacing the
        shell handler: the gate never closed on signup and sign-out did nothing. */
     const applyLine=(app.split('function applyAccount')[1]||'').split('\n').find(l=>/accountState=u\?/.test(l))||'';

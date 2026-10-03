@@ -4,7 +4,7 @@
 'use strict';
 const root=()=>document.querySelector('#modalRoot');
 const esc=s=>String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-let config=null,user=null,googleReady=null;
+let config=null,user=null,googleReady=null,configPromise=null;
 /* Support contact is served by the server (/api/premium/config) so the number is defined
    in exactly one place. The literal below is only a fallback for the first paint, before
    config has loaded, and must always agree with SUPPORT_PHONE in server.js. */
@@ -24,7 +24,37 @@ function sharePayload(text){
 /* Loaded on demand, only when someone actually opens sign-in. Putting
    accounts.google.com in the page on every load would slow the app and hand Google
    a request for every reader who never signs in. */
-function loadGoogle(){if(googleReady)return googleReady;googleReady=new Promise((resolve,reject)=>{if(!config?.googleClientId)return reject(Error('Google sign-in is not configured'));if(window.google?.accounts?.id)return resolve(window.google.accounts.id);const s=document.createElement('script');s.src='https://accounts.google.com/gsi/client';s.async=true;s.onload=()=>window.google?.accounts?.id?resolve(window.google.accounts.id):reject(Error('Google sign-in could not load'));s.onerror=()=>reject(Error('Google sign-in could not load'));document.head.append(s)});return googleReady}
+/* Make sure the config is actually in hand before judging it. app.js paints the
+   sign-in gate as soon as /api/auth/me resolves, and load() swallows its own
+   errors, so on a flaky phone connection `config` could still be null here even
+   though the server is perfectly healthy. Concurrent callers share one request. */
+async function ensureConfig(){
+  if(config&&config.googleClientId)return config;
+  if(!configPromise)configPromise=load().finally(()=>{configPromise=null});
+  return configPromise;
+}
+/* The old version cached a REJECTED promise forever, so one early failure poisoned
+   Google sign-in for the whole page session with no way back except a reload. A
+   failure now clears the cache so a retry can genuinely succeed. */
+function loadGoogle(){
+  if(googleReady)return googleReady;
+  googleReady=(async()=>{
+    const c=await ensureConfig();
+    if(!c?.googleClientId)throw Error('Google sign-in is unavailable. Please sign in with your email and password.');
+    if(window.google?.accounts?.id)return window.google.accounts.id;
+    await new Promise((res,rej)=>{
+      const s=document.createElement('script');
+      s.src='https://accounts.google.com/gsi/client';s.async=true;
+      s.onload=res;
+      s.onerror=()=>rej(Error('Google sign-in could not load. Check your connection, or sign in with your email and password.'));
+      document.head.append(s);
+    });
+    if(!window.google?.accounts?.id)throw Error('Google sign-in could not load. Check your connection, or sign in with your email and password.');
+    return window.google.accounts.id;
+  })();
+  googleReady.catch(()=>{googleReady=null});
+  return googleReady;
+}
 /* Renders Google's own button into `mount`. The credential is posted to our server,
    which verifies it against Google — the browser is never trusted for the email. */
 function googleButton(mount){const host=mount||root().querySelector('#googleMount');if(!host)return;host.innerHTML='';loadGoogle().then(api=>api.initialize({client_id:config.googleClientId,callback:async resp=>{const box=host.querySelector('.premium-form-error')||document.createElement('div');box.className='premium-form-error';try{/* the ?ref= code is sent with the credential so a Google signup still credits the inviter */const d=await apiPost('/api/auth/google',{credential:resp.credential,referralCode:new URLSearchParams(location.search).get('ref')||''});user=d.user;afterAuth(user)}catch(x){host.append(box),box.textContent=x.message}}})).then(api=>api.renderButton(host,{theme:'filled_black',size:'large',width:Math.min(360,host.clientWidth||340),text:'continue_with'})).catch(x=>{host.innerHTML=`<p class="gate-note">${esc(x.message)}</p>`})}
