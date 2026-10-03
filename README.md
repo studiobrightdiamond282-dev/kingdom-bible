@@ -42,6 +42,15 @@ A premium, local-first Progressive Web App for Bible reading, Scripture study, p
   `{{WHATSAPP}}` / `{{WHATSAPP_LINK}}`. Change it there, never in a page or bundle.
 - **App icons** are generated from `public/assets/logo.png` by `npm run icons`. The favicon,
   PWA icons, and maskable icon therefore always match the real logo.
+- **Shared-link branding.** `public/assets/logo-social.png` (1200×630, built from
+  `logo-hero.png` by `npm run social`) is the picture shown when the hub URL is shared on
+  WhatsApp, Facebook or X. `index.html` wires it up as `og:image` / `twitter:image` with full
+  Open Graph, Twitter and canonical tags. Every one of those URLs is emitted through the
+  `{{ORIGIN}}` placeholder, which `server.js` fills from the request host (or `PUBLIC_URL`
+  when the hub is reached under a different name). Do not hardcode a hostname in a page: a
+  relative `og:image` is ignored by every crawler, which is why the link used to preview as
+  bare text. The card is deliberately not in the service-worker precache — crawlers never run
+  the worker, and 400 KB of image would slow first install for no offline benefit.
 - AI study access uses plan fair-use allowances rather than an unsafe promise of unlimited
   paid API usage. The optional provider is configured with `AI_API_KEY`, `AI_API_URL`, and
   `AI_MODEL`. Admin audit records cover security, payment, referral, and withdrawal events;

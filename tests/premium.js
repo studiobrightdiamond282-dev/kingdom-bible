@@ -45,6 +45,33 @@ async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/heal
     assert(page.includes('2348134438808'),'the served page must carry the correct number');
   }
 
+  /* ---- link preview: a shared url must show the logo, not bare text ----
+     This is why the hub link used to look unbranded when shared. Every social
+     crawler resolves a RELATIVE og:image against the url it was handed, and
+     "/assets/logo-hero.png" resolved to nothing, so the preview had no picture
+     at all. The origin is now injected from the request host, so these urls must
+     come out absolute and correct on whatever hostname the hub is reached by. */
+  const home=await (await fetch(base+'/')).text();
+  assert(!/\{\{ORIGIN\}\}/.test(home),'the {{ORIGIN}} placeholder must be injected before serving');
+  const ogImage=(home.match(/property="og:image" content="([^"]+)"/)||[])[1]||'';
+  assert(ogImage.startsWith(base),'og:image must be absolute, got: '+ogImage);
+  assert(ogImage.endsWith('/assets/logo-social.png'),'og:image must point at the share card');
+  assert(!/<meta property="og:image" content="\/(?!\/)/.test(home),'a root-relative og:image is ignored by every crawler');
+  assert(home.includes('property="og:image:width" content="1200"'),'the share card is 1200px wide');
+  assert(home.includes('property="og:image:height" content="630"'),'the share card is 630px tall');
+  assert(home.includes('name="twitter:card" content="summary_large_image"'),'X needs an explicit card type');
+  assert(home.includes('rel="canonical"'),'a shared url should declare a canonical address');
+  const card=await fetch(base+'/assets/logo-social.png');
+  assert.equal(card.status,200,'the share card must be reachable without sign-in');
+  assert.equal(card.headers.get('content-type'),'image/png');
+  const cardBuf=Buffer.from(await card.arrayBuffer());
+  assert.equal(cardBuf.readUInt32BE(16),1200,'share card width must match og:image:width');
+  assert.equal(cardBuf.readUInt32BE(20),630,'share card height must match og:image:height');
+  /* the origin is echoed into the head, so a hostile header must never inject markup */
+  const spoof=await (await fetch(base+'/',{headers:{'x-forwarded-host':'evil.example.com"><script>alert(1)</script>'}})).text();
+  assert(!/<script>/.test(spoof),'a hostile x-forwarded-host must never reach the HTML');
+  assert(!spoof.includes('evil.example.com'),'a rejected host must not be echoed back at all');
+
   /* ---- referral link is shareable and credits the inviter ---- */
   const w=await request('/api/wallet',{headers:{cookie:a.session}});
   assert.equal(w.body.referral.code,a.body.user.referralCode);

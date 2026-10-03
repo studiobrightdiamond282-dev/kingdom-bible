@@ -10,7 +10,8 @@
     "test:integration": "node tests/integration.js",
     "test:all": "node tests/smoke.js && node tests/refs.js && node tests/voice.js && node tests/premium.js && node tests/qr.js && node tests/fit.js && node tests/hub.js && node tests/integration.js",
     "assetlinks": "node scripts/assetlinks.js",
-    "icons": "node scripts/icons.js"
+    "icons": "node scripts/icons.js",
+    "social": "node scripts/social-card.js"
   },
   "engines": {
     "node": ">=20"

@@ -5,17 +5,35 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="theme-color" content="#07142f" />
   <meta name="description" content="KINGDOM BIBLE — Read, study, understand, and live the Word." />
-  <meta property="og:title" content="KINGDOM BIBLE" />
-  <meta property="og:description" content="The complete Bible reading, study, prayer and ministry platform." />
-  <meta property="og:image" content="/assets/logo-hero.png" />
   <title>KINGDOM BIBLE</title>
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="/favicon.png" sizes="48x48" />
   <link rel="icon" href="/icons/icon-32.png" sizes="32x32" />
   <link rel="icon" href="/icons/icon-48.png" sizes="48x48" />
   <link rel="apple-touch-icon" href="/icons/icon-180.png" />
   <link rel="mask-icon" href="/favicon.svg" color="#07142f" />
   <meta name="apple-mobile-web-app-title" content="Kingdom Bible" />
+  <!-- Link preview. Every url below MUST be absolute: crawlers ignore a relative
+       og:image, so the shared hub link used to render as bare text with no picture.
+       {{ORIGIN}} is filled in by server.js from the request host (or PUBLIC_URL) and
+       must never be typed in here as a hostname. -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="KINGDOM BIBLE" />
+  <meta property="og:title" content="KINGDOM BIBLE" />
+  <meta property="og:description" content="Read. Study. Understand. Live the Word. The complete Bible with study tools, a prayer journal and live ministry presentation." />
+  <meta property="og:url" content="{{ORIGIN}}/" />
+  <meta property="og:image" content="{{ORIGIN}}/assets/logo-social.png" />
+  <meta property="og:image:type" content="image/png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="KINGDOM BIBLE — a gold crown above the letters KB resting on an open Bible" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="KINGDOM BIBLE" />
+  <meta name="twitter:description" content="Read. Study. Understand. Live the Word." />
+  <meta name="twitter:image" content="{{ORIGIN}}/assets/logo-social.png" />
+  <meta name="twitter:image:alt" content="KINGDOM BIBLE logo" />
+  <link rel="canonical" href="{{ORIGIN}}/" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>

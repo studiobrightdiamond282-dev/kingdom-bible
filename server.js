@@ -17,6 +17,21 @@ const SUPPORT_PHONE='2348134438808';
 const SUPPORT_PHONE_DISPLAY='+234 813 443 8808';
 const supportLink=(text='Hello KINGDOM BIBLE support')=>'https://wa.me/'+SUPPORT_PHONE+'?text='+encodeURIComponent(text);
 const MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.png':'image/png','.svg':'image/svg+xml','.txt':'text/plain; charset=utf-8','.xml':'application/xml; charset=utf-8'};
+/* Absolute origin used for the link-preview urls (og:image and friends).
+ * Every social crawler resolves a RELATIVE og:image against the url it was handed,
+ * so index.html shipping "/assets/logo-hero.png" meant a shared hub link rendered
+ * with no picture at all. PUBLIC_URL pins the canonical name when the hub is
+ * reached under a different hostname than it is served on; otherwise the request's
+ * own host is used, honouring x-forwarded-* so a proxy or tunnel in front of us
+ * still yields an https url. The host is matched against a strict pattern before
+ * being echoed into HTML, so a Host header cannot inject markup. */
+const PUBLIC_URL=String(process.env.PUBLIC_URL||'').trim().replace(/\/+$/,'');
+function publicOrigin(req){
+  if(PUBLIC_URL)return PUBLIC_URL;
+  const proto=String(req.headers['x-forwarded-proto']||'').split(',')[0].trim()||(req.socket.encrypted?'https':'http');
+  const host=String(req.headers['x-forwarded-host']||req.headers.host||'').split(',')[0].trim();
+  return /^[A-Za-z0-9.-]+(:\d{1,5})?$/.test(host)?proto+'://'+host:'';
+}
 const THEMES=['royal','dark','light','transparent','sunset','noir'];
 const TRANSLATIONS=['kjv','asv','web'];
 const MAX_VERSES=40;
@@ -721,9 +736,12 @@ const server=http.createServer(async(req,res)=>{
         res.setHeader('ETag','"'+st.size+'-'+st.mtimeMs+'"');
         /* The support number is injected here instead of being typed into each page.
            A wrong digit in a static policy page is invisible until a real user tries
-           to use it, and there is no test that would catch a stale copy. */
+           to use it, and there is no test that would catch a stale copy. The origin
+           is injected for the same reason: the link-preview urls in the head must be
+           absolute and machine-derived, never a relative path or a typed hostname. */
         if(/\.html$/i.test(ext)){
           const html=fs.readFileSync(f,'utf8')
+            .replace(/\{\{ORIGIN\}\}/g,escHtml(publicOrigin(req)))
             .replace(/\{\{WHATSAPP\}\}/g,escHtml(SUPPORT_PHONE_DISPLAY))
             .replace(/\{\{WHATSAPP_LINK\}\}/g,escHtml(supportLink('Hello KINGDOM BIBLE support')))
             .replace(/\{\{WHATSAPP_BILLING\}\}/g,escHtml(supportLink('Billing help for KINGDOM BIBLE')));
