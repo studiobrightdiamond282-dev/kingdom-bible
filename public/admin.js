@@ -144,7 +144,7 @@ function accountsPanel(){
         '<span>'+pill(String(u.plan||'none').toUpperCase(),planKind)+'<small>'+esc(days)+'</small></span>'+
         '<span>'+pill(u.status,u.status)+'</span>'+
         '<span>'+wallet+'<small>joined '+esc(ago(u.createdAt))+'</small></span>'+
-        '<span><button class="secondary-btn small-btn" data-grant="'+esc(u.id)+'">Grant</button> <button class="secondary-btn small-btn" data-resetcode="'+esc(u.id)+'">Reset code</button></span>'+
+        '<span><button class="secondary-btn small-btn" data-grant="'+esc(u.id)+'">Grant</button> <button class="secondary-btn small-btn" data-resetcode="'+esc(u.id)+'">Reset code</button> <button class="secondary-btn small-btn" data-resetuser="'+esc(u.id)+'">Reset</button> <button class="danger-btn small-btn" data-deleteuser="'+esc(u.id)+'">Delete</button></span>'+
       '</div><div class="admin-grant-slot" data-slot="'+esc(u.id)+'"></div>';
     }).join('');
   }
@@ -258,6 +258,28 @@ function bind(){
   document.querySelectorAll('[data-grant]').forEach(function(b){
     b.onclick=function(){openGrant(b.dataset.grant);};
   });
+  document.querySelectorAll('[data-resetuser]').forEach(function(b){
+    b.onclick=function(){openReset(b.dataset.resetuser);};
+  });
+  /* Delete is permanent, so it asks the operator to type the exact email. A portal
+     that deletes on a single click will eventually delete a paying member, and the
+     only defence is friction proportional to how bad the mistake would be. */
+  document.querySelectorAll('[data-deleteuser]').forEach(function(b){
+    b.onclick=async function(){
+      const id=b.dataset.deleteuser;
+      const u=(data.users||[]).find(function(x){return x.id===id;});
+      if(!u)return;
+      const typed=window.prompt('Permanently delete '+u.email+'?\n\nThis removes the account, its payments, wallet and any withdrawal requests. The activity log keeps a record.\n\nType the email to confirm:','');
+      if(typed===null)return;
+      if(String(typed).trim().toLowerCase()!==String(u.email).toLowerCase()){toast('Email did not match — nothing was deleted','error');return}
+      b.disabled=true;
+      try{
+        const r=await api('/api/admin/users/'+encodeURIComponent(id),{method:'DELETE'});
+        toast(r.message,'success');
+        await dashboard();
+      }catch(x){toast(x.message,'error');b.disabled=false}
+    };
+  });
   /* Issue a one-time password reset code. The code is shown once, here, and only the
      hash is stored — so copy it into the member's chat before leaving this page. */
   document.querySelectorAll('[data-resetcode]').forEach(function(b){
@@ -331,6 +353,49 @@ function openGrant(userId){
     }catch(x){
       toast(x.message,'error');
       btn.disabled=false;btn.textContent='Grant';
+    }
+  };
+}
+/* Hand an account back in a clean state: a fresh 30-day trial, no subscription, and
+   every live session ended so the person must sign in again and actually sees the
+   change. The two optional boxes are the "sign in anew" cases the user asked for —
+   an account bound to the wrong Google, or one whose password should be replaced
+   through the reset-code flow rather than kept. */
+function openReset(userId){
+  const u=(data.users||[]).find(function(x){return x.id===userId;});
+  if(!u)return;
+  const slot=document.querySelector('[data-slot="'+userId+'"]');
+  const host=slot||document.getElementById('adminPanel');
+  if(!host)return;
+  const isGoogle=u.authProvider==='google';
+  host.innerHTML='<form class="admin-grant-form admin-reset-form">'+
+    '<p class="admin-note">Give <strong>'+esc(u.email)+'</strong> a clean start. Currently <strong>'+esc(u.status)+'</strong>.</p>'+
+    '<label><input name="trial" type="checkbox" checked> Restart the 30-day free trial</label>'+
+    '<label><input name="sub" type="checkbox" checked> Remove any subscription</label>'+
+    '<label><input name="google" type="checkbox"'+(isGoogle?'':' disabled')+'> Unlink Google sign-in'+(isGoogle?'':' (not a Google account)')+'</label>'+
+    '<label><input name="pw" type="checkbox"> Require a new password</label>'+
+    '<div class="admin-reset-actions"><button class="danger-btn small-btn">Reset account</button>'+
+    '<button class="secondary-btn small-btn" type="button" data-cancel>Cancel</button></div>'+
+    '</form>';
+  const form=host.querySelector('form');
+  host.querySelector('[data-cancel]').onclick=()=>dashboard();
+  form.onsubmit=async function(e){
+    e.preventDefault();
+    if(!confirm('Reset '+u.email+'?\n\nThe person is signed out and, with the trial restarted, gets a fresh 30 days.'))return;
+    const btn=form.querySelector('button');
+    btn.disabled=true;btn.textContent='Resetting…';
+    try{
+      const r=await api('/api/admin/users/'+encodeURIComponent(userId)+'/reset',{method:'POST',body:JSON.stringify({
+        restartTrial:form.trial.checked,
+        clearSubscription:form.sub.checked,
+        unlinkGoogle:form.google.checked,
+        clearPassword:form.pw.checked
+      })});
+      toast(r.message,'success');
+      await dashboard();
+    }catch(x){
+      toast(x.message,'error');
+      btn.disabled=false;btn.textContent='Reset account';
     }
   };
 }

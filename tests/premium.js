@@ -130,7 +130,47 @@ async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/heal
   assert.equal(icon192.headers.get('content-type'),'image/png','the app icon must be a real PNG');
 
   console.log('âœ“ premium trial, referral wallet, admin grant, legal routes, support number, profile photo, keep-me-signed-in, password recovery, update notification');
-/* ---- client account flow: a fresh signup must land on Home, not the plan wall ---- */
+/* ---- admin can reset or delete an account ---- */
+  {
+    /* The portal previously had no way to remove the throwaway accounts created while
+       testing, and no way to hand an account back to its owner in a clean state. */
+    const t=await request('/api/auth/register',{method:'POST',body:JSON.stringify({email:'throwaway@example.com',password:'password-t',name:'T'})});
+    assert.equal(t.r.status,201);
+    const id=t.body.user.id;
+    /* Give it a paid plan first, so the reset has something real to remove. */
+    await request('/api/admin/users/'+id+'/entitlement',{method:'POST',headers:{cookie:admin.session},body:JSON.stringify({plan:'premium',forever:true})});
+    const reset=await request('/api/admin/users/'+id+'/reset',{method:'POST',headers:{cookie:admin.session},body:JSON.stringify({})});
+    assert.equal(reset.r.status,200);
+    assert.equal(reset.body.user.status,'trial','a reset account must go back to the 30-day free trial');
+    assert.equal(reset.body.user.plan,'trial','a reset must drop the granted subscription');
+    assert.equal(reset.body.sessionsEnded,1,'a reset must end the account live sessions');
+    const stale=await request('/api/auth/me',{headers:{cookie:t.session}});
+    assert.equal(stale.body.user,null,'the old session must not survive a reset');
+    const stranger=await request('/api/admin/users/'+id+'/reset',{method:'POST',body:JSON.stringify({})});
+    assert.equal(stranger.r.status,403,'reset must be refused without an administrator session');
+
+    const gone=await request('/api/admin/users/'+id,{method:'DELETE',headers:{cookie:admin.session}});
+    assert.equal(gone.r.status,200);
+    assert.equal(gone.body.email,'throwaway@example.com');
+    const twice=await request('/api/admin/users/'+id,{method:'DELETE',headers:{cookie:admin.session}});
+    assert.equal(twice.r.status,404,'deleting an already-removed account must 404, not silently succeed');
+    const signin=await request('/api/auth/login',{method:'POST',body:JSON.stringify({email:'throwaway@example.com',password:'password-t'})});
+    assert.equal(signin.r.status,401,'a deleted account must not be able to sign in');
+    /* the whole point of deleting a test account: the email is free to sign up again */
+    const again=await request('/api/auth/register',{method:'POST',body:JSON.stringify({email:'throwaway@example.com',password:'password-t',name:'T'})});
+    assert.equal(again.r.status,201,'the email must be free to register again after deletion');
+    const noAdmin=await request('/api/admin/users/'+again.body.user.id,{method:'DELETE'});
+    assert.equal(noAdmin.r.status,403,'deletion must be refused without an administrator session');
+    const wrongMethod=await request('/api/admin/users/'+again.body.user.id,{method:'GET',headers:{cookie:admin.session}});
+    assert.equal(wrongMethod.r.status,404,'a GET must never delete an account');
+    await request('/api/admin/users/'+again.body.user.id,{method:'DELETE',headers:{cookie:admin.session}});
+    const auditLog=(await request('/api/admin/overview',{headers:{cookie:admin.session}})).body.audit.map(x=>x.event);
+    assert(auditLog.includes('admin.user.reset'),'a reset must be recorded in the activity log');
+    assert(auditLog.includes('admin.user.delete'),'a deletion must be recorded in the activity log');
+    console.log('✓ Admin account reset and deletion, sessions invalidated, both audited');
+  }
+
+  /* ---- client account flow: a fresh signup must land on Home, not the plan wall ---- */
   {
     const app=fs.readFileSync(path.join(__dirname,'..','public','app.js'),'utf8');
     const prem=fs.readFileSync(path.join(__dirname,'..','public','premium.js'),'utf8');
@@ -141,6 +181,13 @@ async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/heal
     assert(/function afterAuth\(u\)\{[\s\S]{0,120}close\(\)/.test(prem),
       'afterAuth must hand control back to the shell and close the modal');
     assert(/navigate\('home',true\)/.test(app),'a completed sign-in must navigate to Home');
+    /* Signing in lands people on the plan screen, so that screen must offer an explicit
+       way back into the app — otherwise a free trial feels like a paywall with no exit.
+       It reuses afterAuth on purpose: one tested path, not a second one that can drift. */
+    assert(/id="trialContinue"/.test(prem),'the account/plan screen must render a continue button');
+    assert(/Continue my free trial/.test(prem),'a trial user must be offered a "Continue my free trial" button');
+    assert(/trialContinue[\s\S]{0,80}afterAuth\(user\)/.test(prem),'the continue button must reuse the post-sign-in path');
+    assert(/\$\{continueBlock\}/.test(prem),'the continue block must actually be rendered into the modal');
     /* applyAccount used to re-assign KingdomPremium.onAuth, silently replacing the
        shell handler: the gate never closed on signup and sign-out did nothing. */
     const applyLine=(app.split('function applyAccount')[1]||'').split('\n').find(l=>/accountState=u\?/.test(l))||'';

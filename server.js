@@ -265,7 +265,7 @@ async function verifyGoogleCredential(credential){
 }
 function audit(event,actor,details={}){premiumStore.audit.unshift({id:uid('audit'),event,actor:actor||'system',details,date:new Date().toISOString()});premiumStore.audit=premiumStore.audit.slice(0,1000);savePremiumStore()}
 function notifyAdmin(type,message,details={}){premiumStore.notifications.unshift({id:uid('note'),type,message,details,read:false,date:new Date().toISOString()});premiumStore.notifications=premiumStore.notifications.slice(0,200);savePremiumStore()}
-function publicUser(u){if(!u)return null;const entitlement=entitlementOf(u);return{id:u.id,email:u.email,name:u.name,avatar:u.avatar||'',role:u.role||'user',referralCode:u.referralCode,trialEndsAt:u.trialEndsAt,plan:entitlement.plan,status:entitlement.status,daysRemaining:entitlement.daysRemaining,walletBalance:u.wallet?.balance||0,createdAt:u.createdAt}}
+function publicUser(u){if(!u)return null;const entitlement=entitlementOf(u);return{id:u.id,email:u.email,name:u.name,avatar:u.avatar||'',role:u.role||'user',referralCode:u.referralCode,trialEndsAt:u.trialEndsAt,plan:entitlement.plan,status:entitlement.status,daysRemaining:entitlement.daysRemaining,walletBalance:u.wallet?.balance||0,authProvider:u.authProvider||'password',createdAt:u.createdAt}}
 function entitlementOf(u){
   if(!u)return{plan:'none',status:'signed_out',daysRemaining:0};
   if(u.role==='admin')return{plan:'unlimited',status:'admin',daysRemaining:null};
@@ -275,6 +275,11 @@ function entitlementOf(u){
   return{plan:'expired',status:'expired',daysRemaining:0};
 }
 function findUser(id){return premiumStore.users.find(u=>u.id===id)}
+/* Removing or resetting an account must also end its live sessions. Otherwise the
+   person keeps browsing on a token whose user no longer exists, and a "reset"
+   silently leaves the old session signed in — which looks exactly like nothing
+   happened. Returns how many tokens were killed so the caller can report it. */
+function dropSessionsFor(userId){let n=0;for(const [token,s]of premiumSessions)if(s.userId===userId){premiumSessions.delete(token);n++}return n}
 function sessionRecord(req){const a=auth(req);if(!a)return null;if(a.role==='admin')return{...a,user:null};const user=findUser(a.userId);return user?{...a,user}:null}
 function requireAuth(req,res){const s=sessionRecord(req);if(!s){json(res,401,{ok:false,error:'Please sign in'});return null}return s}
 function requireAdmin(req,res){const g=adminGate(req);if(!g.ok){denyAdmin(res,g);return null}const s=sessionRecord(req);if(!s||s.role!=='admin'){json(res,403,{ok:false,error:'Administrator access required'});return null}return s}
@@ -495,6 +500,58 @@ const server=http.createServer(async(req,res)=>{
       premiumStore.notifications=premiumStore.notifications.map(n=>n.details?.userId===u.id&&n.type==='password.reset.request'?{...n,read:true}:n);
       audit('admin.password.issue',s.email,{userId:u.id,resetId:reset.id});
       return json(res,200,{ok:true,code,expiresAt:new Date(reset.expiresAt).toISOString(),message:'Share this code with '+u.email+'. It works once and expires in 30 minutes.'});
+    }
+    /* ---------- account reset and deletion ----------
+       The portal could grant access and issue reset codes, but had no way to remove the
+       throwaway accounts created while testing, and no way to hand an account back to
+       its owner in a clean state after a demo or a revoked subscription. Both live
+       here. Destructive by nature, so both are audited, and neither can touch the
+       administrator account — that is the one way into the ministry hub. */
+    const resetUser=p.match(/^\/api\/admin\/users\/([^/]+)\/reset$/);
+    if(resetUser&&req.method==='POST'){
+      const s=requireAdmin(req,res);if(!s)return;
+      const u=findUser(resetUser[1]);
+      if(!u)return json(res,404,{ok:false,error:'User not found'});
+      if(u.role==='admin'||u.email===PREMIUM_CONFIG.adminEmail)return json(res,403,{ok:false,error:'The administrator account cannot be reset'});
+      const b=await body(req),now=Date.now(),restartTrial=b.restartTrial!==false,clearSub=b.clearSubscription!==false;
+      if(restartTrial){u.trialStartedAt=now;u.trialEndsAt=now+30*86400000}
+      if(clearSub)u.subscription=null;
+      u.ai={month:'',used:0};
+      /* Unlinking Google is the "let them sign in again with a different account"
+         case: without it the old identity is still bound and the person is stuck. */
+      const unlinked=!!b.unlinkGoogle&&!!u.googleSub;
+      if(unlinked){delete u.googleSub;delete u.authProvider}
+      const clearedPassword=!!b.clearPassword&&!!u.passwordHash;
+      if(clearedPassword){delete u.passwordHash;delete u.passwordSet}
+      premiumStore.passwordResets=(premiumStore.passwordResets||[]).filter(r=>r.userId!==u.id);
+      premiumStore.notifications=premiumStore.notifications.filter(n=>n.details?.userId!==u.id);
+      const sessions=dropSessionsFor(u.id);
+      savePremiumStore();
+      audit('admin.user.reset',s.email,{userId:u.id,email:u.email,restartTrial,clearSubscription:clearSub,unlinkGoogle:unlinked,clearPassword:clearedPassword,sessions});
+      return json(res,200,{ok:true,user:publicUser(u),sessionsEnded:sessions,unlinkedGoogle:unlinked,passwordCleared:clearedPassword,message:u.email+' reset — fresh 30-day trial, subscription removed, '+(sessions?sessions+' session'+(sessions===1?'':'s')+' ended':'no active sessions')});
+    }
+    const deleteUser=p.match(/^\/api\/admin\/users\/([^/]+)$/);
+    if(deleteUser&&req.method==='DELETE'){
+      const s=requireAdmin(req,res);if(!s)return;
+      const u=findUser(deleteUser[1]);
+      if(!u)return json(res,404,{ok:false,error:'User not found'});
+      if(u.role==='admin'||u.email===PREMIUM_CONFIG.adminEmail)return json(res,403,{ok:false,error:'The administrator account cannot be deleted'});
+      /* The audit log is deliberately KEPT: it is the ministry's record that this
+         happened, and it holds no payment data. Everything that identifies the
+         person or moves their money is removed with them. */
+      const payments=(premiumStore.transactions||[]).filter(t=>t.userId===u.id).length;
+      const payouts=(premiumStore.withdrawals||[]).filter(w=>w.userId===u.id).length;
+      premiumStore.users=premiumStore.users.filter(x=>x.id!==u.id);
+      premiumStore.transactions=(premiumStore.transactions||[]).filter(t=>t.userId!==u.id);
+      premiumStore.withdrawals=(premiumStore.withdrawals||[]).filter(w=>w.userId!==u.id);
+      premiumStore.notifications=premiumStore.notifications.filter(n=>n.details?.userId!==u.id);
+      premiumStore.passwordResets=(premiumStore.passwordResets||[]).filter(r=>r.userId!==u.id);
+      /* Referrals earned by others for this signup stay paid — unwinding a reward
+         already credited to a member would be the wrong kind of surprise. */
+      const sessions=dropSessionsFor(u.id);
+      savePremiumStore();
+      audit('admin.user.delete',s.email,{userId:u.id,email:u.email,referralCode:u.referralCode,payments,payouts,sessions});
+      return json(res,200,{ok:true,deleted:u.id,email:u.email,paymentsRemoved:payments,payoutsRemoved:payouts,sessionsEnded:sessions,message:u.email+' deleted — '+(sessions?sessions+' session'+(sessions===1?'':'s')+' ended':'no active sessions')});
     }
     const payWithdrawal=p.match(/^\/api\/admin\/withdrawals\/([^/]+)\/pay$/);
     if(payWithdrawal&&req.method==='POST'){

@@ -56,6 +56,18 @@ assert(/charged\s*>=\s*tx\.amount\s*\*\s*100/.test(serverPremiumSrc),'payment ve
 assert(serverPremiumSrc.includes('adminGate')&&serverPremiumSrc.includes('tailscale-user-login'),'admin routes must be gated by Tailscale identity headers, not only by password');
 assert(/p==='\/admin'/.test(serverPremiumSrc)&&/adminGate\(req\)/.test(serverPremiumSrc),'the /admin page itself must be gated so outsiders cannot load the login form');
 assert(serverPremiumSrc.includes('ADMIN_TAILNET_LOGINS'),'ADMIN_TAILNET_LOGINS must be honoured so the owner can be allowlisted');
+/* Account reset and deletion. Both are destructive, so both must be reachable only by
+   their own explicit HTTP method — a GET that removes an account would be catastrophic
+   (a prefetch, a crawler, or a link preview could wipe a paying member). */
+assert(/resetUser&&req\.method==='POST'/.test(serverPremiumSrc),'an account reset must require POST');
+assert(/deleteUser&&req\.method==='DELETE'/.test(serverPremiumSrc),'account deletion must require DELETE and must never answer a GET');
+assert(serverPremiumSrc.includes('dropSessionsFor'),'reset and delete must end the account live sessions, or the change silently does nothing for a signed-in person');
+assert(serverPremiumSrc.includes('administrator account cannot be deleted'),'the administrator account must be protected from deletion');
+const adminJsSrc=fs.readFileSync(path.join(pub,'admin.js'),'utf8');
+assert(/data-deleteuser/.test(adminJsSrc)&&/data-resetuser/.test(adminJsSrc),'the portal must render reset and delete controls on each account');
+assert(/Type the email to confirm/.test(adminJsSrc),'deletion must require the operator to type the email, so a stray click cannot remove a paying member');
+const premJsSrc=fs.readFileSync(path.join(pub,'premium.js'),'utf8');
+assert(/Continue my free trial/.test(premJsSrc),'a trial user must be able to leave the plan screen and keep using the app');
 assert(html.includes('/bible-ref.js'),'index.html must load bible-ref.js');
 assert(html.includes('/voice.js'),'index.html must load voice.js');
 assert(html.includes('/premium.js'),'index.html must load premium.js');
