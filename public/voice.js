@@ -25,13 +25,20 @@
 const SR=g.SpeechRecognition||g.webkitSpeechRecognition;
 const LSV='kingdomVoice.v1';
 const LANGS=[['en-US','English (US)'],['en-GB','English (UK)'],['en-NG','English (Nigeria)'],['en-GH','English (Ghana)'],['en-ZA','English (South Africa)'],['en-IN','English (India)'],['en-AU','English (Australia)']];
-let hooks=null,rec=null,wantListen=false,starting=false,restartTimer=null;
-let finalTail='',fuseTimer=null,pending={key:'',hit:null},dispatchKeys=new Set(),entries=[],entrySeq=0;
+let hooks=null,rec=null,wantListen=false,starting=false,restartTimer=null,restartWait=60;
+let finalTail='',lastTailScan='',fuseTimer=null,pending={key:'',hit:null},dispatchKeys=new Set(),entries=[],entrySeq=0;
 /* A short edge fuse lets the recogniser append a verse without making the
    preacher wait for a pause. Chapter-only references get a longer hold because
    the next frame often contains the verse. */
 const FUSE_MS=350,CHAPTER_HOLD_MS=1100;
-const settings=Object.assign({lang:'en-US',auto:true,tr:''},load());
+/* Chrome ends a recognition session on its own — on silence, and as a hard stop
+   after roughly a minute. Every restart is dead air, and a reference spoken
+   inside it is lost for good, so restart fast and back off only when the engine
+   is genuinely busy. */
+const RESTART_MS=60,RESTART_MAX_MS=800;
+/* 'unknown' | 'on' | 'cloud' — which speech engine answered. See ensureOnDevice(). */
+let engine='unknown',engineNote='';
+const settings=Object.assign({lang:'en-US',auto:true,tr:'',onDevice:true},load());
 function load(){try{return JSON.parse(localStorage.getItem(LSV)||'{}')}catch{return{}}}
 function persist(){try{localStorage.setItem(LSV,JSON.stringify(settings))}catch{}}
 const $=s=>document.querySelector(s);
@@ -106,29 +113,74 @@ function setTranscript(fin,interim){
 function start(){
   if(!available()||wantListen)return;
   wantListen=true;
-  finalTail='';clearPending();dispatchKeys.clear();
+  finalTail='';lastTailScan='';clearPending();dispatchKeys.clear();
+  restartWait=RESTART_MS;
+  /* Kick off the on-device probe in parallel — listening must not wait on it. */
+  ensureOnDevice().then(()=>{
+    if(wantListen&&engine==='on'){try{if(rec)rec.processLocally=true}catch{}}
+    if(engineNote&&wantListen)addLog(engineNote,'',null,null,'');
+  });
   spin();
   setStatus('Listening',true);
   addLog('Microphone on — listening for Scripture references','', null,null,'');
 }
 function spin(){
   if(!wantListen)return;
+  if(starting&&rec)return;            /* never run two recognisers at once */
+  starting=true;
   try{
     rec=new SR();
     rec.lang=settings.lang;
     rec.continuous=true;
     rec.interimResults=true;
     rec.maxAlternatives=1;
+    /* On-device recognition keeps the audio on the ministry computer. It is
+       both faster and immune to a slow or busy church wifi mid-sentence.
+       Chrome only accepts this once the language pack is present, so probe
+       first; anything unsupported simply keeps the cloud engine. */
+    if(engine==='on'){try{rec.processLocally=true}catch{}}
     rec.onresult=onResult;
     rec.onerror=onError;
-    rec.onend=()=>{rec=null;if(wantListen){clearTimeout(restartTimer);restartTimer=setTimeout(spin,250)}};
+    rec.onend=()=>{
+      rec=null;starting=false;
+      if(!wantListen)return;
+      clearTimeout(restartTimer);
+      restartTimer=setTimeout(spin,restartWait);
+    };
+    rec.onstart=()=>{restartWait=RESTART_MS};   /* a healthy start resets backoff */
     rec.start();
+    /* Chrome throws if the previous session is still tearing down. Back off a
+       little instead of hammering it. */
+    restartWait=Math.min(restartWait*2,RESTART_MAX_MS);
   }catch(e){/* an older start still pending — retry shortly */
-    clearTimeout(restartTimer);restartTimer=setTimeout(spin,500);
+    starting=false;rec=null;
+    clearTimeout(restartTimer);
+    restartTimer=setTimeout(spin,Math.max(restartWait,RESTART_MS));
   }
 }
+/* Ask Chrome for the offline speech pack. Never blocks listening: if the pack
+   is only downloading we keep using the cloud engine this service and pick the
+   fast one up next time. */
+function ensureOnDevice(){
+  if(engine==='on')return Promise.resolve(true);
+  if(engine==='cloud'||typeof SR.available!=='function')return Promise.resolve(false);
+  engine='unknown';
+  return Promise.resolve()
+    .then(()=>SR.available({langs:[settings.lang],processLocally:true,quality:'dictation'}))
+    .then(r=>{
+      if(r==='available'){engine='on';return true}
+      if(r==='downloadable'||r==='downloading'){
+        engine='cloud';engineNote='Downloading offline speech…';
+        try{Promise.resolve(SR.install({langs:[settings.lang],processLocally:true,quality:'dictation'}))
+          .then(ok=>{if(ok){engineNote='Offline speech ready — it will be used next time'}}).catch(()=>{})}catch{}
+        return false;
+      }
+      engine='cloud';return false;
+    })
+    .catch(()=>{engine='cloud';return false});
+}
 function stop(silent){
-  wantListen=false;clearTimeout(restartTimer);clearPending();
+  wantListen=false;starting=false;clearTimeout(restartTimer);clearPending();
   if(rec){try{rec.onend=null;rec.stop()}catch{}rec=null}
   setStatus('Ready',false);setTranscript('','');
   if(!silent)addLog('Microphone off','');
@@ -166,7 +218,11 @@ function onResult(e){
      in the same event. Scan both: interim frames are not a preview to ignore,
      they are the earliest usable Scripture signal. */
   if(finals.trim())handleSegment(finals,true);
-  if(interim.trim())handleSegment(interim,false);
+  if(interim.trim()){handleSegment(interim,false);lastTailScan=finalTail}
+  /* A reference can straddle a recogniser restart: "the book of" lands in the
+     last session and "John three sixteen" opens the next one. Re-scan the tail
+     only when it actually changed, so an idle frame costs nothing. */
+  else if(finalTail.trim()&&finalTail!==lastTailScan){handleSegment(finalTail,false);lastTailScan=finalTail}
 }
 function clearPending(){
   if(fuseTimer){clearTimeout(fuseTimer);fuseTimer=null}
@@ -258,8 +314,8 @@ function bind(h){
   hooks=h;
   const mic=$('#voiceMic');
   if(mic)mic.onclick=()=>{wantListen?stop():start()};
-  const tr=$('#voiceTr');if(tr)tr.onchange=e=>{settings.tr=e.target.value;persist()};
-  const lang=$('#voiceLang');if(lang)lang.onchange=e=>{settings.lang=e.target.value;persist();if(wantListen){/* apply the new language live */if(rec){try{rec.onend=null;rec.stop()}catch{}rec=null}spin()}};
+  const tr=$('#voiceTr');if(tr)tr.onchange=e=>{settings.tr=e.target.value;persist();if(hooks.warm)hooks.warm(settings.tr)};
+  const lang=$('#voiceLang');if(lang)lang.onchange=e=>{settings.lang=e.target.value;persist();engine='unknown';engineNote='';if(wantListen){/* apply the new language live */if(rec){try{rec.onend=null;rec.stop()}catch{}rec=null;starting=false}ensureOnDevice();spin()}};
   const auto=$('#voiceAuto');if(auto)auto.onchange=e=>{settings.auto=!!e.target.checked;persist()};
   const logEl=$('#voiceLog');
   if(logEl)logEl.onclick=e=>{
@@ -271,5 +327,6 @@ function bind(h){
   setStatus(wantListen?'Listening':'Ready',wantListen);
 }
 
-g.KingdomVoice={supported:available,cardHtml,bind,start,stop,listening:()=>wantListen,settings};
+g.KingdomVoice={supported:available,cardHtml,bind,start,stop,listening:()=>wantListen,
+  engine:()=>engine,prepare:ensureOnDevice,settings};
 })(typeof window!=='undefined'?window:globalThis);

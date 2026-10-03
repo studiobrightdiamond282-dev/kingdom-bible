@@ -67,6 +67,29 @@ async function main(){
   frame('John 3:16 for the next point');
   assert.equal(calls.length,1,'the same verse is locked at dispatch and cannot fire twice');
   Voice.stop(true);
-  console.log('✓ Voice Preacher Mode interim timing, fuses, and dedupe lock');
+
+  /* A reference split across a recogniser restart is still resolved: Chrome ends
+     a session on its own, and "the book of" must not be lost with it. */
+  calls=[];Voice.start();
+  const firstRun=recogniser;
+  frame('the book of',true);
+  firstRun.onend();                      /* Chrome closed the session itself */
+  await wait(120);
+  assert(recogniser&&recogniser!==firstRun,'the recogniser restarted with a fresh session');
+  frame('John 3:16 for the next point');
+  assert.equal(calls.length,1,'a reference spanning a recogniser restart still reaches the display');
+  Voice.stop(true);
+
+  /* Waiting for a reference must never throw the listening session away. */
+  calls=[];Voice.start();
+  const ended=recogniser;
+  ended.onend();
+  await wait(120);
+  assert(recogniser&&recogniser!==ended,'the recogniser restarts promptly after an unexpected end');
+  assert.equal(ended.stopped,undefined,'a restart never stops the recogniser it replaced');
+  assert.equal(recogniser.stopped,undefined,'the live recogniser keeps listening');
+  Voice.stop(true);
+
+  console.log('✓ Voice Preacher Mode interim timing, fuses, dedupe lock, and restart recovery');
 }
 main().catch(err=>{console.error(err.stack||err);process.exitCode=1});

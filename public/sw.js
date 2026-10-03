@@ -1,4 +1,4 @@
-const VERSION='kingdom-bible-v1.2.1-premium5';
+const VERSION='kingdom-bible-v1.2.1-premium6-voice';
 const SHELL=[
   '/', '/index.html','/styles.css','/app.js','/premium.js','/qr.js','/hub-probe.js','/bible-ref.js','/voice.js','/remote.js','/remote.html','/admin.html','/admin.js','/privacy.html','/refund.html','/status.html',
   '/search-worker.js','/offline.html','/manifest.json','/favicon.svg','/favicon.png',

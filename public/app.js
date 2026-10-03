@@ -7,10 +7,14 @@ const today=()=>new Date().toISOString().slice(0,10);
 const fmtDate=d=>new Intl.DateTimeFormat('en',{weekday:'long',month:'long',day:'numeric'}).format(d||new Date());
 const LS='kingdomBible.v1';
 const DEFAULT={profile:{name:'',translation:'kjv',theme:'dark',font:'serif',fontSize:20,lineHeight:1.9,readingTime:'06:30',notifications:false,avatar:''},reader:{book:44,chapter:8,translation:'kjv',lastVerse:1},bookmarks:{},highlights:{},notes:{},prayers:[],planProgress:{},history:[],favorites:{},aiHistory:[],readingDays:[],chaptersRead:[],installed:false,devotionalDone:[],onboarded:true,ministry:{theme:'royal',church:'KINGDOM BIBLE',speaker:'',sermon:''}};
-let state=loadState(),books=[],bookCache=new Map(),xrefCache=new Map(),route='home',selectedVerse=null,deferredInstall=null,searchWorker=null,searchState={query:'',results:[],total:0,status:''};
+let state=loadState(),books=[],bookCache=new Map(),bookPending=new Map(),xrefCache=new Map(),route='home',selectedVerse=null,deferredInstall=null,searchWorker=null,searchState={query:'',results:[],total:0,status:''};
 function loadState(){try{return deepMerge(structuredClone(DEFAULT),JSON.parse(localStorage.getItem(LS)||'{}'))}catch{return structuredClone(DEFAULT)}}
 function deepMerge(a,b){for(const k in b){if(b[k]&&typeof b[k]==='object'&&!Array.isArray(b[k])&&a[k]&&typeof a[k]==='object'&&!Array.isArray(a[k]))deepMerge(a[k],b[k]);else a[k]=b[k]}return a}
 function save(){localStorage.setItem(LS,JSON.stringify(state)); updateProfileBits()}
+/* Persist without touching the DOM. Voice Mode calls save() several times a
+   minute, and updateProfileBits() walks the page each time — a main-thread stall
+   in the middle of a service. Nothing visible depends on it. */
+function saveQuiet(){try{localStorage.setItem(LS,JSON.stringify(state))}catch{}}
 function avatarMarkup(){const n=displayName(),i=esc(n[0]?.toUpperCase()||'R');const src=accountState.avatar||state.profile.avatar;return src?`<img src="${esc(src)}" alt="${esc(n)} profile photo">`:i}
 function updateProfileBits(){const n=displayName();$$('#sideName').forEach(x=>x.textContent=n);$$('.avatar').forEach(x=>x.innerHTML=avatarMarkup());document.documentElement.dataset.theme=state.profile.theme;document.documentElement.style.setProperty('--reader-size',state.profile.fontSize+'px');document.documentElement.style.setProperty('--reader-line',state.profile.lineHeight)}
 /* The greeting must belong to whoever is signed in, never to whoever built the app.
@@ -72,7 +76,30 @@ function bindGlobal(){
 }
 function navigate(to,push=true){route=to.split('/')[0]||'home';if(push)history.pushState(null,'','#'+to);$$('.nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.route===route));const info=NAV.find(n=>n[0]===route)||NAV[0];$('#pageTitle').textContent=info[2];$('#pageEyebrow').textContent=route==='ministry'?'MINISTRY MODE':'KINGDOM BIBLE';closeModal();renderRoute(to);scrollTo(0,0)}
 function renderRoute(full){const m=$('#main');m.innerHTML='<div class="loading-screen"><span></span><p>Opening…</p></div>';const renderers={home:renderHome,bible:renderBible,search:renderSearch,study:renderStudy,prayer:renderPrayer,devotional:renderDevotional,plans:renderPlans,ministry:renderMinistry,profile:renderProfile};Promise.resolve(renderers[route]?.(full)).catch(e=>{console.error(e);m.innerHTML=`<div class="empty-state"><div class="empty-icon">!</div><h3>Something went wrong</h3><p>${esc(e.message)}</p><button class="secondary-btn" data-route="home">Return home</button></div>`})}
-async function loadBook(tr,bi){const key=tr+':'+bi;if(bookCache.has(key))return bookCache.get(key);const d=await (await fetch(`/data/bibles/${tr}/${bi}.json`)).json();bookCache.set(key,d);return d}
+async function loadBook(tr,bi){const key=tr+':'+bi;if(bookCache.has(key))return bookCache.get(key);
+  /* Two callers asking for the same unopened book at once (voice dispatch plus
+     the next-verse walk) must share one request, not race two fetches. */
+  if(bookPending.has(key))return bookPending.get(key);
+  const p=(async()=>{const d=await (await fetch(`/data/bibles/${tr}/${bi}.json`)).json();bookCache.set(key,d);return d})()
+    .finally(()=>bookPending.delete(key));
+  bookPending.set(key,p);return p}
+/* Warm a whole translation in the background. Voice Preacher Mode resolves a
+   reference the instant it is spoken; without this the first mention of an
+   unopened book stalls on a network fetch while the preacher waits. */
+let warming=new Set();
+function warmTranslation(tr){
+  tr=String(tr||state.reader.translation||'kjv');
+  if(warming.has(tr)||!books.length)return;
+  warming.add(tr);
+  const idle=typeof requestIdleCallback==='function'?requestIdleCallback:cb=>setTimeout(cb,120);
+  let i=0;
+  const step=()=>{
+    if(i>=books.length){warming.delete(tr);return}
+    const bi=i++;
+    Promise.resolve(loadBook(tr,bi)).catch(()=>{}).then(()=>idle(step));
+  };
+  idle(step);
+}
 async function getVerse(ref,tr=state.reader.translation){const p=parseRef(ref);if(!p)return null;const v=p.verse||1;const d=await loadBook(tr,p.book);return {...p,verse:v,text:d.chapters[p.chapter-1]?.[v-1],translation:tr,ref:`${books[p.book].name} ${p.chapter}:${v}`}}
 /* One parser for everything the user can type or say. bible-ref.js understands
    "jn 3 16", "1john2:5", "John 3:16-18", spoken forms and misspellings —
@@ -193,7 +220,11 @@ function openPlan(id){const p=PLANS.find(x=>x.id===id),n=state.planProgress[id]|
 function planReading(id,n){if(id==='psalms30')return `Psalms ${n*5+1}–${Math.min(150,n*5+5)}`;if(id==='proverbs31')return `Proverbs ${Math.min(31,n+1)}`;if(id==='gospels30')return `${['Matthew','Mark','Luke','John'][Math.floor(n/8)%4]} ${n%8+1}`;if(id==='nt90')return `${books[39+(n%27)].name} ${n%books[39+(n%27)].chapters+1}`;if(id==='year')return `Genesis ${n%50+1}`;const refs=['Hebrews 11:1','Philippians 4:6','Matthew 6:33','Romans 8:28','John 15:5','Psalms 46:1','James 1:5'];return refs[n%refs.length]}
 
 /* MINISTRY */
-async function renderMinistry(){setTitle('Ministry Mode','KINGDOM BIBLE');await loadHub();if(hub().isLive(hubState))await ensureSession();let cur=state.ministry.current||await getVerse('John 3:16');state.ministry.current=cur;save();$('#main').innerHTML=`<div class="page"><section class="ministry-hero"><div class="eyebrow">PROFESSIONAL SCRIPTURE PRESENTATION</div><h1>Ministry Mode</h1><p>Present Scripture beautifully for services, sermons, Bible studies, projectors, OBS, and vMix browser sources.</p><div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:22px"><button class="primary-btn" id="openDisplay">▣ Open audience display</button><button class="secondary-btn" id="copyDisplay" style="background:rgba(255,255,255,.08);color:white;border-color:rgba(255,255,255,.15)">Copy browser-source URL</button><button class="secondary-btn" id="openManual" style="background:rgba(255,255,255,.08);color:white;border-color:rgba(255,255,255,.15)">? User Manual</button></div></section>${window.KingdomVoice?window.KingdomVoice.cardHtml():''}${connectCardHtml()}<div class="ministry-grid"><section class="card control-card"><div class="section-head" style="margin:0 0 14px"><div><h2>Presenter control</h2><p>Live preview · updates audience display instantly</p></div><span class="pill">${hub().isLive(hubState)?'<span class="status-dot"></span> Live session':'<span class="status-dot off"></span> This computer only'}</span></div><div class="control-preview ${state.ministry.theme==='light'?'light':state.ministry.theme==='royal'?'royal':''}" id="controlPreview"><blockquote>“${esc(cur.text)}”</blockquote><cite>${esc(cur.ref)} · ${TR[cur.translation||state.reader.translation]}</cite><div class="church-label">${esc(state.ministry.church)}</div></div><div class="control-actions"><button class="secondary-btn" id="minPrev">← Previous</button><button class="primary-btn" id="minSearch">⌕ Change Scripture</button><button class="secondary-btn" id="minNext">Next →</button><button class="secondary-btn" id="minBlank">Blank screen</button></div><div class="form-grid" style="margin-top:16px"><div class="field"><label>Theme</label><select id="minTheme"><option value="royal">Royal Gold</option><option value="dark">Classic Black</option><option value="light">Minimal White</option><option value="sunset">Sunset</option><option value="noir">Noir</option><option value="transparent">Transparent (key)</option></select></div><div class="field"><label>Church / ministry name</label><input id="minChurch" value="${esc(state.ministry.church)}"></div></div></section><aside class="card service-panel"><div class="eyebrow">LIVE SERVICE</div><h2>${esc(state.ministry.sermon||'Sunday Service')}</h2><div class="timer" id="serviceTimer">00:00:00</div><div style="display:flex;gap:8px"><button class="secondary-btn small-btn" id="timerStart">Start timer</button><button class="secondary-btn small-btn" id="timerReset">Reset</button></div><div class="connection" style="margin-top:18px"><span class="status-dot${hub().isLive(hubState)?'':' off'}"></span><span>${hub().isLive(hubState)?'Audience display sync is ready':'Audience display syncs on this computer only'}</span></div><div class="section-head"><div><h2>Media quick start</h2></div></div><button class="secondary-btn" style="width:100%;margin-bottom:8px" id="guideVmix">How to use with vMix</button><button class="secondary-btn" style="width:100%" id="guideObs">How to use with OBS</button></aside></div></div>`;
+async function renderMinistry(){setTitle('Ministry Mode','KINGDOM BIBLE');await loadHub();if(hub().isLive(hubState))await ensureSession();
+  /* Get Scripture resident before the mic opens: from here on, resolving a
+     spoken reference must be pure in-memory work. */
+  warmTranslation(state.reader.translation);
+  let cur=state.ministry.current||await getVerse('John 3:16');state.ministry.current=cur;save();$('#main').innerHTML=`<div class="page"><section class="ministry-hero"><div class="eyebrow">PROFESSIONAL SCRIPTURE PRESENTATION</div><h1>Ministry Mode</h1><p>Present Scripture beautifully for services, sermons, Bible studies, projectors, OBS, and vMix browser sources.</p><div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:22px"><button class="primary-btn" id="openDisplay">▣ Open audience display</button><button class="secondary-btn" id="copyDisplay" style="background:rgba(255,255,255,.08);color:white;border-color:rgba(255,255,255,.15)">Copy browser-source URL</button><button class="secondary-btn" id="openManual" style="background:rgba(255,255,255,.08);color:white;border-color:rgba(255,255,255,.15)">? User Manual</button></div></section>${window.KingdomVoice?window.KingdomVoice.cardHtml():''}${connectCardHtml()}<div class="ministry-grid"><section class="card control-card"><div class="section-head" style="margin:0 0 14px"><div><h2>Presenter control</h2><p>Live preview · updates audience display instantly</p></div><span class="pill">${hub().isLive(hubState)?'<span class="status-dot"></span> Live session':'<span class="status-dot off"></span> This computer only'}</span></div><div class="control-preview ${state.ministry.theme==='light'?'light':state.ministry.theme==='royal'?'royal':''}" id="controlPreview"><blockquote>“${esc(cur.text)}”</blockquote><cite>${esc(cur.ref)} · ${TR[cur.translation||state.reader.translation]}</cite><div class="church-label">${esc(state.ministry.church)}</div></div><div class="control-actions"><button class="secondary-btn" id="minPrev">← Previous</button><button class="primary-btn" id="minSearch">⌕ Change Scripture</button><button class="secondary-btn" id="minNext">Next →</button><button class="secondary-btn" id="minBlank">Blank screen</button></div><div class="form-grid" style="margin-top:16px"><div class="field"><label>Theme</label><select id="minTheme"><option value="royal">Royal Gold</option><option value="dark">Classic Black</option><option value="light">Minimal White</option><option value="sunset">Sunset</option><option value="noir">Noir</option><option value="transparent">Transparent (key)</option></select></div><div class="field"><label>Church / ministry name</label><input id="minChurch" value="${esc(state.ministry.church)}"></div></div></section><aside class="card service-panel"><div class="eyebrow">LIVE SERVICE</div><h2>${esc(state.ministry.sermon||'Sunday Service')}</h2><div class="timer" id="serviceTimer">00:00:00</div><div style="display:flex;gap:8px"><button class="secondary-btn small-btn" id="timerStart">Start timer</button><button class="secondary-btn small-btn" id="timerReset">Reset</button></div><div class="connection" style="margin-top:18px"><span class="status-dot${hub().isLive(hubState)?'':' off'}"></span><span>${hub().isLive(hubState)?'Audience display sync is ready':'Audience display syncs on this computer only'}</span></div><div class="section-head"><div><h2>Media quick start</h2></div></div><button class="secondary-btn" style="width:100%;margin-bottom:8px" id="guideVmix">How to use with vMix</button><button class="secondary-btn" style="width:100%" id="guideObs">How to use with OBS</button></aside></div></div>`;
   $('#minTheme').value=state.ministry.theme;$('#openDisplay').onclick=()=>window.open(displayUrl(),'kingdomPresentation','width=1280,height=720');$('#copyDisplay').onclick=()=>copyText(displayUrl(),'Browser-source URL copied — paste it into vMix / OBS');$('#openManual').onclick=openManual;$('#minSearch').onclick=openMinistrySearch;$('#minPrev').onclick=()=>minStep(-1);$('#minNext').onclick=()=>minStep(1);$('#minBlank').onclick=()=>sendPresentation({...cur,blank:true});$('#minTheme').onchange=e=>{state.ministry.theme=e.target.value;save();sendPresentation(cur);renderMinistry()};$('#minChurch').onchange=e=>{state.ministry.church=e.target.value.trim()||'KINGDOM BIBLE';save();sendPresentation(cur)};$('#guideVmix').onclick=()=>openGuide('vMix');$('#guideObs').onclick=()=>openGuide('OBS');bindConnectCard();bindTimer();bindVoice()}
 /* Repaint only the presenter preview — Voice Mode fires many updates per
    minute and a full re-render would flicker and tear down the mic UI. */
@@ -205,7 +236,7 @@ function updateMinistryPreview(v){
 async function presentHit(hit,tr){
   const v=await getPassage(hit,tr||state.reader.translation);
   if(!v)return null;
-  state.ministry.current=v;save();
+  state.ministry.current=v;saveQuiet();
   await sendPresentation(v);
   updateMinistryPreview(v);
   return v;
@@ -214,6 +245,9 @@ function bindVoice(){
   if(!window.KingdomVoice)return;
   KingdomVoice.bind({
     books,
+    /* Preload the whole translation while the presenter is still setting up, so
+       no reference spoken tonight has to wait on a fetch. */
+    warm:tr=>warmTranslation(tr||state.reader.translation),
     present:(hit,tr)=>presentHit(hit,tr),
     /* "…now verse 25": jump inside the passage currently on the display */
     gotoVerse:(verse,verseEnd,tr)=>{
@@ -259,7 +293,7 @@ async function localStep(d,quiet){
   }
   const next=await getPassage({book:bi,chapter:ch,verse:v,verseEnd:null},tr);
   if(!next||!next.text)return toast('Cannot advance','error');
-  state.ministry.current=next;save();
+  state.ministry.current=next;saveQuiet();
   await sendPresentation(next);
   if(quiet)updateMinistryPreview(next);else renderMinistry();
   return next;
@@ -274,9 +308,13 @@ async function syncFromHub(){
 }
 async function sendPresentation(v){const payload={...v,theme:state.ministry.theme,church:state.ministry.church,ts:Date.now()};
   localStorage.setItem('kingdomPresentation',JSON.stringify(payload));
-  /* live session drives the display and every paired phone */
-  if(sessionCode)await sessionAction({type:'presentation',payload:{...payload,book:payload.book,chapter:payload.chapter,verse:payload.verse,verseEnd:payload.verseEnd}});
+  /* Local screens first and without waiting. The projector window on this very
+     computer is the surface that must not lag, so it is updated before the hub
+     round trip that only serves phones and second machines. */
   try{new BroadcastChannel('kingdom-presentation').postMessage(payload)}catch{}
+  /* live session drives every paired phone */
+  if(sessionCode)sessionAction({type:'presentation',payload:{...payload,book:payload.book,chapter:payload.chapter,verse:payload.verse,verseEnd:payload.verseEnd}});
+  return payload;
 }
 
 /* ---------- live service session (presenter side) ----------
