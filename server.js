@@ -23,7 +23,7 @@ function headers(res,type='application/json; charset=utf-8',frameable=false){
   /* ALLOWALL is not a real XFO value: when the page is meant to be captured/embedded,
      drop the legacy header entirely and let CSP frame-ancestors carry the policy. */
   if(!frameable)res.setHeader('X-Frame-Options','SAMEORIGIN');
-  res.setHeader('Content-Security-Policy',"default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; worker-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'"+(frameable?'; frame-ancestors *':''));
+  res.setHeader('Content-Security-Policy',"default-src 'self'; img-src 'self' data: https://lh3.googleusercontent.com; style-src 'self' 'unsafe-inline'; script-src 'self' https://accounts.google.com; connect-src 'self' https://accounts.google.com; frame-src https://accounts.google.com; worker-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'"+(frameable?'; frame-ancestors *':''));
 }
 function json(res,status,data){res.statusCode=status;headers(res);res.end(JSON.stringify(data))}
 
@@ -187,6 +187,10 @@ const PREMIUM_CONFIG={
   aiApiUrl:String(process.env.AI_API_URL||'https://api.openai.com/v1/chat/completions'),
   aiModel:String(process.env.AI_MODEL||'gpt-4o-mini'),
   storePath:process.env.PREMIUM_STORE_PATH||path.join(__dirname,'.data','premium-store.json'),
+  /* A web OAuth client ID is PUBLIC by design — Google documents it for browser use and
+     it grants no access on its own. Verification happens server-side against Google's
+     JWKS, so no client secret is required or accepted for this flow. */
+  googleClientId:String(process.env.GOOGLE_CLIENT_ID||'224088224223-rq9dlhqqoqhjjmq2ave78akeopchcgab.apps.googleusercontent.com').trim(),
 };
 const premiumSessions=new Map();
 function blankPremiumStore(){return{users:[],transactions:[],withdrawals:[],audit:[],notifications:[]}}
@@ -201,6 +205,31 @@ function parseCookies(req){return Object.fromEntries(String(req.headers.cookie||
 function setSession(req,res,session){const secure=String(req.headers?.['x-forwarded-proto']||'').toLowerCase()==='https'||!!req.socket.encrypted;res.setHeader('Set-Cookie',`kb_session=${encodeURIComponent(session)}; HttpOnly; SameSite=Lax; Path=/${secure?'; Secure':''}`)}
 function clearSession(res){res.setHeader('Set-Cookie','kb_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0')}
 function auth(req){const token=parseCookies(req).kb_session;return token?premiumSessions.get(token)||null:null}
+/* ---------- Google Identity Services (ID token) verification ----------
+   Dependency-free: Node imports a JWK directly, so we fetch Google's signing certs
+   and verify the RS256 signature ourselves. The browser is never trusted for the
+   email, and no client secret exists for this flow. Certs are cached for an hour;
+   Google rotates them rarely, and an unknown `kid` forces a refetch. */
+const GOOGLE_CERTS_URL='https://www.googleapis.com/oauth2/v3/certs';
+const GOOGLE_ISSUERS=['accounts.google.com','https://accounts.google.com'];
+let googleCerts={at:0,keys:{}};
+const decodeSegment=s=>JSON.parse(Buffer.from(s,'base64url').toString('utf8'));
+async function googleSigningKeys(){if(Date.now()-googleCerts.at<3600000&&Object.keys(googleCerts.keys).length)return googleCerts.keys;const r=await fetch(GOOGLE_CERTS_URL);if(!r.ok)throw Error('Google sign-in cannot be verified right now');const j=await r.json();const keys={};for(const k of j.keys||[])keys[k.kid]=k;googleCerts={at:Date.now(),keys};return keys}
+async function verifyGoogleCredential(credential){
+  if(typeof credential!=='string'||credential.split('.').length!==3)throw Error('Google sign-in was not completed');
+  const[header,claims,signature]=credential.split('.');const head=decodeSegment(header),pay=decodeSegment(claims);
+  if(head.alg!=='RS256')throw Error('Unexpected Google token format');
+  const jwk=(await googleSigningKeys())[head.kid];
+  if(!jwk){googleCerts={at:0,keys:{}};throw Error('Google signing key not recognised — please try again')}
+  if(!crypto.verify('RSA-SHA256',Buffer.from(header+'.'+claims),crypto.createPublicKey({key:jwk,format:'jwk'}),Buffer.from(signature,'base64url')))throw Error('Google sign-in could not be verified');
+  const now=Math.floor(Date.now()/1000);
+  if(!pay.exp||pay.exp<now-60)throw Error('Google sign-in has expired — please try again');
+  if(pay.iat&&pay.iat>now+60)throw Error('Google sign-in is not valid yet');
+  if(pay.aud!==PREMIUM_CONFIG.googleClientId)throw Error('Google sign-in was issued for a different app');
+  if(!GOOGLE_ISSUERS.includes(pay.iss))throw Error('Google sign-in came from an unexpected source');
+  if(!pay.email||pay.email_verified!==true)throw Error('Google did not share a verified email address');
+  return{sub:String(pay.sub||''),email:String(pay.email).toLowerCase(),name:String(pay.name||pay.email.split('@')[0]).slice(0,80),picture:String(pay.picture||'')};
+}
 function audit(event,actor,details={}){premiumStore.audit.unshift({id:uid('audit'),event,actor:actor||'system',details,date:new Date().toISOString()});premiumStore.audit=premiumStore.audit.slice(0,1000);savePremiumStore()}
 function notifyAdmin(type,message,details={}){premiumStore.notifications.unshift({id:uid('note'),type,message,details,read:false,date:new Date().toISOString()});premiumStore.notifications=premiumStore.notifications.slice(0,200);savePremiumStore()}
 function publicUser(u){if(!u)return null;const entitlement=entitlementOf(u);return{id:u.id,email:u.email,name:u.name,role:u.role||'user',referralCode:u.referralCode,trialEndsAt:u.trialEndsAt,plan:entitlement.plan,status:entitlement.status,daysRemaining:entitlement.daysRemaining,walletBalance:u.wallet?.balance||0,createdAt:u.createdAt}}
@@ -252,7 +281,7 @@ function denyAdmin(res,g){return json(res,403,{ok:false,error:g.why||'Administra
    browser bundles, so referencing it here threw a ReferenceError (HTTP 500). */
 const escHtml=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function addWallet(u,amount,type,description,meta={}){u.wallet=u.wallet||{balance:0,ledger:[]};u.wallet.balance+=amount;u.wallet.ledger.unshift({id:uid('ledger'),amount,type,description,date:new Date().toISOString(),meta});u.wallet.ledger=u.wallet.ledger.slice(0,300)}
-function startUser(email,name,password,referredBy){const now=Date.now(),u={id:uid('usr'),email,name:name||email.split('@')[0],passwordHash:passwordHash(password),role:'user',referralCode:referralCode(),referredBy:referredBy||'',referralRewarded:false,trialStartedAt:now,trialEndsAt:now+30*86400000,subscription:null,wallet:{balance:0,ledger:[]},ai:{month:'',used:0},createdAt:new Date(now).toISOString()};premiumStore.users.push(u);return u}
+function startUser(email,name,password,referredBy){const now=Date.now(),u={id:uid('usr'),email,name:name||email.split('@')[0],passwordHash:passwordHash(password),passwordSet:!!password,role:'user',referralCode:referralCode(),referredBy:referredBy||'',referralRewarded:false,trialStartedAt:now,trialEndsAt:now+30*86400000,subscription:null,wallet:{balance:0,ledger:[]},ai:{month:'',used:0},createdAt:new Date(now).toISOString()};premiumStore.users.push(u);return u}
 function planBy(id){return PREMIUM_PLANS[String(id||'').toLowerCase()]||null}
 function currentPlanFor(u){const e=entitlementOf(u);return e.plan==='trial'?null:planBy(e.plan)}
 function businessDaysFrom(date,n){const d=new Date(date);let left=n;while(left){d.setDate(d.getDate()+1);if(![0,6].includes(d.getDay()))left--}return d.toISOString()}
@@ -286,7 +315,7 @@ async function settlePayment(reference,verified){
   if(u.referredBy&&!u.referralRewarded){const ref=premiumStore.users.find(x=>x.referralCode===u.referredBy&&x.id!==u.id);if(ref){addWallet(ref,Math.round(tx.amount*.1),'commission','10% first-payment referral commission',{fromUser:u.id,reference});u.referralRewarded=true;}}
   savePremiumStore();audit('payment.success',u.id,{reference,plan:tx.plan,amount:tx.amount});return tx;
 }
-function premiumPublic(){return{plans:Object.values(PREMIUM_PLANS).map(({aiMonthly,...p})=>p),trialDays:30,trialWarningDays:7,referral:{signupNaira:100,firstPaymentPercent:10,pointValueNaira:1,minWithdrawal:1000,payoutSlaWorkingDays:3},paystackPublicKey:PREMIUM_CONFIG.paystackPublicKey,whatsapp:'23481344338808'}}
+function premiumPublic(){return{plans:Object.values(PREMIUM_PLANS).map(({aiMonthly,...p})=>p),trialDays:30,trialWarningDays:7,referral:{signupNaira:100,firstPaymentPercent:10,pointValueNaira:1,minWithdrawal:1000,payoutSlaWorkingDays:3},paystackPublicKey:PREMIUM_CONFIG.paystackPublicKey,googleClientId:PREMIUM_CONFIG.googleClientId,whatsapp:'23481344338808'}}
 
 /* ---------- HTTP server ---------- */
 const server=http.createServer(async(req,res)=>{
@@ -315,6 +344,9 @@ const server=http.createServer(async(req,res)=>{
       if(email===PREMIUM_CONFIG.adminEmail&&PREMIUM_CONFIG.adminPassword&&password===PREMIUM_CONFIG.adminPassword){const token=crypto.randomBytes(32).toString('hex');premiumSessions.set(token,{role:'admin',email,createdAt:Date.now()});setSession(req,res,token);audit('admin.login',email,{});return json(res,200,{ok:true,user:{email,role:'admin',plan:'unlimited',status:'admin'}})}
       const u=premiumStore.users.find(x=>x.email===email);
       if(!u||!passwordOk(password,u.passwordHash))return json(res,401,{ok:false,error:'Email or password is incorrect'});
+      /* A Google-only account has a random throwaway password. Saying so is far more
+         use than a bare "incorrect", and avoids sending people round a support loop. */
+      if(u.authProvider==='google'&&!u.passwordSet)return json(res,401,{ok:false,error:'This account signs in with Google'});
       const token=crypto.randomBytes(32).toString('hex');premiumSessions.set(token,{userId:u.id,role:'user',email:u.email,createdAt:Date.now()});setSession(req,res,token);audit('auth.login',u.id,{});return json(res,200,{ok:true,user:publicUser(u)});
     }
     if(p==='/api/auth/me'&&req.method==='GET'){
@@ -391,6 +423,27 @@ const server=http.createServer(async(req,res)=>{
       const s=requireAdmin(req,res);if(!s)return;const w=premiumStore.withdrawals.find(x=>x.id===payWithdrawal[1]);if(!w)return json(res,404,{ok:false,error:'Withdrawal not found'});w.status='paid';w.paidAt=new Date().toISOString();w.paidBy=s.email;premiumStore.notifications=premiumStore.notifications.map(n=>n.details?.withdrawalId===w.id?{...n,read:true}:n);savePremiumStore();audit('admin.withdrawal.paid',s.email,{withdrawalId:w.id,amount:w.amount,userId:w.userId});return json(res,200,{ok:true,withdrawal:w});
     }
 
+    if(p==='/api/auth/google'&&req.method==='POST'){
+      let g;try{g=await verifyGoogleCredential(String((await body(req)).credential||''))}catch(e){return json(res,400,{ok:false,error:e.message})}
+      /* The owner already has a password and full admin rights. Refusing Google here
+         keeps a single, unambiguous way into the administrator account. */
+      if(g.email===PREMIUM_CONFIG.adminEmail)return json(res,403,{ok:false,error:'Administrator accounts sign in with a password'});
+      let u=premiumStore.users.find(x=>x.email===g.email),linked=false,created=false;
+      if(u){
+        /* Same email, different Google identity = someone re-authorising, or a hijack
+           attempt. Never silently re-point the link. */
+        if(u.googleSub&&u.googleSub!==g.sub)return json(res,409,{ok:false,error:'This email is already linked to a different Google account'});
+        if(!u.googleSub){u.googleSub=g.sub;u.authProvider='google';linked=true}
+      }else{
+        /* A random throwaway password means password login can never succeed for a
+           Google-only account, and passwordOk() never has to special-case an empty hash. */
+        u=startUser(g.email,g.name,crypto.randomBytes(24).toString('hex'),'');
+        u.authProvider='google';u.googleSub=g.sub;u.googlePicture=g.picture;u.passwordSet=false;created=true;
+      }
+      const token=crypto.randomBytes(32).toString('hex');premiumSessions.set(token,{userId:u.id,role:'user',email:u.email,createdAt:Date.now()});setSession(req,res,token);savePremiumStore();
+      audit(linked?'auth.google.link':'auth.google',u.id,{provider:'google',created});
+      return json(res,created?201:200,{ok:true,user:publicUser(u),message:created?'Welcome — your 30-day free trial has started':linked?'Google sign-in linked to your existing account':'Signed in with Google'});
+    }
     if(p==='/api/session/start'&&req.method==='POST'){
       const b=await body(req);
       /* Re-presenting the same code must not rotate it: already-paired phones and

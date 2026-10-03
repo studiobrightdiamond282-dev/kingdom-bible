@@ -20,5 +20,16 @@ async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/heal
   const overview=await request('/api/admin/overview',{headers:{cookie:admin.cookie}});assert.equal(overview.body.users.length,2);
   const grant=await request('/api/admin/users/'+a.body.user.id+'/entitlement',{method:'POST',headers:{cookie:admin.cookie},body:JSON.stringify({plan:'premium',forever:true})});assert.equal(grant.body.user.status,'active');assert.equal(grant.body.user.plan,'premium');
   for(const page of ['/admin','/privacy','/refund','/status']){const r=await fetch(base+page);assert.equal(r.status,200,page+' must be served')}
+  /* Google sign-in must reject anything that is not a genuine, correctly signed,
+     unexpired token for THIS app. A forged or malformed credential must never mint a session. */
+  assert(cfg.body.googleClientId,'premium config must expose the public Google client id');
+  for(const bad of [{},{credential:''},{credential:'not-a-jwt'},{credential:'a.b.c'},{credential:'a.b.c.d'}]){
+    const g=await request('/api/auth/google',{method:'POST',body:JSON.stringify(bad)});
+    assert.equal(g.r.status,400,'malformed Google credential must be rejected: '+JSON.stringify(bad));
+    assert(!g.cookie,'a rejected Google sign-in must not set a session cookie');
+  }
+  const ga=await request('/api/auth/google',{method:'POST',body:JSON.stringify({credential:'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln'})});
+  assert.equal(ga.r.status,400,'a token with an unknown signing key must be rejected');
+  assert(!ga.cookie,'no session may be minted from an unverified token');
   console.log('✓ premium trial, referral wallet, admin grant, and legal routes');
 }catch(e){console.error(e.stack||e);process.exitCode=1}finally{child.kill('SIGTERM');try{fs.unlinkSync(store)}catch{}}})();

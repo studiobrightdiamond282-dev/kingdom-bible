@@ -247,6 +247,10 @@ body.gate-open main{margin-left:0;padding:24px 16px}
 .trial-banner{display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;margin:0 0 18px;padding:11px 16px;border-radius:12px;border:1px solid color-mix(in srgb,var(--gold),transparent 62%);background:color-mix(in srgb,var(--gold),transparent 90%);color:var(--ink);font-size:12.5px}
 .trial-banner[hidden]{display:none}
 .trial-banner strong{color:var(--gold)}
+/* Google sign-in */
+.google-mount{display:flex;justify-content:center;margin:16px 0 4px;min-height:44px}
+.auth-divider{display:flex;align-items:center;gap:12px;margin:14px 0 4px;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.1em}
+.auth-divider:before,.auth-divider:after{content:"";flex:1;height:1px;background:var(--line)}
 
 /* Verse picker — reaching a verse must never mean scrolling the whole chapter.
    Psalm 119 runs to 176 verses, so this is the only dependable way to navigate. */
