@@ -45,7 +45,11 @@ function headers(res,type='application/json; charset=utf-8',frameable=false){
   /* ALLOWALL is not a real XFO value: when the page is meant to be captured/embedded,
      drop the legacy header entirely and let CSP frame-ancestors carry the policy. */
   if(!frameable)res.setHeader('X-Frame-Options','SAMEORIGIN');
-  res.setHeader('Content-Security-Policy',"default-src 'self'; img-src 'self' data: https://lh3.googleusercontent.com; style-src 'self' 'unsafe-inline'; script-src 'self' https://accounts.google.com; connect-src 'self' https://accounts.google.com; frame-src https://accounts.google.com; worker-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'"+(frameable?'; frame-ancestors *':''));
+  /* Google Identity Services loads its own stylesheet from accounts.gstatic.com.
+     Without that origin in style-src the button renders unstyled or invisible, and
+     the reader is left thinking sign-in is broken. Everything else stays locked to
+     'self' - this widens the policy to two Google hosts, nothing more. */
+  res.setHeader('Content-Security-Policy',"default-src 'self'; img-src 'self' data: https://lh3.googleusercontent.com; style-src 'self' 'unsafe-inline' https://accounts.gstatic.com; font-src 'self' https://fonts.gstatic.com; script-src 'self' https://accounts.google.com; connect-src 'self' https://accounts.google.com; frame-src https://accounts.google.com; worker-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'"+(frameable?'; frame-ancestors *':''));
 }
 function json(res,status,data){res.statusCode=status;headers(res);res.end(JSON.stringify(data))}
 

@@ -57,7 +57,71 @@ function loadGoogle(){
 }
 /* Renders Google's own button into `mount`. The credential is posted to our server,
    which verifies it against Google — the browser is never trusted for the email. */
-function googleButton(mount){const host=mount||root().querySelector('#googleMount');if(!host)return;host.innerHTML='';loadGoogle().then(api=>api.initialize({client_id:config.googleClientId,callback:async resp=>{const box=host.querySelector('.premium-form-error')||document.createElement('div');box.className='premium-form-error';try{/* the ?ref= code is sent with the credential so a Google signup still credits the inviter */const d=await apiPost('/api/auth/google',{credential:resp.credential,referralCode:new URLSearchParams(location.search).get('ref')||''});user=d.user;afterAuth(user)}catch(x){host.append(box),box.textContent=x.message}}})).then(api=>api.renderButton(host,{theme:'filled_black',size:'large',width:Math.min(360,host.clientWidth||340),text:'continue_with'})).catch(x=>{host.innerHTML=`<p class="gate-note">${esc(x.message)}</p>`})}
+function googleButton(mount) {
+  const host =
+    mount ||
+    root().querySelector('#googleMount');
+
+  if (!host) return;
+
+  host.innerHTML = '';
+
+  loadGoogle()
+    .then(api => {
+      api.initialize({
+        client_id: config.googleClientId,
+
+        callback: async response => {
+          let errorBox =
+            host.querySelector('.premium-form-error');
+
+          if (!errorBox) {
+            errorBox = document.createElement('div');
+            errorBox.className = 'premium-form-error';
+          }
+
+          try {
+            const data = await apiPost('/api/auth/google', {
+              credential: response.credential,
+              referralCode:
+                new URLSearchParams(location.search).get('ref') || ''
+            });
+
+            user = data.user;
+            afterAuth(user);
+          } catch (error) {
+            if (!errorBox.parentNode) {
+              host.append(errorBox);
+            }
+
+            errorBox.textContent =
+              error.message ||
+              'Google sign-in was unsuccessful.';
+          }
+        }
+      });
+
+      api.renderButton(host, {
+        theme: 'filled_black',
+        size: 'large',
+        width: Math.min(
+          360,
+          host.clientWidth || 340
+        ),
+        text: 'continue_with'
+      });
+    })
+    .catch(error => {
+      host.innerHTML = `
+        <p class="gate-note">
+          ${esc(
+            error.message ||
+            'Google sign-in is unavailable. Please continue with email.'
+          )}
+        </p>
+      `;
+    });
+}
 async function apiPost(path,body){const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Request failed');return d}
 async function api(path,opts={}){const r=await fetch(path,{...opts,headers:{'content-type':'application/json',...(opts.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Request failed');return d}
 async function load(){try{const [c,m]=await Promise.all([api('/api/premium/config'),api('/api/auth/me')]);config=c;user=m.user||null;return user}catch{return null}}
@@ -82,6 +146,11 @@ async function signOut(){
 function shell(body,cls='premium-modal'){root().innerHTML=`<div class="modal-backdrop"><div class="modal ${cls}" role="dialog" aria-modal="true">${body}</div></div>`;root().querySelector('.modal-backdrop').onclick=e=>{if(e.target.classList.contains('modal-backdrop'))close()};root().querySelectorAll('[data-premium-close]').forEach(b=>b.onclick=close)}
 function planCards(){return(config?.plans||[]).map(p=>`<article class="premium-plan ${p.id==='premium'?'featured':''}"><div class="eyebrow">${p.name.toUpperCase()}</div><h3>₦${Number(p.price).toLocaleString()}<small>/month</small></h3><p>${esc(p.tagline)}</p><ul>${p.benefits.map(b=>`<li>${esc(b)}</li>`).join('')}</ul><button class="${p.id==='premium'?'primary-btn':'secondary-btn'}" data-buy="${p.id}">Choose ${p.name}</button></article>`).join('')}
 function open(){load().then(()=>user?account():landing())}
+/* Open sign-in or sign-up DIRECTLY, skipping the plan screen. The welcome gate
+   had two different promises ("Create free account" and "I already have an
+   account") but both funnelled into open(), so both landed on the same generic
+   Premium window and neither matched what the reader had clicked. */
+function openAuth(mode){load().then(()=>user?account():auth(mode==='login'?'login':'register'))}
 function landing(){shell(`<div class="modal-head"><div><div class="eyebrow">KINGDOM BIBLE PRO</div><h2>Grow deeper. Serve better.</h2><p>Start with a 30-day free trial. We show a warning when seven days remain.</p></div><button class="close-btn" data-premium-close>×</button></div><div class="premium-notice"><strong>Fair and clear:</strong> subscriptions are charged through Paystack. AI access uses fair-use monthly allowances so you are never exposed to an unexpected bill. Read our <a href="/privacy" target="_blank">Privacy Policy</a> and <a href="/refund" target="_blank">Refund Policy</a>.</div><div class="premium-plans">${planCards()}</div><div class="premium-footer"><button class="secondary-btn" id="premiumLogin">Sign in</button><button class="primary-btn" id="premiumRegister">Start free trial</button><a href="${esc(supportText())}" target="_blank" rel="noopener">Questions? WhatsApp support</a></div>`);
   root().querySelector('#premiumLogin').onclick=()=>auth('login');root().querySelector('#premiumRegister').onclick=()=>auth('register');bindBuy();}
 function auth(mode){
@@ -175,5 +244,5 @@ async function shareApp(){
 }
 function bindBuy(){root().querySelectorAll('[data-buy]').forEach(b=>b.onclick=async()=>{b.disabled=true;b.textContent='Opening secure checkout…';try{const d=await api('/api/payments/initialize',{method:'POST',body:JSON.stringify({plan:b.dataset.buy})});if(d.admin){alert(d.message);return}if(d.authorizationUrl)location.href=d.authorizationUrl;else throw new Error('Checkout is not configured yet')}catch(e){b.disabled=false;b.textContent='Try again';const n=root().querySelector('.premium-form-error')||document.createElement('div');n.className='premium-form-error';n.textContent=e.message;root().querySelector('.modal')?.append(n)}})}
 function withdraw(){shell(`<div class="modal-head"><div><div class="eyebrow">REFERRAL WALLET</div><h2>Request a withdrawal</h2><p>Minimum ₦1,000. An administrator reviews requests and pays within three working days.</p></div><button class="close-btn" data-premium-close>×</button></div><form id="withdrawForm"><div class="field"><label>Amount (₦)</label><input id="withdrawAmount" type="number" min="1000" step="1" required></div><div class="field" style="margin-top:10px"><label>Account name</label><input id="withdrawName" required></div><div class="field" style="margin-top:10px"><label>Bank code</label><input id="withdrawBank" placeholder="e.g. 058" required></div><div class="field" style="margin-top:10px"><label>Account number</label><input id="withdrawAccount" inputmode="numeric" minlength="10" maxlength="10" required></div><div class="premium-form-error" id="withdrawError"></div><div class="modal-actions"><button class="secondary-btn" type="button" data-premium-close>Cancel</button><button class="primary-btn">Submit request</button></div></form>`);root().querySelector('#withdrawForm').onsubmit=async e=>{e.preventDefault();try{const d=await api('/api/wallet/withdraw',{method:'POST',body:JSON.stringify({amount:root().querySelector('#withdrawAmount').value,accountName:root().querySelector('#withdrawName').value,bankCode:root().querySelector('#withdrawBank').value,accountNumber:root().querySelector('#withdrawAccount').value})});user=d.user;account()}catch(x){root().querySelector('#withdrawError').textContent=x.message}}}
-g.KingdomPremium={open,load,onAuth:null,onPasswordReset:null,googleButton,forgot,shareApp,signOut,supportText,referralLink,get user(){return user},status:()=>user?{signedIn:true,status:user.status,plan:user.plan,daysRemaining:user.daysRemaining,name:user.name,email:user.email,avatar:user.avatar||'',referralCode:user.referralCode,walletBalance:user.walletBalance||0}:{signedIn:false,status:'signed_out'},plans:()=>config?.plans||[],config:()=>config,async saveProfile(name,avatar){const d=await api('/api/account/profile',{method:'POST',body:JSON.stringify({name,avatar})});user=d.user;return user},async wallet(){return api('/api/wallet')},async setPassword(email,code,newPassword){return api('/api/auth/password/reset',{method:'POST',body:JSON.stringify({email,code,newPassword})})}};
+g.KingdomPremium={open,openAuth,load,onAuth:null,onPasswordReset:null,googleButton,forgot,shareApp,signOut,supportText,referralLink,get user(){return user},status:()=>user?{signedIn:true,status:user.status,plan:user.plan,daysRemaining:user.daysRemaining,name:user.name,email:user.email,avatar:user.avatar||'',referralCode:user.referralCode,walletBalance:user.walletBalance||0}:{signedIn:false,status:'signed_out'},plans:()=>config?.plans||[],config:()=>config,async saveProfile(name,avatar){const d=await api('/api/account/profile',{method:'POST',body:JSON.stringify({name,avatar})});user=d.user;return user},async wallet(){return api('/api/wallet')},async setPassword(email,code,newPassword){return api('/api/auth/password/reset',{method:'POST',body:JSON.stringify({email,code,newPassword})})}};
 })(typeof window!=='undefined'?window:globalThis);

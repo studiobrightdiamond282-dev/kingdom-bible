@@ -120,6 +120,72 @@ assert(sw.includes('/present')&&sw.includes('network only'),'service worker must
 /* the presenter must not fall back to a code-less, localhost-only display URL */
 assert(!/window\.open\('\/present'/.test(app),'presenter must open the LAN display URL with the service code');
 
+/* ---- guest access: essential Bible reading must never be behind an account ----
+   A signed-out visitor used to get a full-screen gate that replaced #main, so no
+   Bible, no service worker, no install prompt and no offline support. */
+assert(!/function showSignInGate/.test(app),'the full-screen sign-in gate must not replace the application for signed-out readers');
+assert(!/showSignInGate\(\)/.test(app),'nothing may re-open the gate, including the sign-out path');
+const initSrc=app.slice(app.indexOf('async function init()'),app.indexOf('function renderNav()'));
+assert(!/if\(!accountState\.signedIn\)\{[^}]*return/.test(initSrc),'init() must not return early for a signed-out visitor');
+assert(/loadHub|navigate\(/.test(initSrc),'init() must still navigate for every visitor');
+/* Removing the reading gate must NOT have removed the guards on other people's data. */
+assert(/if\(!accountState\.signedIn\)\{box\.innerHTML='[\s\S]{0,200}?Sign in to see your referral earnings/.test(app),'the referral wallet must stay hidden from signed-out visitors');
+assert(/registerPWA\(\); networkStatus\(\);/.test(app),'the service worker and network status must be set up for guests too');
+assert(/clearSignInGate\(\);\s*[\r\n]+\s*paintTrialBanner\(\);/.test(app),'init() must tear the gate down and paint the banner for every visitor');
+assert(/s\.status==='signed_out'/.test(app),'the banner must have a signed-out state, not only trial/expired');
+assert(/data-open-auth="register"/.test(app)&&/data-open-auth="login"/.test(app),'the guest banner must offer both create-account and sign-in');
+assert(/openAuth/.test(app),'the guest banner buttons must open the form they promise, via openAuth');
+assert(/body\.gate-open[^{]*\.quick-fab\{display:none!important\}/.test(css),'the floating quick-action button must never sit on top of a full-screen gate');
+
+/* ---- Google sign-in must actually be reachable under the CSP ---- */
+assert(/function openAuth\(mode\)/.test(premJsSrc),'premium.js must offer a direct sign-in/sign-up entry point');
+assert(/g\.KingdomPremium=\{open,openAuth/.test(premJsSrc),'openAuth must be exported on window.KingdomPremium');
+assert(/function openAuth\(mode\)\{load\(\)\.then\(\(\)=>user\?account\(\):auth\(/.test(premJsSrc),'openAuth must land on the register/login form, not the generic plan screen');
+for(const [name,src] of [['server.js',serverSrc1],['vercel.json',vercelCfg]]){
+  assert(/script-src[^;]*https:\/\/accounts\.google\.com/.test(src),`${name} CSP must allow the Google Identity Services script`);
+  assert(/connect-src[^;]*https:\/\/accounts\.google\.com/.test(src),`${name} CSP must allow Google sign-in network calls`);
+  assert(/frame-src[^;]*https:\/\/accounts\.google\.com/.test(src),`${name} CSP must allow the Google sign-in popup frame`);
+  assert(/style-src[^;]*https:\/\/accounts\.gstatic\.com/.test(src),`${name} CSP must allow Google's button stylesheet`);
+}
+
+/* ---- explainer home (kbx-) ---- */
+const cssKb=css.slice(css.indexOf('KINGDOM BIBLE EXPLAINER HOME'));
+assert(cssKb.length>0,'styles.css must carry the "KINGDOM BIBLE EXPLAINER HOME" section');
+assert(app.includes('async function renderHome()'),'renderHome must still be defined');
+assert(app.includes('function renderMinistry()'),'Ministry Mode must still be defined');
+assert(app.includes('KingdomPremium?.open()')&&app.includes('KingdomPremium?.supportText?.()'),'Premium upgrade + WhatsApp support must stay wired from home');
+for(const id of ['resumeTop','resumeReading','homeUpgrade','homeWhatsApp','dailySave','dailyShare','dailyOpen','memoryStart'])
+  assert(app.includes(`id="${id}"`),`home must keep #${id}`);
+for(const fn of ['renderHome','bindHomeActions','bindHomePillars','bindHomeWalkthrough','initHomeReveal','scrollToHomeSection'])
+  assert(app.includes(`function ${fn}(`),`explainer helper ${fn}() is missing`);
+for(const c of ['kbx-home','kbx-hero','kbx-strip','kbx-mission','kbx-pillars','kbx-pillar-tab','kbx-journey','kbx-timeline','kbx-walkthrough','kbx-dashboard','kbx-ministry','kbx-trust','kbx-final'])
+  assert(app.includes(c),`home markup must include .${c}`);
+for(const c of ['.kbx-home','.kbx-hero','.kbx-strip-track','.kbx-pillar-tab','.kbx-wt-panel','.kbx-timeline','.kbx-trust-grid','.kbx-reveal-ready'])
+  assert(cssKb.includes(c),`explainer CSS must define ${c}`);
+for(const s of ['READ THE WORD.','UNDERSTAND THE WORD.','LIVE THE WORD.','START READING','SEE HOW IT WORKS','INSTALL APP','EVERYTHING BEGINS WITH SCRIPTURE','TODAY WITH GOD','Present Scripture with clarity.','not exploit the reader','MAKE SPACE FOR THE WORD TODAY'])
+  assert(app.includes(s),`home is missing the hero/section copy "${s}"`);
+const pillarsSrc=app.slice(app.indexOf('const KBX_PILLARS={'),app.indexOf('const KBX_DEMOS={'));
+const demosSrc=app.slice(app.indexOf('const KBX_DEMOS={'),app.indexOf('let kbxObserver'));
+for(const k of ['read','study','pray','present'])assert(pillarsSrc.includes(`${k}:{label:`),`pillar ${k} is missing from KBX_PILLARS`);
+assert.equal((pillarsSrc.match(/:\{label:/g)||[]).length,4,'there must be exactly four interactive pillars');
+for(const k of ['reader','study','prayer','plans','ai','ministry'])assert(demosSrc.includes(`${k}:{tab:`),`walkthrough tab ${k} is missing from KBX_DEMOS`);
+assert.equal((demosSrc.match(/:\{tab:/g)||[]).length,6,'there must be exactly six walkthrough tabs');
+assert(app.includes('role="tablist"')&&app.includes('role="tab"')&&app.includes('role="tabpanel"'),'pillars and walkthrough must expose real ARIA tab semantics');
+assert(app.includes(`(i?' hidden':'')`),'only the non-first walkthrough panels may start hidden');
+for(const k of ['ArrowRight','ArrowLeft','Home','End'])assert(app.includes(`'${k}'`),`tab keyboard support must handle ${k}`);
+const homeBlock=app.slice(app.indexOf('KINGDOM BIBLE EXPLAINER HOME'),app.indexOf('/* BIBLE READER */'));
+assert(!/\son[a-z]+\s*=\s*"/i.test(homeBlock),'the explainer home must not use inline event handlers');
+assert(app.includes("const KBX_FACTS=[['66','canonical books'],['1,189','chapters']"),'home facts must match books.json (66 books / 1189 chapters)');
+assert(app.includes("const KBX_PSALM='Psalms 119:105'")&&app.includes('getVerse(KBX_PSALM)'),'the feature Scripture must be resolved from the Bible data, not hardcoded');
+assert(/Thy word is a lamp/.test(homeBlock)===false,'home must not hardcode Bible text');
+assert(app.includes("'IntersectionObserver' in window")&&app.includes('kbx-reveal-ready'),'scroll reveal must only hide content once the observer exists');
+assert(app.includes(`const KBX_VERSION_FALLBACK='${pkg.version}'`),'the offline version fallback must equal package.json');
+for(const bp of ['max-width:1279px','max-width:1023px','max-width:899px','max-width:599px'])
+  assert(cssKb.includes(bp),`explainer CSS must include the ${bp} breakpoint`);
+assert(cssKb.includes('prefers-reduced-motion:reduce'),'reduced motion must disable the explainer animations');
+assert(cssKb.includes('animation-play-state:paused'),'the capability strip must pause on hover/focus');
+assert(cssKb.includes('env(safe-area-inset-bottom)'),'the final CTA must respect the bottom safe area');
+
 console.log('✓ 66 canonical books');console.log('✓ 1,189 chapters');console.log('✓ 31,102 KJV verses');
 console.log('✓ KJV, ASV and WEB data available');console.log('✓ Cross references validated');
 console.log('✓ PWA shell, manifest and asset links present');

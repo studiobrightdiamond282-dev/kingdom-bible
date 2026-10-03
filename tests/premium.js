@@ -223,6 +223,17 @@ async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/heal
     assert(/googleReady\.catch\(\(\)=>\{googleReady=null\}\)/.test(prem),'a failed Google load must not be cached forever');
     assert(!/Google sign-in is not configured/.test(prem),'the bare "not configured" message must be replaced with actionable copy');
     assert(/sign in with your email and password/.test(prem),'a Google failure must tell the reader to use email instead');
+    /* "api.renderButton is not a function" was thrown on a healthy server. Google's
+       initialize() returns undefined, so chaining renderButton off the promise that
+       initialize() produced handed renderButton undefined. Both calls must now live
+       inside ONE .then() callback, with renderButton never chained off initialize(). */
+    assert(!/\.then\(\s*api\s*=>\s*api\.renderButton/.test(prem),
+      'renderButton must never be chained onto the promise returned by initialize() (initialize() returns undefined)');
+    assert(/\.then\(\s*api\s*=>\s*\{[\s\S]{0,400}?api\.initialize\([\s\S]{0,1200}?api\.renderButton\(/.test(prem),
+      'initialize() and renderButton() must both be called inside the same .then() callback');
+    assert(/api\.renderButton\(host/.test(prem),'renderButton must mount onto the host element');
+    assert(/if\s*\(\s*!errorBox\.parentNode\s*\)/.test(prem),
+      'a Google sign-in error must not append a duplicate error box on every retry');
     /* applyAccount used to re-assign KingdomPremium.onAuth, silently replacing the
        shell handler: the gate never closed on signup and sign-out did nothing. */
     const applyLine=(app.split('function applyAccount')[1]||'').split('\n').find(l=>/accountState=u\?/.test(l))||'';
