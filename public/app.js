@@ -11,7 +11,7 @@ let state=loadState(),books=[],bookCache=new Map(),xrefCache=new Map(),route='ho
 function loadState(){try{return deepMerge(structuredClone(DEFAULT),JSON.parse(localStorage.getItem(LS)||'{}'))}catch{return structuredClone(DEFAULT)}}
 function deepMerge(a,b){for(const k in b){if(b[k]&&typeof b[k]==='object'&&!Array.isArray(b[k])&&a[k]&&typeof a[k]==='object'&&!Array.isArray(a[k]))deepMerge(a[k],b[k]);else a[k]=b[k]}return a}
 function save(){localStorage.setItem(LS,JSON.stringify(state)); updateProfileBits()}
-function avatarMarkup(){const n=displayName(),i=esc(n[0]?.toUpperCase()||'R');return state.profile.avatar?`<img src="${esc(state.profile.avatar)}" alt="${esc(n)} profile photo">`:i}
+function avatarMarkup(){const n=displayName(),i=esc(n[0]?.toUpperCase()||'R');const src=accountState.avatar||state.profile.avatar;return src?`<img src="${esc(src)}" alt="${esc(n)} profile photo">`:i}
 function updateProfileBits(){const n=displayName();$$('#sideName').forEach(x=>x.textContent=n);$$('.avatar').forEach(x=>x.innerHTML=avatarMarkup());document.documentElement.dataset.theme=state.profile.theme;document.documentElement.style.setProperty('--reader-size',state.profile.fontSize+'px');document.documentElement.style.setProperty('--reader-line',state.profile.lineHeight)}
 /* The greeting must belong to whoever is signed in, never to whoever built the app.
    A stale name in localStorage would also leak to the next visitor on a shared
@@ -20,7 +20,11 @@ function displayName(){const n=String(state.profile.name||'').trim();return n||'
 function syncIdentity(u){if(!u)return;const raw=String(u.name||'').trim()||String(u.email||'').split('@')[0].trim();if(raw&&raw!==state.profile.name){state.profile.name=raw;save()}}
 /* ---- account gate ---- */
 let accountState={signedIn:false,status:'signed_out',daysRemaining:0,plan:'none'};
-function applyAccount(u){accountState=u?{signedIn:true,status:u.status,daysRemaining:u.daysRemaining||0,plan:u.plan,role:u.role,name:u.name}:{signedIn:false,status:'signed_out',daysRemaining:0,plan:'none'};syncIdentity(u);try{window.KingdomPremium&&(window.KingdomPremium.onAuth=u?()=>{syncIdentity(u);paintTrialBanner()}:null)}catch{}}
+function applyAccount(u){accountState=u?{signedIn:true,status:u.status,daysRemaining:u.daysRemaining||0,plan:u.plan,role:u.role,name:u.name,email:u.email,avatar:u.avatar||'',referralCode:u.referralCode}:{signedIn:false,status:'signed_out',daysRemaining:0,plan:'none'};syncIdentity(u);try{window.KingdomPremium&&(window.KingdomPremium.onAuth=u?()=>{syncIdentity(u);paintTrialBanner()}:null)}catch{}}
+/* After a successful sign-in the gate must be torn down explicitly: it hid the
+   navigation and set body.gate-open, so simply re-rendering the page left the reader
+   staring at the welcome screen with no way to move. */
+function clearSignInGate(){document.body.classList.remove('gate-open');$$('#desktopNav,#mobileNav,.side-footer').forEach(x=>{if(x)x.style.display=''});const gate=$('.signin-gate');if(gate)gate.remove()}
 function freeOnly(){return accountState.status==='expired'||accountState.status==='signed_out'}
 function paintTrialBanner(){const el=$('#trialBanner');if(!el)return;const s=accountState;if(s.status==='trial'&&s.daysRemaining<=7){el.hidden=false;el.innerHTML=`<span>⏳ <strong>${s.daysRemaining} day${s.daysRemaining===1?'':'s'} left</strong> in your free trial.</span><button class="secondary-btn small-btn" data-open-premium>Choose a plan</button>`;el.querySelector('[data-open-premium]').onclick=()=>window.KingdomPremium?.open()}else if(s.status==='expired'){el.hidden=false;el.innerHTML=`<span>🔒 Your free trial has ended. You have free reading access.</span><button class="secondary-btn small-btn" data-open-premium>See subscription plans</button>`;el.querySelector('[data-open-premium]').onclick=()=>window.KingdomPremium?.open()}else{el.hidden=true;el.innerHTML=''}}
 function showSignInGate(){const m=$('#main');if(!m)return;document.body.classList.add('gate-open');$$('#desktopNav,#mobileNav,.side-footer').forEach(x=>x&&(x.style.display='none'));m.innerHTML=`<div class="signin-gate"><img class="gate-logo" src="/assets/logo.png" alt="KINGDOM BIBLE"><div class="eyebrow">KINGDOM BIBLE</div><h1>Welcome</h1><p class="lead">Sign in to read, study and share the Word. Your 30-day free trial starts the moment you create an account.</p><div id="gateGoogle" class="google-mount"></div><div class="auth-divider"><span>or use email</span></div><div class="gate-actions"><button class="primary-btn" id="gateRegister">Create free account · 30 days</button><button class="secondary-btn" id="gateLogin">I already have an account</button></div><p class="gate-note">Your data stays private · <a href="/privacy" target="_blank">Privacy</a> · <a href="/refund" target="_blank">Refunds</a></p></div>`;$('#gateRegister').onclick=()=>window.KingdomPremium?.open();$('#gateLogin').onclick=()=>window.KingdomPremium?.open();window.KingdomPremium?.googleButton($('#gateGoogle'))}
@@ -39,6 +43,7 @@ async function init(){
      projector and must never be gated, so it returns above. */
   try{applyAccount(await window.KingdomPremium?.load())}catch{}
   if(!accountState.signedIn){showSignInGate();return}
+  clearSignInGate();
   paintTrialBanner();
   const hash=location.hash.slice(1),valid=NAV.some(n=>n[0]===hash.split('/')[0]); navigate(valid?hash:'home',false);
   registerPWA(); networkStatus();
@@ -50,6 +55,16 @@ function renderNav(){
 }
 function bindGlobal(){
   document.addEventListener('click',e=>{const r=e.target.closest('[data-route]');if(r){e.preventDefault();navigate(r.dataset.route)}const c=e.target.closest('[data-close]');if(c)closeModal()});
+  /* Premium sign-in (Google, email, register) finishes inside a modal. When it
+     succeeds we must refresh identity, drop the welcome gate and repaint the trial
+     banner — otherwise the reader stays on the gate with no navigation. */
+  window.KingdomPremium&&(window.KingdomPremium.onAuth=u=>{
+    if(!u)return;
+    applyAccount(u);clearSignInGate();updateProfileBits();paintTrialBanner();
+    const hash=location.hash.slice(1),valid=NAV.some(n=>n[0]===hash.split('/')[0]);
+    navigate(valid?hash:'home',false);
+  });
+  window.KingdomPremium&&(window.KingdomPremium.onPasswordReset=msg=>{toast(msg||'Password updated — sign in with your new password','success');window.KingdomPremium.open()});
   $('#commandBtn').onclick=openCommand;$('#quickBtn').onclick=openQuick;$('#themeBtn').onclick=cycleTheme;
   $('#notifBtn').onclick=()=>toast('No new notifications');
   window.addEventListener('hashchange',()=>navigate(location.hash.slice(1)||'home',false));
@@ -118,7 +133,7 @@ async function renderHome(){
     <div class="section-head"><div><h2>Quick actions</h2><p>Scripture-centered tools, one tap away.</p></div></div><div class="quick-grid">${QUICK.map(q=>`<button class="quick-card" data-route="${q[0]}"><span>${q[1]}</span><strong>${q[2]}</strong></button>`).join('')}</div>
     <div class="section-head"><div><h2>Your next step</h2><p>A gentle rhythm for today.</p></div></div><div class="card" style="padding:20px;display:flex;gap:16px;align-items:center;flex-wrap:wrap"><div class="stat-icon">◇</div><div style="flex:1;min-width:220px"><strong>Memory verse · ${dv.ref}</strong><p style="margin:4px 0;color:var(--muted);font-size:12px">Read it aloud, hide key words, then recall it from memory.</p></div><button class="secondary-btn" id="memoryStart">Begin practice</button></div>
   </div>`;
-  const resume=()=>{state.reader={...last};navigate('bible')};$('#resumeTop').onclick=resume;$('#resumeReading').onclick=resume;$('#homeUpgrade').onclick=()=>window.KingdomPremium?.open();$('#homeWhatsApp').onclick=()=>window.open('https://wa.me/23481344338808?text=Hello%20KINGDOM%20BIBLE%20support','_blank','noopener');
+  const resume=()=>{state.reader={...last};navigate('bible')};$('#resumeTop').onclick=resume;$('#resumeReading').onclick=resume;$('#homeUpgrade').onclick=()=>window.KingdomPremium?.open();const hw=$('#homeWhatsApp');if(hw)hw.onclick=()=>window.open(window.KingdomPremium?.supportText?.()||'https://wa.me/2348134438808?text=Hello%20KINGDOM%20BIBLE%20support','_blank','noopener');
   $('#dailyOpen').onclick=()=>openReference(dv.ref);$('#dailySave').onclick=()=>{state.bookmarks[dv.ref]={text:dv.text,date:today(),folder:'Favorite Scriptures'};save();toast('Verse saved','success')};$('#dailyShare').onclick=()=>shareText(`${dv.text}\n— ${dv.ref} (${TR[dv.translation]})`);$('#memoryStart').onclick=()=>openMemory(dv);
 }
 
@@ -515,7 +530,63 @@ async function renderPresentation(){
   }
 
 /* PROFILE */
-function renderProfile(){setTitle('Profile & Settings');const saved=Object.keys(state.bookmarks);$('#main').innerHTML=`<div class="page"><div class="card profile-header"><label class="avatar avatar-upload" title="Upload profile photo">${avatarMarkup()}<input id="profileAvatar" type="file" accept="image/png,image/jpeg,image/webp" hidden></label><div style="flex:1"><h1>${esc(state.profile.name)}</h1><p>Local profile · Personal data stored on this device</p></div><button class="secondary-btn" id="editProfile">Edit profile</button></div><div class="profile-layout" style="margin-top:18px"><nav class="card settings-nav"><button class="active">Overview</button><button>Appearance</button><button>Reading</button><button>Privacy</button><button>Data</button></nav><section class="card settings-content"><div class="eyebrow">YOUR LIBRARY</div><div class="home-stats" style="margin:15px 0 25px"><div class="stat-card"><div><strong>${state.chaptersRead.length}</strong><small>chapters</small></div></div><div class="stat-card"><div><strong>${saved.length}</strong><small>saved</small></div></div><div class="stat-card"><div><strong>${Object.keys(state.highlights).length}</strong><small>highlights</small></div></div><div class="stat-card"><div><strong>${Object.keys(state.notes).length}</strong><small>notes</small></div></div></div><div class="eyebrow">APPEARANCE</div><div class="setting-row"><div><h3>Theme</h3><p>Choose a comfortable reading environment.</p></div><div class="theme-options">${['light','dark','sepia','amoled','contrast'].map(t=>`<button class="theme-swatch ${state.profile.theme===t?'active':''}" data-theme-pick="${t}">${t[0].toUpperCase()+t.slice(1)}</button>`).join('')}</div></div><div class="setting-row"><div><h3>Preferred translation</h3><p>Only public-domain translations are included.</p></div><select class="reader-select" id="profileTr">${translationOptions(state.profile.translation)}</select></div><div class="setting-row"><div><h3>Install KINGDOM BIBLE</h3><p>Offline access and an app-like home-screen experience.</p></div><button class="secondary-btn" id="profileInstall">Install</button></div><div class="eyebrow" style="margin-top:25px">MEMBERSHIP & SUPPORT</div><div class="setting-row"><div><h3>Kingdom Bible Pro</h3><p>Start your 30-day trial, choose a plan, earn referral rewards, and manage withdrawals.</p></div><button class="primary-btn small-btn" id="profileUpgrade">View plans</button></div><div class="setting-row"><div><h3>Questions or enquiries</h3><p>Contact support directly on WhatsApp.</p></div><button class="secondary-btn small-btn" id="profileWhatsApp">WhatsApp</button></div><div class="eyebrow" style="margin-top:25px">HELP & SETUP</div><div class="setting-row"><div><h3>User Manual</h3><p>Learn navigation, reading, search, ministry, Voice Mode, remote control, and presentation setup.</p></div><button class="secondary-btn" id="profileManual">Open manual</button></div><div class="eyebrow" style="margin-top:25px">PRIVACY & DATA</div><div class="setting-row"><div><h3>Local-first privacy</h3><p>Notes, prayers, bookmarks, and history remain in this browser.</p></div><span class="pill"><span class="status-dot"></span> Private</span></div><div class="setting-row"><div><h3>Export personal data</h3><p>Download your profile data as JSON.</p></div><button class="secondary-btn" id="exportData">Export</button></div><div class="setting-row"><div><h3>Cloud account & sync</h3><p>Secure multi-device accounts are not connected in this local build.</p></div><span class="pill">Coming Soon</span></div><div class="setting-row"><div><h3>Clear local data</h3><p>Permanently remove personal activity from this browser.</p></div><button class="danger-btn small-btn" id="clearData">Clear</button></div></section></div></div>`;$('#editProfile').onclick=openEditProfile;$$('[data-theme-pick]').forEach(b=>b.onclick=()=>{state.profile.theme=b.dataset.themePick;save();renderProfile()});$('#profileTr').onchange=e=>{state.profile.translation=e.target.value;state.reader.translation=e.target.value;save();toast('Preferred translation updated')};$('#profileInstall').onclick=installApp;$('#profileManual').onclick=openManual;$('#profileUpgrade').onclick=()=>window.KingdomPremium?.open();$('#profileWhatsApp').onclick=()=>window.open('https://wa.me/23481344338808?text=Hello%20KINGDOM%20BIBLE%20support','_blank','noopener');const avatar=$('#profileAvatar');if(avatar)avatar.onchange=e=>{const f=e.target.files?.[0];if(!f)return;if(f.size>2*1024*1024){toast('Profile photo must be 2 MB or smaller','error');return}const r=new FileReader();r.onload=()=>{state.profile.avatar=String(r.result);save();renderProfile();toast('Profile photo updated','success')};r.readAsDataURL(f)};$('#exportData').onclick=exportData;$('#clearData').onclick=confirmClear}
+function renderProfile(){setTitle('Profile & Settings');const saved=Object.keys(state.bookmarks);const acct=accountState,refLink=window.KingdomPremium?.referralLink?.()||location.origin+'/';$('#main').innerHTML=`<div class="page"><div class="card profile-header"><label class="avatar avatar-upload" title="Upload profile photo">${avatarMarkup()}<input id="profileAvatar" type="file" accept="image/png,image/jpeg,image/webp" hidden></label><div style="flex:1"><h1>${esc(state.profile.name)}</h1><p>${acct.signedIn?'Signed in as '+esc(acct.email||''):'Local profile · Personal data stored on this device'}</p></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="secondary-btn" id="editProfile">Edit profile</button>${(acct.avatar||state.profile.avatar)?'<button class="secondary-btn" id="removeAvatar">Remove photo</button>':''}</div></div><div class="profile-layout" style="margin-top:18px"><nav class="card settings-nav"><button class="active">Overview</button><button>Appearance</button><button>Reading</button><button>Privacy</button><button>Data</button></nav><section class="card settings-content"><div class="eyebrow">YOUR LIBRARY</div><div class="home-stats" style="margin:15px 0 25px"><div class="stat-card"><div><strong>${state.chaptersRead.length}</strong><small>chapters</small></div></div><div class="stat-card"><div><strong>${saved.length}</strong><small>saved</small></div></div><div class="stat-card"><div><strong>${Object.keys(state.highlights).length}</strong><small>highlights</small></div></div><div class="stat-card"><div><strong>${Object.keys(state.notes).length}</strong><small>notes</small></div></div></div><div class="eyebrow">APPEARANCE</div><div class="setting-row"><div><h3>Theme</h3><p>Choose a comfortable reading environment.</p></div><div class="theme-options">${['light','dark','sepia','amoled','contrast'].map(t=>`<button class="theme-swatch ${state.profile.theme===t?'active':''}" data-theme-pick="${t}">${t[0].toUpperCase()+t.slice(1)}</button>`).join('')}</div></div><div class="setting-row"><div><h3>Preferred translation</h3><p>Only public-domain translations are included.</p></div><select class="reader-select" id="profileTr">${translationOptions(state.profile.translation)}</select></div><div class="setting-row"><div><h3>Install KINGDOM BIBLE</h3><p>Offline access and an app-like home-screen experience.</p></div><button class="secondary-btn" id="profileInstall">Install</button></div><div class="eyebrow" style="margin-top:25px">MEMBERSHIP & SUPPORT</div><div class="setting-row"><div><h3>Kingdom Bible Pro</h3><p>Start your 30-day trial, choose a plan, earn referral rewards, and manage withdrawals.</p></div><button class="primary-btn small-btn" id="profileUpgrade">View plans</button></div><div class="eyebrow" style="margin-top:25px">YOUR REFERRAL LINK</div><p style="color:var(--muted);font-size:13px;margin:6px 0 12px">Share this link. Anyone who opens it and creates an account is credited to you — you earn ₦100 for their signup and 10% of their first subscription payment.</p><div class="referral-link-row"><input id="profileReferral" class="referral-input" readonly value="${esc(refLink)}" aria-label="Your referral link"></div><div class="referral-actions" style="margin-top:10px"><button class="secondary-btn small-btn" id="copyProfileReferral">Copy link</button><button class="primary-btn small-btn" id="shareApp">Share app</button></div><div class="eyebrow" style="margin-top:25px">EARNINGS & WALLET</div><div id="walletPanel"><p style="color:var(--muted);font-size:13px">Sign in to see your referral earnings.</p></div><div class="setting-row"><div><h3>Questions or enquiries</h3><p>Contact support directly on WhatsApp.</p></div><button class="secondary-btn small-btn" id="profileWhatsApp">WhatsApp</button></div><div class="eyebrow" style="margin-top:25px">HELP & SETUP</div><div class="setting-row"><div><h3>User Manual</h3><p>Learn navigation, reading, search, ministry, Voice Mode, remote control, and presentation setup.</p></div><button class="secondary-btn" id="profileManual">Open manual</button></div><div class="eyebrow" style="margin-top:25px">PRIVACY & DATA</div><div class="setting-row"><div><h3>Local-first privacy</h3><p>Notes, prayers, bookmarks, and history remain in this browser.</p></div><span class="pill"><span class="status-dot"></span> Private</span></div><div class="setting-row"><div><h3>Export personal data</h3><p>Download your profile data as JSON.</p></div><button class="secondary-btn" id="exportData">Export</button></div><div class="setting-row"><div><h3>Cloud account & sync</h3><p>Secure multi-device accounts are not connected in this local build.</p></div><span class="pill">Coming Soon</span></div><div class="setting-row"><div><h3>Clear local data</h3><p>Permanently remove personal activity from this browser.</p></div><button class="danger-btn small-btn" id="clearData">Clear</button></div></section></div></div>`;$('#editProfile').onclick=openEditProfile;$$('[data-theme-pick]').forEach(b=>b.onclick=()=>{state.profile.theme=b.dataset.themePick;save();renderProfile()});$('#profileTr').onchange=e=>{state.profile.translation=e.target.value;state.reader.translation=e.target.value;save();toast('Preferred translation updated')};$('#profileInstall').onclick=installApp;$('#profileManual').onclick=openManual;$('#profileUpgrade').onclick=()=>window.KingdomPremium?.open();const pw2=$('#profileWhatsApp');if(pw2)pw2.onclick=()=>window.open(window.KingdomPremium?.supportText?.()||'https://wa.me/2348134438808?text=Hello%20KINGDOM%20BIBLE%20support','_blank','noopener');
+  const cr=$('#copyProfileReferral');if(cr)cr.onclick=async()=>{const i=$('#profileReferral');i.select();try{await navigator.clipboard.writeText(refLink)}catch{document.execCommand&&document.execCommand('copy')}toast('Referral link copied','success')};
+  const sa=$('#shareApp');if(sa)sa.onclick=()=>window.KingdomPremium?.shareApp?.();
+  const rm=$('#removeAvatar');if(rm)rm.onclick=async()=>{state.profile.avatar='';save();if(acct.signedIn){try{await window.KingdomPremium.saveProfile(state.profile.name,'');applyAccount(window.KingdomPremium.user)}catch(e){toast(e.message,'error')}}else renderProfile();toast('Profile photo removed','success')};
+  const avatar=$('#profileAvatar');if(avatar)avatar.onchange=async e=>{const f=e.target.files?.[0];if(!f)return;if(f.size>6*1024*1024){toast('Please choose a photo under 6 MB','error');e.target.value='';return}
+    try{const dataUrl=await downscaleImage(f,320);
+      /* Locally first so the change is instant, then to the account when signed in so
+         the photo follows the person to their other device instead of dying here. */
+      state.profile.avatar=dataUrl;save();
+      if(acct.signedIn){try{const u=await window.KingdomPremium.saveProfile(state.profile.name,dataUrl);applyAccount(u)}catch(err){toast('Saved on this device — '+err.message,'error')}}
+      renderProfile();toast('Profile photo updated','success');
+    }catch(err){toast(err.message||'Could not read that image','error')}
+    finally{e.target.value=''}};
+  loadWalletPanel();
+  $('#exportData').onclick=exportData;$('#clearData').onclick=confirmClear}
+/* Camera photos are often 4000px wide and several megabytes. The server caps the
+   stored image at 512 KB, so shrink to 320px square JPEG first — that is plenty for
+   an avatar and keeps localStorage usable. */
+function downscaleImage(file,max){
+  return new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onerror=()=>reject(Error('Could not read that image'));
+    reader.onload=()=>{
+      const img=new Image();
+      img.onerror=()=>reject(Error('That file is not a readable image'));
+      img.onload=()=>{
+        const side=Math.min(img.width,img.height);
+        const c=document.createElement('canvas');
+        c.width=c.height=Math.min(max,side);
+        c.getContext('2d').drawImage(img,(img.width-side)/2,(img.height-side)/2,side,side,0,0,c.width,c.height);
+        /* PNG keeps transparency for logos; JPEG is much smaller for photographs. */
+        const isPhoto=/jpe?g/i.test(file.type)||!file.type;
+        resolve(isPhoto?c.toDataURL('image/jpeg',0.86):c.toDataURL('image/png'));
+      };
+      img.src=String(reader.result);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+/* ---------- referral earnings & wallet ----------
+   People who invite others must be able to SEE what they earned and withdraw it once it
+   clears the ₦1,000 minimum. The balance shown is the withdrawable one; anything an
+   administrator is still reviewing is listed separately so it is never counted twice. */
+const naira=n=>'₦'+Number(n||0).toLocaleString();
+async function loadWalletPanel(){
+  const box=$('#walletPanel');if(!box)return;
+  if(!accountState.signedIn){box.innerHTML='<p style="color:var(--muted);font-size:13px">Sign in to see your referral earnings and withdraw them.</p>';return}
+  try{
+    const d=await window.KingdomPremium.wallet();
+    const r=d.referral||{};
+    const rows=(d.ledger||[]).slice(0,6).map(x=>`<div class="ledger-row"><span>${esc(x.description||x.type)}<small>${esc((x.date||'').slice(0,10))}</small></span><strong class="${Number(x.amount)>=0?'gain':'loss'}">${Number(x.amount)>=0?'+':'-'}${naira(Math.abs(x.amount))}</strong></div>`).join('');
+    const wds=(d.withdrawals||[]).slice(0,4).map(w=>`<div class="ledger-row"><span>Withdrawal<small>${esc((w.requestedAt||'').slice(0,10))}</small></span><strong>${naira(w.amount)} · ${esc(w.status)}</strong></div>`).join('');
+    const progress=Math.min(100,Math.round((r.balance/r.minWithdrawal)*100));
+    box.innerHTML=`<div class="wallet-card"><div class="wallet-balance"><strong>${naira(r.balance)}</strong><small>available to withdraw</small></div><div class="home-stats" style="margin:14px 0"><div class="stat-card"><div><strong>${r.invited||0}</strong><small>people invited</small></div></div><div class="stat-card"><div><strong>${naira(r.totalEarned||0)}</strong><small>total earned</small></div></div><div class="stat-card"><div><strong>${naira(r.paidNaira||0)}</strong><small>paid out</small></div></div></div><div class="wallet-progress"><div class="wallet-bar"><span style="width:${progress}%"></span></div><small>${r.canWithdraw?'You can withdraw now.':'Earn '+naira(r.shortfall||0)+' more to reach the '+naira(r.minWithdrawal||1000)+' minimum.'}</small></div>${r.pendingNaira?'<p style="color:var(--muted);font-size:12px">'+naira(r.pendingNaira)+' is pending administrator review.</p>':''}<button class="primary-btn small-btn" id="withdrawNow" ${r.canWithdraw?'':'disabled'}>Withdraw earnings</button>${rows?'<div class="ledger">'+rows+wds+'</div>':'<p style="color:var(--muted);font-size:12px;margin-top:12px">No referral earnings yet. Share your link to get started.</p>'}</div>`;
+    const w=$('#withdrawNow');if(w)w.onclick=()=>window.KingdomPremium?.open();
+  }catch(e){box.innerHTML=`<p style="color:var(--muted);font-size:13px">${esc(e.message||'Could not load your wallet')}</p>`}
+}
 function openEditProfile(){modal(`<div class="modal-head"><div><h2>Edit profile</h2><p>Personalize your local experience.</p></div><button class="close-btn" data-close>×</button></div><div class="form-grid"><div class="field full"><label>Name</label><input id="profileName" value="${esc(state.profile.name)}"></div><div class="field"><label>Reading time</label><input type="time" id="profileTime" value="${state.profile.readingTime}"></div><div class="field"><label>Translation</label><select id="editTr">${translationOptions(state.profile.translation)}</select></div></div><div class="modal-actions"><button class="primary-btn" id="saveProfile">Save profile</button></div>`);$('#saveProfile').onclick=()=>{state.profile.name=$('#profileName').value.trim()||'Reader';state.profile.readingTime=$('#profileTime').value;state.profile.translation=$('#editTr').value;save();closeModal();renderProfile();toast('Profile updated','success')}}
 function exportData(){const blob=new Blob([JSON.stringify({...state,exportedAt:new Date().toISOString(),app:'KINGDOM BIBLE v1.0.0'},null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`kingdom-bible-data-${today()}.json`;a.click();URL.revokeObjectURL(a.href);toast('Personal data exported')}
 function confirmClear(){modal(`<div class="modal-head"><div><h2>Clear local data?</h2><p>This cannot be undone.</p></div><button class="close-btn" data-close>×</button></div><p>This permanently removes bookmarks, notes, highlights, prayer entries, reading progress, and settings from this browser.</p><div class="modal-actions"><button class="secondary-btn" data-close>Cancel</button><button class="danger-btn" id="confirmClear">Clear everything</button></div>`);$('#confirmClear').onclick=()=>{localStorage.removeItem(LS);state=structuredClone(DEFAULT);save();closeModal();navigate('home');toast('Local data cleared')}}
@@ -535,8 +606,50 @@ function openManual(){modal(`<div class="modal-head"><div><div class="eyebrow">K
 function openCommand(){const items=[...NAV,...QUICK.filter(q=>!NAV.some(n=>n[0]===q[0])),['manual','?','User Manual']];modal(`<input class="command-input" id="commandInput" placeholder="Search Scripture or go to a feature…"/><div class="command-results" id="commandResults"><div class="command-group">NAVIGATE</div>${items.map(x=>x[0]==='manual'?`<button class="command-item" data-cmanual><span>${x[1]}</span><strong>${x[2]}</strong><small>Open</small></button>`:`<button class="command-item" data-croute="${x[0]}"><span>${x[1]}</span><strong>${x[2]}</strong><small>Open</small></button>`).join('')}<div class="command-group">RECENT SEARCHES</div>${state.history.slice(0,4).map(x=>`<button class="command-item" data-csearch="${esc(x)}"><span>⌕</span><strong>${esc(x)}</strong><small>Search</small></button>`).join('')}</div>`,'command-modal');const input=$('#commandInput');input.oninput=()=>{const q=input.value.toLowerCase();$$('.command-item').forEach(x=>x.hidden=!x.textContent.toLowerCase().includes(q))};$$('[data-croute]').forEach(b=>b.onclick=()=>navigate(b.dataset.croute));$$('[data-cmanual]').forEach(b=>b.onclick=openManual);$$('[data-csearch]').forEach(b=>b.onclick=()=>{searchState.query=b.dataset.csearch;navigate('search');setTimeout(()=>performSearch(b.dataset.csearch),50)});input.onkeydown=e=>{if(e.key==='Enter'&&input.value.trim()){searchState.query=input.value.trim();navigate('search');setTimeout(()=>performSearch(input.value.trim()),50)}}}
 function openQuick(){if($('.quick-menu')){closeModal();return}modal(`<div class="eyebrow" style="padding:8px">QUICK ACTIONS</div>${[['search','⌕','Search Bible'],['prayer','♧','Start prayer'],['bible','✎','Add Scripture note'],['study','✦','Start study'],['ministry','▣','Start presentation']].map(x=>`<button data-route="${x[0]}"><span>${x[1]}</span>${x[2]}</button>`).join('')}`,'quick-menu')}
 function cycleTheme(){const a=['dark','light','sepia','amoled'],i=a.indexOf(state.profile.theme);state.profile.theme=a[(i+1)%a.length];save();toast(`${state.profile.theme[0].toUpperCase()+state.profile.theme.slice(1)} theme`)}
-async function shareText(text){if(navigator.share)try{await navigator.share({title:'KINGDOM BIBLE',text})}catch{}else{await navigator.clipboard.writeText(text);toast('Copied for sharing')}closeModal()}
-function registerPWA(){if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(console.warn);window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredInstall=e;$('#installBtn').hidden=false});$('#installBtn').onclick=installApp}
+async function shareText(text){/* Every share carries the reader's referral link so inviting someone always credits the inviter. */const body=text+'\n\nRead with me on KINGDOM BIBLE:\n'+(window.KingdomPremium?.referralLink?.()||location.origin+'/');if(navigator.share)try{await navigator.share({title:'KINGDOM BIBLE',text:body,url:window.KingdomPremium?.referralLink?.()||location.origin+'/'});closeModal();return}catch{}try{await navigator.clipboard.writeText(body);toast('Copied — your referral link is attached','success')}catch{toast('Copy failed','error')}closeModal()}
+/* ---------- app update notification ----------
+   A new release only reaches the reader once the service worker swaps. Without this the
+   ministry laptop can keep serving a cached shell for weeks, and the symptom is simply
+   "the new features are not showing". We surface the pending worker as a dismissible
+   banner and reload exactly once when it takes control. */
+let updateWorker=null;
+function showUpdateBanner(){
+  if($('#updateBanner'))return;
+  const bar=document.createElement('div');
+  bar.id='updateBanner';bar.className='update-banner';
+  bar.innerHTML=`<span>✨ A new version of KINGDOM BIBLE is ready.</span><button class="primary-btn small-btn" id="applyUpdate">Update now</button><button class="icon-btn" id="dismissUpdate" aria-label="Dismiss">×</button>`;
+  document.body.append(bar);
+  bar.querySelector('#applyUpdate').onclick=()=>{
+    bar.remove();
+    /* Tell the waiting worker to activate now, then let controllerchange reload. */
+    if(updateWorker)updateWorker.postMessage({type:'SKIP_WAITING'});
+    else location.reload();
+  };
+  bar.querySelector('#dismissUpdate').onclick=()=>bar.remove();
+}
+function registerPWA(){
+  if('serviceWorker'in navigator){
+    navigator.serviceWorker.register('/sw.js').then(reg=>{
+      /* `updatefound` only tells us a new worker is downloading; the banner belongs on
+         `installed`, and only when a worker is already in control (otherwise this is the
+         very first install, which needs no announcement). */
+      reg.addEventListener('updatefound',()=>{
+        const w=reg.installing;if(!w)return;
+        updateWorker=w;
+        w.addEventListener('statechange',()=>{
+          if(w.state==='installed'&&navigator.serviceWorker.controller)showUpdateBanner();
+        });
+      });
+    }).catch(console.warn);
+    /* Fires after the new worker activates and takes over the page. */
+    let reloaded=false;
+    navigator.serviceWorker.addEventListener('controllerchange',()=>{
+      if(reloaded)return;reloaded=true;location.reload();
+    });
+  }
+  window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredInstall=e;const b=$('#installBtn');if(b)b.hidden=false});
+  const ib=$('#installBtn');if(ib)ib.onclick=installApp;
+}
 async function installApp(){if(deferredInstall){deferredInstall.prompt();await deferredInstall.userChoice;deferredInstall=null;$('#installBtn').hidden=true}else toast('Use your browser menu and choose “Install app” or “Add to Home Screen”.')}
 function networkStatus(){const draw=()=>$('#offlineBar').hidden=navigator.onLine;addEventListener('online',draw);addEventListener('offline',draw);draw()}
 init();

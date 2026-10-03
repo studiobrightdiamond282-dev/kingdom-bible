@@ -257,3 +257,45 @@ body.gate-open main{margin-left:0;padding:24px 16px}
 .reader-verse-select{max-width:128px}
 .verse.jump{background:color-mix(in srgb,var(--gold),transparent 80%);box-shadow:0 0 0 4px color-mix(in srgb,var(--gold),transparent 88%);transition:background .2s,box-shadow .2s}
 @media(max-width:580px){.reader-verse-select{max-width:104px}}
+/* ---------- referral link, sharing and wallet ----------
+   Inviting people is a core growth loop, so the link has to be readable, selectable and
+   easy to send from both the account modal and the Profile page. */
+.referral-link-row{display:flex;gap:8px;align-items:center}
+.referral-input{flex:1;min-width:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface-2);color:var(--text)}
+.referral-input:focus{outline:2px solid var(--gold);outline-offset:1px}
+.referral-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.referral-box .referral-link-row{margin-top:12px}
+
+/* password field with a show/hide control, plus the keep-me-signed-in row */
+.password-field{position:relative;display:flex;align-items:center}
+.password-field input{padding-right:44px;width:100%}
+.password-toggle{position:absolute;right:6px;width:32px;height:32px;display:grid;place-items:center;border:0;border-radius:8px;background:transparent;color:var(--muted);cursor:pointer;font-size:15px;line-height:1}
+.password-toggle:hover{background:var(--surface-2);color:var(--text)}
+.password-toggle:focus-visible{outline:2px solid var(--gold);outline-offset:1px}
+.auth-row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:12px}
+.check{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);cursor:pointer}
+.check input{width:16px;height:16px;accent-color:var(--gold);cursor:pointer}
+
+/* wallet card: balance, progress to the withdrawal minimum, and the ledger */
+.wallet-card{margin-top:10px;padding:16px;border-radius:14px;border:1px solid var(--line);background:var(--surface-2)}
+.wallet-balance{display:flex;flex-direction:column;gap:2px}
+.wallet-balance strong{font-size:30px;line-height:1.1;color:var(--gold)}
+.wallet-balance small{color:var(--muted);font-size:12px}
+.wallet-progress{margin:4px 0 12px}
+.wallet-bar{height:8px;border-radius:99px;background:var(--line);overflow:hidden}
+.wallet-bar span{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--gold),#e0a53a)}
+.wallet-progress small{display:block;margin-top:7px;color:var(--muted);font-size:12px}
+.ledger{margin-top:14px;border-top:1px solid var(--line);padding-top:8px}
+.ledger-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--line)}
+.ledger-row:last-child{border-bottom:0}
+.ledger-row span{display:flex;flex-direction:column;gap:2px;font-size:13px;min-width:0}
+.ledger-row span small{color:var(--muted);font-size:11px}
+.ledger-row strong{white-space:nowrap;font-size:13px}
+.ledger-row strong.gain{color:#4ade80}
+.ledger-row strong.loss{color:#f87171}
+button[disabled]{opacity:.5;cursor:not-allowed}
+
+/* "A new version is ready" banner — sits above everything, never blocks reading */
+.update-banner{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;z-index:120;display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:center;padding:12px 16px;border-radius:14px;background:#0f1b3a;border:1px solid color-mix(in srgb,var(--gold),transparent 55%);color:var(--text);box-shadow:0 12px 34px rgba(0,0,0,.45);font-size:13px;max-width:calc(100vw - 24px)}
+.update-banner .icon-btn{width:26px;height:26px;font-size:16px}
+@media(max-width:580px){.update-banner{left:12px;right:12px;transform:none;max-width:none}.referral-input{font-size:12px}}

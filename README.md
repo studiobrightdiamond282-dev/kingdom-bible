@@ -21,6 +21,27 @@ A premium, local-first Progressive Web App for Bible reading, Scripture study, p
   review, admin free-access grants, secure admin portal entry, profile photo upload, WhatsApp
   support, and privacy/refund pages. Payment and AI secrets are deployment environment values;
   no live credential is committed.
+- **Share and earn.** Every account has a referral link (`/?ref=CODE`) shown in Profile and in
+  the account sheet, with copy and native-share buttons. Any share from the app — including
+  sharing a verse — attaches that link, and `?ref=` is credited on both email registration and
+  Google sign-up. Earnings appear under **Earnings & Wallet** in Profile: withdrawable balance,
+  people invited, total earned, and a progress bar to the ₦1,000 minimum. Withdraw unlocks at
+  ₦1,000 and is reviewed by an administrator.
+- **Password handling.** The sign-in form has show/hide and "Keep me signed in", which asks the
+  server for a 30-day cookie. The browser stores only the email address — never the password.
+  Forgotten passwords use a one-time 6-digit code issued from the admin portal (no mail provider
+  is configured); codes are single-use, expire in 30 minutes, and are stored hashed.
+- **Profile photos** are downscaled to 320px in the browser, then stored on the account so they
+  follow the user to another device. Only PNG/JPEG/WebP data URLs under 512 KB are accepted.
+- **Update notifications.** When a new service worker finishes installing, the app shows an
+  "Update now" banner; choosing it activates the new version and reloads once. Bump
+  `VERSION` in `public/sw.js` (and `VERSION` in `server.js`) on every release or users will
+  never be told.
+- **Support number.** The WhatsApp number is defined once as `SUPPORT_PHONE` in `server.js`,
+  exposed through `/api/premium/config`, and injected into the policy pages as
+  `{{WHATSAPP}}` / `{{WHATSAPP_LINK}}`. Change it there, never in a page or bundle.
+- **App icons** are generated from `public/assets/logo.png` by `npm run icons`. The favicon,
+  PWA icons, and maskable icon therefore always match the real logo.
 - AI study access uses plan fair-use allowances rather than an unsafe promise of unlimited
   paid API usage. The optional provider is configured with `AI_API_KEY`, `AI_API_URL`, and
   `AI_MODEL`. Admin audit records cover security, payment, referral, and withdrawal events;

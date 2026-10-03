@@ -9,6 +9,13 @@ const ROOT=path.join(__dirname,'public'),DATA=path.join(__dirname,'data');
 (function loadDotEnv(file){try{if(!fs.existsSync(file))return;for(const line of fs.readFileSync(file,'utf8').split(/\r?\n/)){const m=line.match(/^\s*([A-Z][A-Z0-9_]*)\s*=\s*(.*)\s*$/);if(m&&!process.env[m[1]])process.env[m[1]]=m[2].replace(/^['"]|['"]$/g,'')}}catch{}})(path.join(__dirname,'.env'));
 const PORT=Number(process.env.PORT||4173),HOST='0.0.0.0';
 const APP='KINGDOM BIBLE',VERSION='1.2.1';
+/* Support contact — defined ONCE and read by everything: the server-rendered policy
+   pages, the browser bundles (via /api/premium/config) and every WhatsApp deep link.
+   Previously this number was hardcoded in seven files, which is exactly how a stale
+   digit survives a release. Local format 0813 443 8808; wa.me wants no "+" or "0". */
+const SUPPORT_PHONE='2348134438808';
+const SUPPORT_PHONE_DISPLAY='+234 813 443 8808';
+const supportLink=(text='Hello KINGDOM BIBLE support')=>'https://wa.me/'+SUPPORT_PHONE+'?text='+encodeURIComponent(text);
 const MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.png':'image/png','.svg':'image/svg+xml','.txt':'text/plain; charset=utf-8','.xml':'application/xml; charset=utf-8'};
 const THEMES=['royal','dark','light','transparent','sunset','noir'];
 const TRANSLATIONS=['kjv','asv','web'];
@@ -34,10 +41,28 @@ function rate(req,res,limit=300){
   if(x.n>limit){json(res,429,{error:'Too many requests'});return false}
   return true;
 }
-function body(req){
-  return new Promise((resolve,reject)=>{let s='';req.on('data',c=>{s+=c;if(s.length>20000){reject(new Error('Payload too large'));req.destroy()}});
-    req.on('end',()=>{try{resolve(JSON.parse(s||'{}'))}catch{reject(new Error('Invalid JSON'))}})});
+/* JSON body reader.
+   The default cap is deliberately small (20 KB) because almost every route here takes
+   an email, a plan id or a scripture reference — a large body means something is wrong.
+   The profile-photo route is the one legitimate exception and passes its own limit.
+   An oversized body must NOT destroy the socket: that produces a bare "fetch failed"
+   in the browser with no explanation, so we stop buffering, drain the rest and report
+   a real 413 the UI can display. */
+function body(req,limit=20000){
+  return new Promise((resolve,reject)=>{
+    let s='',over=false;
+    req.on('data',c=>{
+      if(over)return;
+      s+=c;
+      if(s.length>limit){over=true;s='';reject(Object.assign(Error('Payload too large'),{statusCode:413}))}
+    });
+    req.on('end',()=>{if(over)return;try{resolve(JSON.parse(s||'{}'))}catch{reject(Object.assign(Error('Invalid JSON'),{statusCode:400}))}});
+    req.on('error',reject);
+  });
 }
+/* Base64 data URLs inflate by ~4/3, so the transport allowance is larger than the
+   decoded 512 KB ceiling enforced inside the profile route. */
+const PHOTO_BODY_LIMIT=768*1024;
 
 /* ---------- Scripture library: server-side resolver so phones never download 4 MB ---------- */
 let _books=null,_bible={},_refCache=new Map();
@@ -193,7 +218,7 @@ const PREMIUM_CONFIG={
   googleClientId:String(process.env.GOOGLE_CLIENT_ID||'224088224223-rq9dlhqqoqhjjmq2ave78akeopchcgab.apps.googleusercontent.com').trim(),
 };
 const premiumSessions=new Map();
-function blankPremiumStore(){return{users:[],transactions:[],withdrawals:[],audit:[],notifications:[]}}
+function blankPremiumStore(){return{users:[],transactions:[],withdrawals:[],audit:[],notifications:[],passwordResets:[]}}
 function loadPremiumStore(){try{return Object.assign(blankPremiumStore(),JSON.parse(fs.readFileSync(PREMIUM_CONFIG.storePath,'utf8')))}catch{return blankPremiumStore()}}
 let premiumStore=loadPremiumStore();
 function savePremiumStore(){fs.mkdirSync(path.dirname(PREMIUM_CONFIG.storePath),{recursive:true});fs.writeFileSync(PREMIUM_CONFIG.storePath,JSON.stringify(premiumStore,null,2))}
@@ -202,7 +227,15 @@ function referralCode(){return 'KB'+crypto.randomBytes(4).toString('hex').toUppe
 function passwordHash(password){const salt=crypto.randomBytes(16).toString('hex');return salt+':'+crypto.scryptSync(String(password),salt,32).toString('hex')}
 function passwordOk(password,stored){try{const [salt,hash]=String(stored).split(':');const got=crypto.scryptSync(String(password),salt,32);return crypto.timingSafeEqual(got,Buffer.from(hash,'hex'))}catch{return false}}
 function parseCookies(req){return Object.fromEntries(String(req.headers.cookie||'').split(';').map(x=>x.trim().split('=').map(decodeURIComponent)).filter(x=>x.length===2))}
-function setSession(req,res,session){const secure=String(req.headers?.['x-forwarded-proto']||'').toLowerCase()==='https'||!!req.socket.encrypted;res.setHeader('Set-Cookie',`kb_session=${encodeURIComponent(session)}; HttpOnly; SameSite=Lax; Path=/${secure?'; Secure':''}`)}
+function setSession(req,res,session,opts={}){
+  /* A session cookie dies with the browser. "Keep me signed in" promotes it to a
+     30-day Max-Age cookie so a restart on the ministry laptop does not force a
+     re-login mid-service. The token itself is already 256 bits of randomness and
+     stays HttpOnly, so a longer life does not widen what a script can read. */
+  const secure=String(req.headers?.['x-forwarded-proto']||'').toLowerCase()==='https'||!!req.socket.encrypted;
+  const maxAge=opts.remember===false?'':`; Max-Age=${30*86400}`;
+  res.setHeader('Set-Cookie',`kb_session=${encodeURIComponent(session)}; HttpOnly; SameSite=Lax; Path=/${maxAge}${secure?'; Secure':''}`);
+}
 function clearSession(res){res.setHeader('Set-Cookie','kb_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0')}
 function auth(req){const token=parseCookies(req).kb_session;return token?premiumSessions.get(token)||null:null}
 /* ---------- Google Identity Services (ID token) verification ----------
@@ -232,7 +265,7 @@ async function verifyGoogleCredential(credential){
 }
 function audit(event,actor,details={}){premiumStore.audit.unshift({id:uid('audit'),event,actor:actor||'system',details,date:new Date().toISOString()});premiumStore.audit=premiumStore.audit.slice(0,1000);savePremiumStore()}
 function notifyAdmin(type,message,details={}){premiumStore.notifications.unshift({id:uid('note'),type,message,details,read:false,date:new Date().toISOString()});premiumStore.notifications=premiumStore.notifications.slice(0,200);savePremiumStore()}
-function publicUser(u){if(!u)return null;const entitlement=entitlementOf(u);return{id:u.id,email:u.email,name:u.name,role:u.role||'user',referralCode:u.referralCode,trialEndsAt:u.trialEndsAt,plan:entitlement.plan,status:entitlement.status,daysRemaining:entitlement.daysRemaining,walletBalance:u.wallet?.balance||0,createdAt:u.createdAt}}
+function publicUser(u){if(!u)return null;const entitlement=entitlementOf(u);return{id:u.id,email:u.email,name:u.name,avatar:u.avatar||'',role:u.role||'user',referralCode:u.referralCode,trialEndsAt:u.trialEndsAt,plan:entitlement.plan,status:entitlement.status,daysRemaining:entitlement.daysRemaining,walletBalance:u.wallet?.balance||0,createdAt:u.createdAt}}
 function entitlementOf(u){
   if(!u)return{plan:'none',status:'signed_out',daysRemaining:0};
   if(u.role==='admin')return{plan:'unlimited',status:'admin',daysRemaining:null};
@@ -281,6 +314,32 @@ function denyAdmin(res,g){return json(res,403,{ok:false,error:g.why||'Administra
    browser bundles, so referencing it here threw a ReferenceError (HTTP 500). */
 const escHtml=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function addWallet(u,amount,type,description,meta={}){u.wallet=u.wallet||{balance:0,ledger:[]};u.wallet.balance+=amount;u.wallet.ledger.unshift({id:uid('ledger'),amount,type,description,date:new Date().toISOString(),meta});u.wallet.ledger=u.wallet.ledger.slice(0,300)}
+/* Referral performance for the wallet screen. `earned` is only what actually landed in
+   the wallet — pending payouts are listed separately so a user is never told they
+   "have" money that an administrator has not yet released. */
+function referralStats(u){
+  const invited=premiumStore.users.filter(x=>x.referredBy===u.referralCode);
+  const paid=invited.filter(x=>x.subscription?.status==='active').length;
+  const pending=premiumStore.withdrawals.filter(w=>w.userId===u.id&&w.status==='pending');
+  const paidOut=premiumStore.withdrawals.filter(w=>w.userId===u.id&&w.status==='paid');
+  const pendingNaira=pending.reduce((s,w)=>s+w.amount,0),paidNaira=paidOut.reduce((s,w)=>s+w.amount,0);
+  const balance=u.wallet?.balance||0;
+  return{code:u.referralCode,link:'/?ref='+encodeURIComponent(u.referralCode),invited:invited.length,converted:paid,balance,pendingNaira,paidNaira,totalEarned:balance+pendingNaira+paidNaira,minWithdrawal:1000,canWithdraw:balance>=1000,shortfall:Math.max(0,1000-balance)};
+}
+/* Password recovery without an email provider. The user proves ownership by asking for
+   a code; an administrator issues the short-lived code from the portal and passes it
+   to them (WhatsApp, phone, in person). The code is hashed at rest and single-use, so
+   reading the store file does not hand an attacker anybody's password reset. */
+function issueCode(u){
+  if(!premiumStore.passwordResets)premiumStore.passwordResets=[];
+  premiumStore.passwordResets=premiumStore.passwordResets.filter(r=>r.userId!==u.id||!r.usedAt);
+  const code=String(crypto.randomInt(100000,1000000));
+  const r={id:uid('rst'),userId:u.id,email:u.email,codeHash:passwordHash(code),createdAt:new Date().toISOString(),expiresAt:Date.now()+30*60*1000,usedAt:null};
+  premiumStore.passwordResets.unshift(r);
+  premiumStore.passwordResets=premiumStore.passwordResets.slice(0,200);
+  savePremiumStore();
+  return{reset:r,code};
+}
 function startUser(email,name,password,referredBy){const now=Date.now(),u={id:uid('usr'),email,name:name||email.split('@')[0],passwordHash:passwordHash(password),passwordSet:!!password,role:'user',referralCode:referralCode(),referredBy:referredBy||'',referralRewarded:false,trialStartedAt:now,trialEndsAt:now+30*86400000,subscription:null,wallet:{balance:0,ledger:[]},ai:{month:'',used:0},createdAt:new Date(now).toISOString()};premiumStore.users.push(u);return u}
 function planBy(id){return PREMIUM_PLANS[String(id||'').toLowerCase()]||null}
 function currentPlanFor(u){const e=entitlementOf(u);return e.plan==='trial'?null:planBy(e.plan)}
@@ -315,7 +374,7 @@ async function settlePayment(reference,verified){
   if(u.referredBy&&!u.referralRewarded){const ref=premiumStore.users.find(x=>x.referralCode===u.referredBy&&x.id!==u.id);if(ref){addWallet(ref,Math.round(tx.amount*.1),'commission','10% first-payment referral commission',{fromUser:u.id,reference});u.referralRewarded=true;}}
   savePremiumStore();audit('payment.success',u.id,{reference,plan:tx.plan,amount:tx.amount});return tx;
 }
-function premiumPublic(){return{plans:Object.values(PREMIUM_PLANS).map(({aiMonthly,...p})=>p),trialDays:30,trialWarningDays:7,referral:{signupNaira:100,firstPaymentPercent:10,pointValueNaira:1,minWithdrawal:1000,payoutSlaWorkingDays:3},paystackPublicKey:PREMIUM_CONFIG.paystackPublicKey,googleClientId:PREMIUM_CONFIG.googleClientId,whatsapp:'23481344338808'}}
+function premiumPublic(){return{plans:Object.values(PREMIUM_PLANS).map(({aiMonthly,...p})=>p),trialDays:30,trialWarningDays:7,referral:{signupNaira:100,firstPaymentPercent:10,pointValueNaira:1,minWithdrawal:1000,payoutSlaWorkingDays:3},paystackPublicKey:PREMIUM_CONFIG.paystackPublicKey,googleClientId:PREMIUM_CONFIG.googleClientId,appVersion:VERSION,whatsapp:SUPPORT_PHONE,whatsappDisplay:SUPPORT_PHONE_DISPLAY,whatsappLink:supportLink()}}
 
 /* ---------- HTTP server ---------- */
 const server=http.createServer(async(req,res)=>{
@@ -339,20 +398,26 @@ const server=http.createServer(async(req,res)=>{
       const token=crypto.randomBytes(32).toString('hex');premiumSessions.set(token,{userId:u.id,role:'user',email:u.email,createdAt:Date.now()});setSession(req,res,token);savePremiumStore();audit('auth.register',u.id,{referred:!!inviter});
       return json(res,201,{ok:true,user:publicUser(u),message:'Your 30-day free trial has started'});
     }
+    if(p==='/api/auth/logout'&&req.method==='POST'){const c=parseCookies(req).kb_session;if(c)premiumSessions.delete(c);clearSession(res);return json(res,200,{ok:true})}
+    /* ---------- "Keep me signed in" ----------
+       "Remember my password" must never store the password itself: anyone with the
+       device could read it straight out of localStorage. Instead the browser keeps
+       only the email for prefill, and the SERVER decides how long the session token
+       lives. Default = session cookie that dies with the browser tab; opted-in = a
+       30-day Max-Age cookie that survives a restart. */
     if(p==='/api/auth/login'&&req.method==='POST'){
-      const b=await body(req),email=String(b.email||'').trim().toLowerCase(),password=String(b.password||'');
+      const b=await body(req),email=String(b.email||'').trim().toLowerCase(),password=String(b.password||''),remember=b.remember!==false;
       if(email===PREMIUM_CONFIG.adminEmail&&PREMIUM_CONFIG.adminPassword&&password===PREMIUM_CONFIG.adminPassword){const token=crypto.randomBytes(32).toString('hex');premiumSessions.set(token,{role:'admin',email,createdAt:Date.now()});setSession(req,res,token);audit('admin.login',email,{});return json(res,200,{ok:true,user:{email,role:'admin',plan:'unlimited',status:'admin'}})}
       const u=premiumStore.users.find(x=>x.email===email);
       if(!u||!passwordOk(password,u.passwordHash))return json(res,401,{ok:false,error:'Email or password is incorrect'});
       /* A Google-only account has a random throwaway password. Saying so is far more
          use than a bare "incorrect", and avoids sending people round a support loop. */
-      if(u.authProvider==='google'&&!u.passwordSet)return json(res,401,{ok:false,error:'This account signs in with Google'});
-      const token=crypto.randomBytes(32).toString('hex');premiumSessions.set(token,{userId:u.id,role:'user',email:u.email,createdAt:Date.now()});setSession(req,res,token);audit('auth.login',u.id,{});return json(res,200,{ok:true,user:publicUser(u)});
+      if(u.authProvider==='google'&&!u.passwordSet)return json(res,401,{ok:false,error:'This account signs in with Google',useGoogle:true});
+      const token=crypto.randomBytes(32).toString('hex');premiumSessions.set(token,{userId:u.id,role:'user',email:u.email,createdAt:Date.now(),persistent:remember});setSession(req,res,token,{remember});audit('auth.login',u.id,{remember});return json(res,200,{ok:true,user:publicUser(u)});
     }
     if(p==='/api/auth/me'&&req.method==='GET'){
       const s=sessionRecord(req);if(!s)return json(res,200,{ok:true,user:null});return json(res,200,{ok:true,user:s.role==='admin'?{email:s.email,role:'admin',plan:'unlimited',status:'admin'}:publicUser(s.user)});
     }
-    if(p==='/api/auth/logout'&&req.method==='POST'){const c=parseCookies(req).kb_session;if(c)premiumSessions.delete(c);clearSession(res);return json(res,200,{ok:true})}
     if(p==='/api/payments/initialize'&&req.method==='POST'){
       const s=requireAuth(req,res);if(!s)return;
       const plan=planBy((await body(req)).plan);if(!plan)return json(res,400,{ok:false,error:'Choose a valid subscription plan'});
@@ -393,7 +458,7 @@ const server=http.createServer(async(req,res)=>{
       try{const answer=await askAi(question);let remaining=allowance;if(s.role!=='admin'){s.user.ai=s.user.ai?.month===monthKey()?s.user.ai:{month:monthKey(),used:0};s.user.ai.used++;remaining=Math.max(0,allowance-s.user.ai.used);savePremiumStore()}audit('ai.question',s.role==='admin'?s.email:s.user.id,{month:monthKey()});return json(res,200,{ok:true,answer,remaining});}catch(e){return json(res,502,{ok:false,error:e.message})}
     }
     if(p==='/api/admin/overview'&&req.method==='GET'){
-      if(!requireAdmin(req,res))return;return json(res,200,{ok:true,notifications:premiumStore.notifications.slice(0,50),withdrawals:premiumStore.withdrawals.slice(0,100),users:premiumStore.users.map(publicUser),audit:premiumStore.audit.slice(0,150),plans:Object.values(PREMIUM_PLANS).map(({aiMonthly,...x})=>x)});
+      if(!requireAdmin(req,res))return;return json(res,200,{ok:true,notifications:premiumStore.notifications.slice(0,50),withdrawals:premiumStore.withdrawals.slice(0,100),users:premiumStore.users.map(publicUser),audit:premiumStore.audit.slice(0,150),plans:Object.values(PREMIUM_PLANS).map(({aiMonthly,...x})=>x),passwordResets:(premiumStore.passwordResets||[]).filter(r=>!r.usedAt&&r.expiresAt>Date.now()).map(r=>({id:r.id,email:r.email,userId:r.userId,createdAt:r.createdAt,expiresAt:new Date(r.expiresAt).toISOString()}))});
     }
     /* The portal could render notifications but had no way to clear them, so the
        unread badge could only ever grow. Marking read is also the audit signal that
@@ -418,16 +483,33 @@ const server=http.createServer(async(req,res)=>{
       const s=requireAdmin(req,res);if(!s)return;const u=findUser(grant[1]);if(!u)return json(res,404,{ok:false,error:'User not found'});const b=await body(req),months=Math.max(1,Math.min(12,Number(b.freeMonths)||1)),plan=planBy(b.plan)||PREMIUM_PLANS.unlimited;
       if(b.forever){u.subscription={status:'active',plan:plan.id,price:0,startedAt:Date.now(),expiresAt:Number.MAX_SAFE_INTEGER,adminGranted:true}}else u.subscription={status:'active',plan:plan.id,price:0,startedAt:Date.now(),expiresAt:Date.now()+months*31*86400000,adminGranted:true};savePremiumStore();audit('admin.grant',s.email,{userId:u.id,plan:plan.id,months,forever:!!b.forever});return json(res,200,{ok:true,user:publicUser(u)});
     }
+    const issueReset=p.match(/^\/api\/admin\/users\/([^/]+)\/password-code$/);
+    if(issueReset&&req.method==='POST'){
+      const s=requireAdmin(req,res);if(!s)return;const u=findUser(issueReset[1]);
+      if(!u)return json(res,404,{ok:false,error:'User not found'});
+      if(!u.passwordSet)return json(res,400,{ok:false,error:'This account signs in with Google — no password to reset'});
+      /* The plaintext code exists only in this response; the store keeps a hash, and it
+         expires in 30 minutes and is single-use. The administrator passes it to the
+         account holder over a channel they already trust. */
+      const{code,reset}=issueCode(u);
+      premiumStore.notifications=premiumStore.notifications.map(n=>n.details?.userId===u.id&&n.type==='password.reset.request'?{...n,read:true}:n);
+      audit('admin.password.issue',s.email,{userId:u.id,resetId:reset.id});
+      return json(res,200,{ok:true,code,expiresAt:new Date(reset.expiresAt).toISOString(),message:'Share this code with '+u.email+'. It works once and expires in 30 minutes.'});
+    }
     const payWithdrawal=p.match(/^\/api\/admin\/withdrawals\/([^/]+)\/pay$/);
     if(payWithdrawal&&req.method==='POST'){
       const s=requireAdmin(req,res);if(!s)return;const w=premiumStore.withdrawals.find(x=>x.id===payWithdrawal[1]);if(!w)return json(res,404,{ok:false,error:'Withdrawal not found'});w.status='paid';w.paidAt=new Date().toISOString();w.paidBy=s.email;premiumStore.notifications=premiumStore.notifications.map(n=>n.details?.withdrawalId===w.id?{...n,read:true}:n);savePremiumStore();audit('admin.withdrawal.paid',s.email,{withdrawalId:w.id,amount:w.amount,userId:w.userId});return json(res,200,{ok:true,withdrawal:w});
     }
 
     if(p==='/api/auth/google'&&req.method==='POST'){
-      let g;try{g=await verifyGoogleCredential(String((await body(req)).credential||''))}catch(e){return json(res,400,{ok:false,error:e.message})}
+      let g;const gb=await body(req);
+      try{g=await verifyGoogleCredential(String(gb.credential||''))}catch(e){return json(res,400,{ok:false,error:e.message})}
       /* The owner already has a password and full admin rights. Refusing Google here
          keeps a single, unambiguous way into the administrator account. */
       if(g.email===PREMIUM_CONFIG.adminEmail)return json(res,403,{ok:false,error:'Administrator accounts sign in with a password'});
+      /* A Google signup must honour ?ref= exactly like the email form, otherwise the
+         shared link silently drops the inviter's commission. */
+      const gRef=String(gb.referralCode||'').trim().toUpperCase();
       let u=premiumStore.users.find(x=>x.email===g.email),linked=false,created=false;
       if(u){
         /* Same email, different Google identity = someone re-authorising, or a hijack
@@ -437,12 +519,72 @@ const server=http.createServer(async(req,res)=>{
       }else{
         /* A random throwaway password means password login can never succeed for a
            Google-only account, and passwordOk() never has to special-case an empty hash. */
-        u=startUser(g.email,g.name,crypto.randomBytes(24).toString('hex'),'');
+        const gInviter=gRef?premiumStore.users.find(x=>x.referralCode===gRef&&x.email!==g.email):null;
+        u=startUser(g.email,g.name,crypto.randomBytes(24).toString('hex'),gInviter?.referralCode||'');
         u.authProvider='google';u.googleSub=g.sub;u.googlePicture=g.picture;u.passwordSet=false;created=true;
+        if(gInviter){addWallet(gInviter,100,'signup','Verified referral signup reward',{fromUser:u.id});notifyAdmin('referral.signup',gInviter.email+' earned a referral signup reward',{referrer:gInviter.id,newUser:u.id})}
       }
       const token=crypto.randomBytes(32).toString('hex');premiumSessions.set(token,{userId:u.id,role:'user',email:u.email,createdAt:Date.now()});setSession(req,res,token);savePremiumStore();
       audit(linked?'auth.google.link':'auth.google',u.id,{provider:'google',created});
       return json(res,created?201:200,{ok:true,user:publicUser(u),message:created?'Welcome — your 30-day free trial has started':linked?'Google sign-in linked to your existing account':'Signed in with Google'});
+    }
+    /* ---------- profile photo + referral + wallet ---------- */
+    if(p==='/api/account/profile'&&req.method==='POST'){
+      const s=requireAuth(req,res);if(!s)return;
+      if(s.role==='admin')return json(res,400,{ok:false,error:'Administrator accounts sign in with a password'});
+      const b=await body(req,PHOTO_BODY_LIMIT);
+      const name=String(b.name??'').trim().slice(0,80);
+      if(name)s.user.name=name;
+      /* The photo arrives as a data URL. Only real raster image types are accepted and
+         the decoded byte count is capped, so the store cannot be filled with an
+         arbitrary payload through this field. */
+      if(typeof b.avatar==='string'){
+        if(b.avatar===''){s.user.avatar='';}
+        else{
+          const m=/^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/.exec(b.avatar.trim());
+          if(!m)return json(res,400,{ok:false,error:'Profile photo must be a PNG, JPEG or WebP image'});
+          const bytes=Buffer.byteLength(m[2],'base64');
+          if(bytes>512*1024)return json(res,400,{ok:false,error:'Profile photo must be smaller than 512 KB'});
+          s.user.avatar=b.avatar.trim();
+        }
+      }
+      savePremiumStore();audit('account.profile',s.user.id,{hasAvatar:!!s.user.avatar});
+      return json(res,200,{ok:true,user:publicUser(s.user)});
+    }
+    if(p==='/api/wallet'&&req.method==='GET'){
+      const s=requireAuth(req,res);if(!s)return;
+      if(s.role==='admin')return json(res,200,{ok:true,admin:true,referral:null,ledger:[],withdrawals:[]});
+      return json(res,200,{ok:true,referral:referralStats(s.user),ledger:(s.user.wallet?.ledger||[]).slice(0,40),withdrawals:premiumStore.withdrawals.filter(w=>w.userId===s.user.id).slice(0,20),rules:{signupNaira:100,firstPaymentPercent:10,pointValueNaira:1,minWithdrawal:1000,payoutSlaWorkingDays:3}});
+    }
+    /* ---------- password recovery ----------
+       No SMTP or SMS provider is configured for this deployment, so recovery is
+       administrator-assisted: the user requests a reset, the administrator issues a
+       single-use 6-digit code, and the user exchanges it here for a new password.
+       Requests are answered identically whether or not the account exists, so this
+       endpoint cannot be used to discover which emails are registered. */
+    if(p==='/api/auth/password/forgot'&&req.method==='POST'){
+      const b=await body(req),email=String(b.email||'').trim().toLowerCase();
+      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))return json(res,400,{ok:false,error:'Enter the email address on your account'});
+      const u=premiumStore.users.find(x=>x.email===email);
+      if(u&&u.passwordSet){
+        notifyAdmin('password.reset.request','Password reset requested for '+u.email,{userId:u.id,email:u.email});
+        audit('auth.password.forgot',u.id,{source:'self-service'});
+      }
+      return json(res,202,{ok:true,message:'If that account exists, an administrator will send you a one-time reset code. Contact support on WhatsApp if you need it sooner.'});
+    }
+    if(p==='/api/auth/password/reset'&&req.method==='POST'){
+      const b=await body(req),email=String(b.email||'').trim().toLowerCase(),code=String(b.code||'').replace(/\D/g,''),password=String(b.newPassword||'');
+      if(password.length<8)return json(res,400,{ok:false,error:'Choose a password of at least 8 characters'});
+      if(!/^\d{6}$/.test(code))return json(res,400,{ok:false,error:'Enter the 6-digit code from the administrator'});
+      const u=premiumStore.users.find(x=>x.email===email);
+      const r=(premiumStore.passwordResets||[]).find(x=>u&&x.userId===u.id&&!x.usedAt&&x.expiresAt>Date.now());
+      if(!u||!r||!passwordOk(code,r.codeHash))return json(res,400,{ok:false,error:'That code is not valid or has expired'});
+      u.passwordHash=passwordHash(password);u.passwordSet=true;r.usedAt=new Date().toISOString();
+      /* Every existing session is dropped so a stolen device cannot keep using the
+         account after the real owner recovers it. */
+      for(const [t,sess] of premiumSessions)if(sess.userId===u.id)premiumSessions.delete(t);
+      savePremiumStore();audit('auth.password.reset',u.id,{userId:u.id});
+      return json(res,200,{ok:true,message:'Password updated. You can now sign in with your new password.'});
     }
     if(p==='/api/session/start'&&req.method==='POST'){
       const b=await body(req);
@@ -520,11 +662,22 @@ const server=http.createServer(async(req,res)=>{
         headers(res,MIME[ext]||'application/octet-stream',live);
         res.setHeader('Cache-Control',noStore?'no-store, must-revalidate':'public, max-age=60');
         res.setHeader('ETag','"'+st.size+'-'+st.mtimeMs+'"');
+        /* The support number is injected here instead of being typed into each page.
+           A wrong digit in a static policy page is invisible until a real user tries
+           to use it, and there is no test that would catch a stale copy. */
+        if(/\.html$/i.test(ext)){
+          const html=fs.readFileSync(f,'utf8')
+            .replace(/\{\{WHATSAPP\}\}/g,escHtml(SUPPORT_PHONE_DISPLAY))
+            .replace(/\{\{WHATSAPP_LINK\}\}/g,escHtml(supportLink('Hello KINGDOM BIBLE support')))
+            .replace(/\{\{WHATSAPP_BILLING\}\}/g,escHtml(supportLink('Billing help for KINGDOM BIBLE')));
+          res.setHeader('Content-Length',Buffer.byteLength(html));
+          return res.end(html);
+        }
         return fs.createReadStream(f).pipe(res);
       }
     }
     return json(res,404,{error:'Not found'});
-  }catch(e){return json(res,500,{error:e.message||'Server error'})}
+  }catch(e){return json(res,e.statusCode||500,{error:e.message||'Server error'})}
 });
 
 server.listen(PORT,HOST,()=>{

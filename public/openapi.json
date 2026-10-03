@@ -68,6 +68,89 @@
     "/api/state": {
       "get": { "summary": "Current live state (read-only)", "responses": { "200": { "description": "Live state" } } }
     },
+    "/api/premium/config": {
+      "get": {
+        "summary": "Plans, trial rules, referral rates and the support contact number",
+        "responses": { "200": { "description": "Public premium configuration (no secrets)" } }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "summary": "Sign in with email and password",
+        "description": "Set `remember: true` to receive a 30-day session cookie instead of one that ends with the browser. Passwords are never stored in the browser.",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Credentials" } } }
+        },
+        "responses": {
+          "200": { "description": "Signed in" },
+          "401": { "description": "Incorrect details, or the account uses Google sign-in" }
+        }
+      }
+    },
+    "/api/auth/password/forgot": {
+      "post": {
+        "summary": "Request a password reset code",
+        "description": "Always returns the same message so the endpoint cannot be used to discover which email addresses are registered. No mail provider is configured, so an administrator issues the code from the portal.",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EmailOnly" } } }
+        },
+        "responses": { "202": { "description": "Request accepted" } }
+      }
+    },
+    "/api/auth/password/reset": {
+      "post": {
+        "summary": "Set a new password using a one-time code",
+        "description": "Codes are single-use, expire after 30 minutes, and are stored only as hashes. A successful reset ends every existing session for that account.",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PasswordReset" } } }
+        },
+        "responses": {
+          "200": { "description": "Password updated" },
+          "400": { "description": "Invalid or expired code" }
+        }
+      }
+    },
+    "/api/account/profile": {
+      "post": {
+        "summary": "Update display name and profile photo",
+        "description": "The photo is a PNG, JPEG or WebP data URL of at most 512 KB. Clients should downscale to roughly 320px square before sending.",
+        "requestBody": {
+          "required": false,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProfileUpdate" } } }
+        },
+        "responses": {
+          "200": { "description": "Profile updated" },
+          "401": { "description": "Please sign in" },
+          "413": { "description": "Payload too large" }
+        }
+      }
+    },
+    "/api/wallet": {
+      "get": {
+        "summary": "Referral earnings, ledger and withdrawal history",
+        "description": "Returns the withdrawable balance, the shortfall to the minimum, people invited, amounts pending review and amounts already paid.",
+        "responses": {
+          "200": { "description": "Wallet summary" },
+          "401": { "description": "Please sign in" }
+        }
+      }
+    },
+    "/api/wallet/withdraw": {
+      "post": {
+        "summary": "Request a payout once the minimum is reached",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Withdrawal" } } }
+        },
+        "responses": {
+          "201": { "description": "Withdrawal queued for administrator review" },
+          "400": { "description": "Below the minimum, above the balance, or missing bank details" }
+        }
+      }
+    },
     "/api/stream": {
       "get": {
         "summary": "Server-sent live updates for the audience display",
@@ -89,6 +172,46 @@
         "type": "object",
         "required": ["code"],
         "properties": { "code": { "type": "string", "minLength": 4, "maxLength": 6 } }
+      },
+      "EmailOnly": {
+        "type": "object",
+        "required": ["email"],
+        "properties": { "email": { "type": "string", "format": "email" } }
+      },
+      "Credentials": {
+        "type": "object",
+        "required": ["email", "password"],
+        "properties": {
+          "email": { "type": "string", "format": "email" },
+          "password": { "type": "string", "minLength": 8 },
+          "remember": { "type": "boolean", "default": true, "description": "Request a 30-day session cookie" }
+        }
+      },
+      "PasswordReset": {
+        "type": "object",
+        "required": ["email", "code", "newPassword"],
+        "properties": {
+          "email": { "type": "string", "format": "email" },
+          "code": { "type": "string", "pattern": "^[0-9]{6}$" },
+          "newPassword": { "type": "string", "minLength": 8 }
+        }
+      },
+      "ProfileUpdate": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "maxLength": 80 },
+          "avatar": { "type": "string", "description": "PNG/JPEG/WebP data URL, max 512 KB decoded. Send an empty string to remove the photo." }
+        }
+      },
+      "Withdrawal": {
+        "type": "object",
+        "required": ["amount", "accountName", "bankCode", "accountNumber"],
+        "properties": {
+          "amount": { "type": "integer", "minimum": 1000, "description": "Minimum ₦1,000 and cannot exceed the available balance" },
+          "accountName": { "type": "string", "maxLength": 100 },
+          "bankCode": { "type": "string", "maxLength": 20 },
+          "accountNumber": { "type": "string", "minLength": 10, "maxLength": 10 }
+        }
       },
       "RemoteAction": {
         "type": "object",

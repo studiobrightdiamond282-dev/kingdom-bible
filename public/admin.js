@@ -144,7 +144,7 @@ function accountsPanel(){
         '<span>'+pill(String(u.plan||'none').toUpperCase(),planKind)+'<small>'+esc(days)+'</small></span>'+
         '<span>'+pill(u.status,u.status)+'</span>'+
         '<span>'+wallet+'<small>joined '+esc(ago(u.createdAt))+'</small></span>'+
-        '<span><button class="secondary-btn small-btn" data-grant="'+esc(u.id)+'">Grant</button></span>'+
+        '<span><button class="secondary-btn small-btn" data-grant="'+esc(u.id)+'">Grant</button> <button class="secondary-btn small-btn" data-resetcode="'+esc(u.id)+'">Reset code</button></span>'+
       '</div><div class="admin-grant-slot" data-slot="'+esc(u.id)+'"></div>';
     }).join('');
   }
@@ -257,6 +257,22 @@ function bind(){
   });
   document.querySelectorAll('[data-grant]').forEach(function(b){
     b.onclick=function(){openGrant(b.dataset.grant);};
+  });
+  /* Issue a one-time password reset code. The code is shown once, here, and only the
+     hash is stored — so copy it into the member's chat before leaving this page. */
+  document.querySelectorAll('[data-resetcode]').forEach(function(b){
+    b.onclick=async function(){
+      const userId=b.dataset.resetcode;
+      if(!confirm('Issue a one-time password reset code for this member?'))return;
+      try{
+        const r=await api('/api/admin/users/'+encodeURIComponent(userId)+'/password-code',{method:'POST',body:'{}'});
+        const message=r.code+'\n\n'+r.message+'\n\nSend it to the member. It is valid once and expires in 30 minutes.';
+        try{await navigator.clipboard.writeText(r.code);}catch{}
+        window.prompt('Copy this code now (also on your clipboard):',message);
+        toast('Reset code issued — copy it now, it cannot be shown again','success');
+        await dashboard();
+      }catch(e){toast(e.message,'error');}
+    };
   });
   document.querySelectorAll('[data-pay]').forEach(function(b){
     b.onclick=async function(){
