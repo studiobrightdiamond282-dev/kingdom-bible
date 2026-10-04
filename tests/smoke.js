@@ -148,43 +148,35 @@ for(const [name,src] of [['server.js',serverSrc1],['vercel.json',vercelCfg]]){
   assert(/style-src[^;]*https:\/\/accounts\.gstatic\.com/.test(src),`${name} CSP must allow Google's button stylesheet`);
 }
 
-/* ---- explainer home (kbx-) ---- */
-const cssKb=css.slice(css.indexOf('KINGDOM BIBLE EXPLAINER HOME'));
-assert(cssKb.length>0,'styles.css must carry the "KINGDOM BIBLE EXPLAINER HOME" section');
+/* ---- home: the personal dashboard, not a marketing explainer ---- */
 assert(app.includes('async function renderHome()'),'renderHome must still be defined');
 assert(app.includes('function renderMinistry()'),'Ministry Mode must still be defined');
 assert(app.includes('KingdomPremium?.open()')&&app.includes('KingdomPremium?.supportText?.()'),'Premium upgrade + WhatsApp support must stay wired from home');
+/* The explainer landing page replaced this screen once and was removed again on
+   the owner's instruction. Pin its absence so it cannot silently come back:
+   the home screen must stay the reader's own dashboard, not a product pitch. */
+for(const dead of ['kbx-home','kbx-hero','KBX_PILLARS','KBX_DEMOS','KINGDOM BIBLE EXPLAINER HOME','bindHomeWalkthrough','initHomeReveal'])
+  assert(!app.includes(dead),`the removed explainer home must not return: ${dead}`);
+assert(!css.includes('kbx-'),'the explainer home CSS must not return');
+assert(!app.includes('READ THE WORD.')&&!app.includes('START READING'),'home must not be the explainer hero copy');
 for(const id of ['resumeTop','resumeReading','homeUpgrade','homeWhatsApp','dailySave','dailyShare','dailyOpen','memoryStart'])
   assert(app.includes(`id="${id}"`),`home must keep #${id}`);
-for(const fn of ['renderHome','bindHomeActions','bindHomePillars','bindHomeWalkthrough','initHomeReveal','scrollToHomeSection'])
-  assert(app.includes(`function ${fn}(`),`explainer helper ${fn}() is missing`);
-for(const c of ['kbx-home','kbx-hero','kbx-strip','kbx-mission','kbx-pillars','kbx-pillar-tab','kbx-journey','kbx-timeline','kbx-walkthrough','kbx-dashboard','kbx-ministry','kbx-trust','kbx-final'])
+/* Every panel the dashboard is built from, so it cannot be gutted to a stub. */
+for(const c of ['welcome-row','home-membership','daily-grid','verse-card','today-stack','continue-card','devotional-card','home-stats','stat-card','quick-grid','quick-card','section-head'])
   assert(app.includes(c),`home markup must include .${c}`);
-for(const c of ['.kbx-home','.kbx-hero','.kbx-strip-track','.kbx-pillar-tab','.kbx-wt-panel','.kbx-timeline','.kbx-trust-grid','.kbx-reveal-ready'])
-  assert(cssKb.includes(c),`explainer CSS must define ${c}`);
-for(const s of ['READ THE WORD.','UNDERSTAND THE WORD.','LIVE THE WORD.','START READING','SEE HOW IT WORKS','INSTALL APP','EVERYTHING BEGINS WITH SCRIPTURE','TODAY WITH GOD','Present Scripture with clarity.','not exploit the reader','MAKE SPACE FOR THE WORD TODAY'])
-  assert(app.includes(s),`home is missing the hero/section copy "${s}"`);
-const pillarsSrc=app.slice(app.indexOf('const KBX_PILLARS={'),app.indexOf('const KBX_DEMOS={'));
-const demosSrc=app.slice(app.indexOf('const KBX_DEMOS={'),app.indexOf('let kbxObserver'));
-for(const k of ['read','study','pray','present'])assert(pillarsSrc.includes(`${k}:{label:`),`pillar ${k} is missing from KBX_PILLARS`);
-assert.equal((pillarsSrc.match(/:\{label:/g)||[]).length,4,'there must be exactly four interactive pillars');
-for(const k of ['reader','study','prayer','plans','ai','ministry'])assert(demosSrc.includes(`${k}:{tab:`),`walkthrough tab ${k} is missing from KBX_DEMOS`);
-assert.equal((demosSrc.match(/:\{tab:/g)||[]).length,6,'there must be exactly six walkthrough tabs');
-assert(app.includes('role="tablist"')&&app.includes('role="tab"')&&app.includes('role="tabpanel"'),'pillars and walkthrough must expose real ARIA tab semantics');
-assert(app.includes(`(i?' hidden':'')`),'only the non-first walkthrough panels may start hidden');
-for(const k of ['ArrowRight','ArrowLeft','Home','End'])assert(app.includes(`'${k}'`),`tab keyboard support must handle ${k}`);
-const homeBlock=app.slice(app.indexOf('KINGDOM BIBLE EXPLAINER HOME'),app.indexOf('/* BIBLE READER */'));
-assert(!/\son[a-z]+\s*=\s*"/i.test(homeBlock),'the explainer home must not use inline event handlers');
-assert(app.includes("const KBX_FACTS=[['66','canonical books'],['1,189','chapters']"),'home facts must match books.json (66 books / 1189 chapters)');
-assert(app.includes("const KBX_PSALM='Psalms 119:105'")&&app.includes('getVerse(KBX_PSALM)'),'the feature Scripture must be resolved from the Bible data, not hardcoded');
+for(const c of ['.welcome-row','.daily-grid','.verse-card','.continue-card','.devotional-card','.home-stats','.stat-card','.quick-grid','.quick-card','.home-membership'])
+  assert(css.includes(c),`styles.css must still define ${c}`);
+for(const s of ['Good ${','VERSE OF THE DAY','CONTINUE READING','TODAY’S DEVOTIONAL','Today with God','Quick actions','Your next step','day reading streak','chapters read','verses saved','prayer entries'])
+  assert(app.includes(s),`home is missing the dashboard copy "${s}"`);
+/* The dashboard must read its verse from the Bible data and greet the signed-in
+   reader by name; a hardcoded verse here would quietly go stale or be wrong. */
+const homeBlock=app.slice(app.indexOf('async function renderHome()'),app.indexOf('/* BIBLE READER */'));
+assert(homeBlock.includes('getVerse(dr)'),'the verse of the day must be resolved from the Bible data');
+assert(homeBlock.includes('displayName()'),'home must greet the signed-in reader by name');
 assert(/Thy word is a lamp/.test(homeBlock)===false,'home must not hardcode Bible text');
-assert(app.includes("'IntersectionObserver' in window")&&app.includes('kbx-reveal-ready'),'scroll reveal must only hide content once the observer exists');
-assert(app.includes(`const KBX_VERSION_FALLBACK='${pkg.version}'`),'the offline version fallback must equal package.json');
-for(const bp of ['max-width:1279px','max-width:1023px','max-width:899px','max-width:599px'])
-  assert(cssKb.includes(bp),`explainer CSS must include the ${bp} breakpoint`);
-assert(cssKb.includes('prefers-reduced-motion:reduce'),'reduced motion must disable the explainer animations');
-assert(cssKb.includes('animation-play-state:paused'),'the capability strip must pause on hover/focus');
-assert(cssKb.includes('env(safe-area-inset-bottom)'),'the final CTA must respect the bottom safe area');
+assert(/book-mark/.test(homeBlock),'the continue-reading card must show the book initial');
+assert(app.includes("const NAV=[['home'"),'Home must remain the first navigation entry');
+assert(app.includes("navigate('home')")||app.includes("'home'"),'sign-in must still land on Home');
 
 console.log('✓ 66 canonical books');console.log('✓ 1,189 chapters');console.log('✓ 31,102 KJV verses');
 console.log('✓ KJV, ASV and WEB data available');console.log('✓ Cross references validated');
