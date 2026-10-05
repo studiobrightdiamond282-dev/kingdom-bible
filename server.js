@@ -235,6 +235,14 @@ const PREMIUM_CONFIG={
      it grants no access on its own. Verification happens server-side against Google's
      JWKS, so no client secret is required or accepted for this flow. */
   googleClientId:String(process.env.GOOGLE_CLIENT_ID||'224088224223-rq9dlhqqoqhjjmq2ave78akeopchcgab.apps.googleusercontent.com').trim(),
+  /* Google's OAuth consent screen can be published as "Internal", which by design
+     only serves ONE Workspace organisation. Every other account — including the
+     owner's own @gmail.com — is then refused on Google's OWN page with
+     "Error 403: org_internal", which this app cannot intercept or explain.
+     Offering a button that always dead-ends is worse than offering none, so an
+     operator can take it away and steer everyone to email + password, which
+     always works. Set GOOGLE_SIGNIN=off (0/false/no also accepted). */
+  googleSignInOn:!/^(off|0|false|no|disabled)$/i.test(String(process.env.GOOGLE_SIGNIN||'').trim()),
 };
 const premiumSessions=new Map();
 function blankPremiumStore(){return{users:[],transactions:[],withdrawals:[],audit:[],notifications:[],passwordResets:[]}}
@@ -406,7 +414,7 @@ async function settlePayment(reference,verified){
   if(u.referredBy&&!u.referralRewarded){const ref=premiumStore.users.find(x=>x.referralCode===u.referredBy&&x.id!==u.id);if(ref){addWallet(ref,Math.round(tx.amount*.1),'commission','10% first-payment referral commission',{fromUser:u.id,reference});u.referralRewarded=true;}}
   savePremiumStore();audit('payment.success',u.id,{reference,plan:tx.plan,amount:tx.amount});return tx;
 }
-function premiumPublic(){return{plans:Object.values(PREMIUM_PLANS).map(({aiMonthly,...p})=>p),trialDays:30,trialWarningDays:7,referral:{signupNaira:100,firstPaymentPercent:10,pointValueNaira:1,minWithdrawal:1000,payoutSlaWorkingDays:3},paystackPublicKey:PREMIUM_CONFIG.paystackPublicKey,googleClientId:PREMIUM_CONFIG.googleClientId,appVersion:VERSION,whatsapp:SUPPORT_PHONE,whatsappDisplay:SUPPORT_PHONE_DISPLAY,whatsappLink:supportLink()}}
+function premiumPublic(){return{plans:Object.values(PREMIUM_PLANS).map(({aiMonthly,...p})=>p),trialDays:30,trialWarningDays:7,referral:{signupNaira:100,firstPaymentPercent:10,pointValueNaira:1,minWithdrawal:1000,payoutSlaWorkingDays:3},paystackPublicKey:PREMIUM_CONFIG.paystackPublicKey,googleClientId:PREMIUM_CONFIG.googleClientId,googleSignInEnabled:PREMIUM_CONFIG.googleSignInOn&&!!PREMIUM_CONFIG.googleClientId,appVersion:VERSION,whatsapp:SUPPORT_PHONE,whatsappDisplay:SUPPORT_PHONE_DISPLAY,whatsappLink:supportLink()}}
 
 /* ---------- HTTP server ---------- */
 const server=http.createServer(async(req,res)=>{

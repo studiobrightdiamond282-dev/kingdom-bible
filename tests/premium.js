@@ -25,6 +25,21 @@ async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/heal
   /* Google sign-in must reject anything that is not a genuine, correctly signed,
      unexpired token for THIS app. A forged or malformed credential must never mint a session. */
   assert(cfg.body.googleClientId,'premium config must expose the public Google client id');
+  /* An "Internal" OAuth consent screen makes Google refuse every account outside
+     one Workspace org with "Error 403: org_internal" on GOOGLE's own page. The
+     app cannot catch that, so it must be able to take the button away instead of
+     stranding the user on a dead end. */
+  assert.equal(typeof cfg.body.googleSignInEnabled,'boolean','premium config must advertise whether Google sign-in is available');
+  {
+    const srv=fs.readFileSync(path.join(__dirname,'..','server.js'),'utf8');
+    const pm =fs.readFileSync(path.join(__dirname,'..','public','premium.js'),'utf8');
+    assert(srv.includes('GOOGLE_SIGNIN'),'the server must honour a GOOGLE_SIGNIN switch');
+    assert(pm.includes('googleSignInEnabled'),'premium.js must respect the switch instead of always rendering the Google button');
+    /* The gate is the FIRST googleSignInEnabled===false check, and the user-facing
+       note is inside the googleButton guard. Both must exist and point at email. */
+    assert(/googleSignInEnabled===false\)throw Error\('Google sign-in is switched off[^']*email and password/.test(pm),'loadGoogle must refuse cleanly when Google sign-in is off');
+    assert(/if \(config && config\.googleSignInEnabled === false\)\s*\{[\s\S]{0,320}Use your email and password below\.[\s\S]{0,80}return;/.test(pm),'googleButton must replace the disabled button with a note and return without rendering it');
+  }
   for(const bad of [{},{credential:''},{credential:'not-a-jwt'},{credential:'a.b.c'},{credential:'a.b.c.d'}]){
     const g=await request('/api/auth/google',{method:'POST',body:JSON.stringify(bad)});
     assert.equal(g.r.status,400,'malformed Google credential must be rejected: '+JSON.stringify(bad));

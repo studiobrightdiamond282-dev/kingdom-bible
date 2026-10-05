@@ -40,6 +40,7 @@ function loadGoogle(){
   if(googleReady)return googleReady;
   googleReady=(async()=>{
     const c=await ensureConfig();
+    if(c&&c.googleSignInEnabled===false)throw Error('Google sign-in is switched off for this deployment. Please sign in with your email and password.');
     if(!c?.googleClientId)throw Error('Google sign-in is unavailable. Please sign in with your email and password.');
     if(window.google?.accounts?.id)return window.google.accounts.id;
     await new Promise((res,rej)=>{
@@ -56,7 +57,12 @@ function loadGoogle(){
   return googleReady;
 }
 /* Renders Google's own button into `mount`. The credential is posted to our server,
-   which verifies it against Google — the browser is never trusted for the email. */
+   which verifies it against Google — the browser is never trusted for the email.
+
+   When the deployment has Google sign-in switched off, render a plain explanation
+   instead of the button. Tapping "Continue with Google" when the OAuth consent
+   screen is "Internal" opens Google's own error page ("Error 403: org_internal")
+   which we cannot intercept, style or explain — the user is simply stranded. */
 function googleButton(mount) {
   const host =
     mount ||
@@ -65,6 +71,13 @@ function googleButton(mount) {
   if (!host) return;
 
   host.innerHTML = '';
+
+  if (config && config.googleSignInEnabled === false) {
+    host.innerHTML =
+      '<p class="gate-note">Google sign-in is switched off for this deployment. Use your email and password below.</p>';
+
+    return;
+  }
 
   loadGoogle()
     .then(api => {
