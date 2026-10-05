@@ -265,7 +265,11 @@ function auth(req){const token=parseCookies(req).kb_session;return token?premium
 const GOOGLE_CERTS_URL='https://www.googleapis.com/oauth2/v3/certs';
 const GOOGLE_ISSUERS=['accounts.google.com','https://accounts.google.com'];
 let googleCerts={at:0,keys:{}};
-const decodeSegment=s=>JSON.parse(Buffer.from(s,'base64url').toString('utf8'));
+/* A malformed or truncated credential makes JSON.parse throw a raw SyntaxError
+   ("Unexpected token...") which the route below hands straight to the browser.
+   A user whose Google sign-in hiccupped must never be shown a Node internal, so
+   every decode failure becomes the same plain-language message. */
+const decodeSegment=s=>{try{return JSON.parse(Buffer.from(s,'base64url').toString('utf8'))}catch{throw Error('Google sign-in was not completed')}};
 async function googleSigningKeys(){if(Date.now()-googleCerts.at<3600000&&Object.keys(googleCerts.keys).length)return googleCerts.keys;const r=await fetch(GOOGLE_CERTS_URL);if(!r.ok)throw Error('Google sign-in cannot be verified right now');const j=await r.json();const keys={};for(const k of j.keys||[])keys[k.kid]=k;googleCerts={at:Date.now(),keys};return keys}
 async function verifyGoogleCredential(credential){
   if(typeof credential!=='string'||credential.split('.').length!==3)throw Error('Google sign-in was not completed');
@@ -273,7 +277,11 @@ async function verifyGoogleCredential(credential){
   if(head.alg!=='RS256')throw Error('Unexpected Google token format');
   const jwk=(await googleSigningKeys())[head.kid];
   if(!jwk){googleCerts={at:0,keys:{}};throw Error('Google signing key not recognised — please try again')}
-  if(!crypto.verify('RSA-SHA256',Buffer.from(header+'.'+claims),crypto.createPublicKey({key:jwk,format:'jwk'}),Buffer.from(signature,'base64url')))throw Error('Google sign-in could not be verified');
+  /* An unexpected JWK shape would make createPublicKey throw a raw OpenSSL error,
+     which the route returns verbatim. Same rule as decodeSegment: plain language. */
+  let sigOk=false;
+  try{sigOk=crypto.verify('RSA-SHA256',Buffer.from(header+'.'+claims),crypto.createPublicKey({key:jwk,format:'jwk'}),Buffer.from(signature,'base64url'))}catch{}
+  if(!sigOk)throw Error('Google sign-in could not be verified');
   const now=Math.floor(Date.now()/1000);
   if(!pay.exp||pay.exp<now-60)throw Error('Google sign-in has expired — please try again');
   if(pay.iat&&pay.iat>now+60)throw Error('Google sign-in is not valid yet');

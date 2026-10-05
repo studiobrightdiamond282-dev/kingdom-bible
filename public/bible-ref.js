@@ -239,6 +239,14 @@ function parse(input,books,opts){
       resolves it against the verse currently on the display)
    -> null */
 const SCAN_RE=/((?:[1-3]\s)?[a-z]+(?:\s[a-z]+){0,2})\s(\d{1,3})(?:[:\s](\d{1,3})(?:-(\d{1,3}))?)?(?=[\s:]|$)/g;
+/* The spoken word "verse" becomes a colon in normalize(), so "Jude verse five"
+   arrives as "jude:5" with NO whitespace for SCAN_RE to split on. SCAN_RE then
+   misses the book entirely and the fallback below reports a bare contextual
+   "verse 5" - which app.js resolves inside whatever is already on the projector,
+   so preaching Romans 8 and saying "Jude verse five" put ROMANS 8:5 on screen.
+   This pattern keeps the book: a single-chapter book is exact (Jude 1:5), and a
+   multi-chapter book hands the book on so the display can refuse a mismatch. */
+const SCAN_VERSE_RE=/((?:[1-3]\s)?[a-z]+(?:\s[a-z]+){0,2}):(\d{1,3})(?:-(\d{1,3}))?(?=[\s:]|$)/g;
 function frameAtEnd(text,s,m,hit){
   /* normalize() removes harmless spoken fillers for matching. Re-run it while
      retaining those words so "John 3:16 with us" is not mistaken for an edge
@@ -278,6 +286,30 @@ function scan(text,books){
     /* the phrase may have eaten a numbered-book prefix ("reading 1 john 2 5"):
        retry from inside the failed phrase */
     else SCAN_RE.lastIndex=m.index+words[0].length+1;
+  }
+  if(best)return best;
+  /* book:verse ("Jude verse five" -> "jude:5") - see SCAN_VERSE_RE. */
+  SCAN_VERSE_RE.lastIndex=0;
+  while((m=SCAN_VERSE_RE.exec(s))){
+    const words=m[1].split(' '),verse=+m[2],verseEnd=m[3]?+m[3]:null;
+    let hit=null;
+    for(let k=0;k<words.length&&!hit;k++){
+      const bi=matchBook(words.slice(k).join(' '),books,{fuzzy:false});
+      if(bi<0)continue;
+      if(books[bi].chapters===1){
+        /* A one-chapter book has no ambiguity: "Jude verse five" IS Jude 1:5. */
+        const r=refine(bi,1,verse,verseEnd,books);
+        if(r&&r.verse!=null)hit={type:'ref',book:r.book,chapter:1,verse:r.verse,verseEnd:r.verseEnd,atEnd:frameAtEnd(text,s,m,{chapter:1,verse:r.verse,verseEnd:r.verseEnd})};
+      }else if(verse>=1&&verse<=200){
+        /* Keep the book on a contextual verse. The presenter decides whether the
+           named book is the one on the display; without it the book is lost. */
+        const edge=normalize(text,{keepFiller:true});
+        const marker=verseEnd&&verseEnd>verse?'-'+verseEnd:':'+verse;
+        hit={type:'verse',book:bi,verse,verseEnd:verseEnd&&verseEnd>verse?verseEnd:null,atEnd:edge.endsWith(marker)||edge.endsWith(' '+verse)};
+      }
+    }
+    if(hit)best=hit;
+    else SCAN_VERSE_RE.lastIndex=m.index+words[0].length+1;
   }
   if(best)return best;
   let vm=null;

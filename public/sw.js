@@ -1,6 +1,6 @@
 /* Bumped for the Home revert: without this every returning install keeps serving
    the cached explainer bundle and the dashboard never appears. */
-const VERSION='kingdom-bible-v1.2.1-home-dashboard';
+const VERSION='kingdom-bible-v1.2.1-voice-bookfix';
 const SHELL=[
   '/', '/index.html','/styles.css','/app.js','/premium.js','/qr.js','/hub-probe.js','/bible-ref.js','/voice.js','/remote.js','/remote.html','/admin.html','/admin.js','/privacy.html','/refund.html','/status.html',
   '/search-worker.js','/offline.html','/manifest.json','/favicon.svg','/favicon.png',

@@ -229,7 +229,10 @@ function clearPending(){
   pending={key:'',hit:null};
 }
 function keyFor(hit){
-  if(hit.ctx||hit.type==='verse')return 'v:'+hit.verse+':'+(hit.verseEnd||'');
+  /* The book must be part of a contextual verse's key: without it "Jude verse 5"
+     and "Philemon verse 5" collide on 'v:5:' and the second is swallowed as a
+     duplicate of the first. */
+  if(hit.ctx||hit.type==='verse')return 'v:'+(hit.book==null?'':hit.book)+':'+hit.verse+':'+(hit.verseEnd||'');
   return ['r',hit.book,hit.chapter,hit.verse,hit.verseEnd].join(':');
 }
 function schedule(hit,key,delay){
@@ -297,7 +300,7 @@ function fire(hit,key){
       addLog(v.ref+' sent to the display','hit',ms,null,'▣');
     }else addLog('Heard a reference but it is outside this chapter — nothing was sent','miss');
   };
-  const p=hit.ctx?hooks.gotoVerse(hit.verse,hit.verseEnd,settings.tr):hooks.present(hit,settings.tr);
+  const p=hit.ctx?hooks.gotoVerse(hit.verse,hit.verseEnd,settings.tr,hit.book==null?null:hit.book):hooks.present(hit,settings.tr);
   Promise.resolve(p).then(done).catch(()=>done(null));
 }
 

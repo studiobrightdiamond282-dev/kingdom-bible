@@ -313,9 +313,16 @@ function bindVoice(){
     warm:tr=>warmTranslation(tr||state.reader.translation),
     present:(hit,tr)=>presentHit(hit,tr),
     /* "…now verse 25": jump inside the passage currently on the display */
-    gotoVerse:(verse,verseEnd,tr)=>{
+    gotoVerse:(verse,verseEnd,tr,bookHint)=>{
       const cur=state.ministry.current;
+      /* The preacher named a book. If the display is showing a DIFFERENT one,
+         resolving against `cur` would put the wrong book on the projector, so
+         fall back to the spoken book's own first chapter instead of guessing
+         inside the passage that happens to be up. With no book spoken ("...now
+         verse 25") the current passage is exactly what is meant. */
       if(!cur||cur.book==null)return null;
+      if(bookHint!=null&&cur.book!==bookHint)
+        return presentHit({book:bookHint,chapter:1,verse,verseEnd:verseEnd||null},tr||state.reader.translation);
       return presentHit({book:cur.book,chapter:cur.chapter,verse,verseEnd:verseEnd||null},tr||cur.translation);
     },
     next:()=>minStep(1,true),

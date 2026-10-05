@@ -6,9 +6,9 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "test": "node tests/smoke.js && node tests/home-render.js && node tests/refs.js && node tests/voice.js && node tests/premium.js && node tests/qr.js && node tests/fit.js && node tests/hub.js",
+    "test": "node tests/smoke.js && node tests/home-render.js && node tests/ref-probe.js && node tests/refs.js && node tests/voice.js && node tests/premium.js && node tests/qr.js && node tests/fit.js && node tests/hub.js",
     "test:integration": "node tests/integration.js",
-    "test:all": "node tests/smoke.js && node tests/home-render.js && node tests/refs.js && node tests/voice.js && node tests/premium.js && node tests/qr.js && node tests/fit.js && node tests/hub.js && node tests/integration.js",
+    "test:all": "node tests/smoke.js && node tests/home-render.js && node tests/ref-probe.js && node tests/refs.js && node tests/voice.js && node tests/premium.js && node tests/qr.js && node tests/fit.js && node tests/hub.js && node tests/integration.js",
     "assetlinks": "node scripts/assetlinks.js",
     "icons": "node scripts/icons.js",
     "social": "node scripts/social-card.js"

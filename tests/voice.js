@@ -90,6 +90,45 @@ async function main(){
   assert.equal(recogniser.stopped,undefined,'the live recogniser keeps listening');
   Voice.stop(true);
 
-  console.log('✓ Voice Preacher Mode interim timing, fuses, dedupe lock, and restart recovery');
+  /* ---- the book must survive "Jude verse five" ------------------------------
+     Regression: the spoken word "verse" becomes a colon, so "jude:5" had no
+     whitespace for the scanner and the book was DISCARDED, leaving a bare
+     contextual "verse 5" that app.js resolved inside whatever was on screen —
+     preaching Romans 8 and saying "Jude verse five" put ROMANS 8:5 up. */
+  calls=[];Voice.start();
+  frame('Jude verse five for the next point');
+  assert.equal(calls.length,1,'Jude verse five reached the display');
+  const jude=calls[0];
+  assert.equal(jude.type,'ref','a named single-chapter book resolves as a full reference, not a bare verse');
+  assert.equal(jude.chapter,1,'Jude has one chapter');
+  assert.equal(jude.verse,5,'and it is verse 5');
+  Voice.stop(true);
+
+  /* The named book must travel to the display so a mismatch can be refused. */
+  let seen=null;
+  Voice.bind(Object.assign({},hooks,{gotoVerse:(v,ve,tr,bookHint)=>{seen={verse:v,book:bookHint};return Promise.resolve({ref:'x'})}}));
+  calls=[];Voice.start();
+  frame('John verse sixteen for the next point');
+  assert(seen&&seen.verse===16,'verse 16 was passed to the display');
+  assert(seen&&seen.book!=null,'the spoken book was passed to the display instead of being dropped');
+  Voice.stop(true);
+
+  /* Two different books at the same verse number must not be swallowed as
+     duplicates of one another by the dedupe key. */
+  Voice.bind(hooks);calls=[];Voice.start();
+  frame('Jude verse five for the next point');
+  frame('Philemon verse five for the next point');
+  assert.equal(calls.length,2,'the same verse number in two books is not a duplicate');
+  Voice.stop(true);
+
+  /* A bare "verse 5" with no book still means the passage on the display. */
+  Voice.bind(Object.assign({},hooks,{gotoVerse:(v,ve,tr,bookHint)=>{seen={verse:v,book:bookHint};return Promise.resolve({ref:'x'})}}));
+  seen=null;calls=[];Voice.start();
+  frame('now verse sixteen for the next point');
+  assert(seen&&seen.verse===16,'a bare verse number still resolves inside the current passage');
+  assert(seen&&seen.book==null,'with no book spoken, no book hint is invented');
+  Voice.stop(true);
+
+  console.log('✓ Voice Preacher Mode interim timing, fuses, dedupe lock, restart recovery, and spoken-book preservation');
 }
 main().catch(err=>{console.error(err.stack||err);process.exitCode=1});
