@@ -159,6 +159,16 @@ var iv = setInterval(function () {
   if ((a && b) || ++tries > 120) clearInterval(iv);
 }, 150);
 try {
+  /* One-time readability bump: existing profiles saved fontSize 20 before the
+     default grew to 22. Anyone who never touched the slider gets the larger
+     text once; anyone who chose their own size keeps it. */
+  try {
+    if (!localStorage.getItem('kb.fontBump22') && typeof state !== 'undefined' && state.profile && state.profile.fontSize === 20) {
+      state.profile.fontSize = 22;
+      if (typeof save === 'function') save();
+    }
+    localStorage.setItem('kb.fontBump22', '1');
+  } catch (e) {}
   document.addEventListener('click', function (e) {
     var b = e.target && e.target.closest ? e.target.closest('[data-kb-rtab]') : null;
     if (b) show(b.getAttribute('data-kb-rtab'));
