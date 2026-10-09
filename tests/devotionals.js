@@ -32,4 +32,9 @@ const a=new Date(2026,9,9),b=new Date(2026,9,10);
 assert.notEqual(YOUTH[dayIdx(36,a)].title,YOUTH[dayIdx(36,b)].title,'youth must change day to day');
 assert.notEqual(ADULT[dayIdx(36,a)].title,ADULT[dayIdx(36,b)].title,'adult must change day to day');
 assert.equal(dayIdx(36,a),dayIdx(36,new Date(2026,9,9)),'same calendar day must give same entry');
+// Share must capture the WHOLE message: one full-text share + a paginated image card.
+const app=fs.readFileSync(path.join(__dirname,'..','public','app.js'),'utf8');
+for(const needle of ['devShareStrings','devShareCardBlobs','devCardLayout','devPaintPage','Action point\\n','Reflect\\n','Prayer\\n','PAGE ${','Share full card (all pages)'])
+  assert(app.includes(needle),`app.js share must include ${JSON.stringify(needle)} — full-message share regression`);
 console.log('✓ 36 youth + 36 adult devotionals, 3-paragraph deep teaching, daily rotation');
+console.log('✓ share carries the whole devotional (full text + paginated multi-page image card)');

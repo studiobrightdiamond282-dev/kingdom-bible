@@ -751,81 +751,156 @@ function openCommand(){const items=[...NAV,...QUICK.filter(q=>!NAV.some(n=>n[0]=
 function openQuick(){if($('.quick-menu')){closeModal();return}modal(`<div class="eyebrow" style="padding:8px">QUICK ACTIONS</div>${[['search','⌕','Search Bible'],['prayer','♧','Start prayer'],['bible','✎','Add Scripture note'],['study','✦','Start study'],['ministry','▣','Start presentation']].map(x=>`<button data-route="${x[0]}"><span>${x[1]}</span>${x[2]}</button>`).join('')}`,'quick-menu')}
 function cycleTheme(){const a=['dark','light','sepia','amoled'],i=a.indexOf(state.profile.theme);state.profile.theme=a[(i+1)%a.length];save();toast(`${state.profile.theme[0].toUpperCase()+state.profile.theme.slice(1)} theme`)}
 async function shareText(text){/* Every share carries the reader's referral link so inviting someone always credits the inviter. */const body=text+'\n\nRead with me on KINGDOM BIBLE:\n'+(window.KingdomPremium?.referralLink?.()||location.origin+'/');if(navigator.share)try{await navigator.share({title:'KINGDOM BIBLE',text:body,url:window.KingdomPremium?.referralLink?.()||location.origin+'/'});closeModal();return}catch{}try{await navigator.clipboard.writeText(body);toast('Copied — your referral link is attached','success')}catch{toast('Copy failed','error')}closeModal()}
-/* ---------- devotional share sheet: logo card + every platform ----------
-   Builds a 1080×1350 shareable image in-browser (no server needed), then offers the
-   native share sheet with the file attached, a copy fallback, and direct links to each
-   platform. Every variant carries the reader's referral link. */
+/* ---------- devotional share sheet: full text + multi-page logo card ----------
+   Text shares carry the WHOLE devotional (every teaching paragraph, Reflect,
+   Prayer, Action point) in one message. The 1080×1350 image card cannot hold the
+   full teaching on one page, so it is laid out and split into 3-4 pages; every
+   page carries the logo, a PAGE x / N counter and the referral footer. */
 function devShareStrings(DV,track){
   const url=window.KingdomPremium?.referralLink?.()||location.origin+'/';
   const short=`${DV.title}\n“${DV.verse}” — ${DV.scripture}\n\n${DV.action}`;
-  const body=`${DV.title}\n“${DV.verse}” — ${DV.scripture}\n\nToday's question: ${DV.question}\n\nToday's step: ${DV.action}\n\nRead with me on KINGDOM BIBLE (${track==='youth'?'Youth':'Adult'} track):\n${url}`;
-  return{url,short,body};
+  const parts=[DV.title,`“${DV.verse}” — ${DV.scripture}`];
+  if(DV.question)parts.push(`Today's question: ${DV.question}`);
+  (DV.message||[]).forEach(p=>parts.push(p));
+  parts.push(`Reflect\n${DV.reflection}`);
+  parts.push(`Prayer\n${DV.prayer}`);
+  parts.push(`Action point\n${DV.action}`);
+  parts.push(`Read with me on KINGDOM BIBLE (${track==='youth'?'Youth':'Adult'} track):\n${url}`);
+  return{url,short,body:parts.join('\n\n')};
 }
-function wrapCanvasText(g,text,x,y,maxW,lh,maxLines){
+function devWrapLines(g,text,font,maxW){
+  g.font=font;
   const words=String(text).split(/\s+/);let line='',lines=[];
   for(const w of words){const t=line?line+' '+w:w;if(g.measureText(t).width>maxW&&line){lines.push(line);line=w}else line=t}
   if(line)lines.push(line);
-  if(maxLines&&lines.length>maxLines){lines=lines.slice(0,maxLines);lines[maxLines-1]=lines[maxLines-1].replace(/[.,;:!?]?$/,'…')}
-  lines.forEach((l,i)=>g.fillText(l,x,y+i*lh));
-  return y+lines.length*lh;
+  return lines.length?lines:[''];
 }
 function devCardImage(src){return new Promise(res=>{const img=new Image();img.onload=()=>res(img);img.onerror=()=>res(null);img.src=src+(src.includes('?')?'&':'?')+'cb='+Date.now()})}
-async function devShareCardBlob(DV,track){
-  const c=document.createElement('canvas');c.width=1080;c.height=1350;
-  const g=c.getContext('2d');
+/* The full teaching does not fit one 1080×1350 page — lay it out once, paginate
+   into as many pages as the text needs (3-4 in practice), then paint each page. */
+function devCardFlow(DV,s){
+  s=s||1;const F=[],r=n=>Math.round(n*s);
+  const tx=(text,size,o)=>{o=o||{};F.push({kind:'text',text,font:(o.bold?'bold ':'')+(o.italic?'italic ':'')+r(size)+'px Georgia, serif',color:o.color||'rgba(255,255,255,.86)',lh:r(o.lh||size+14),space:r(o.space||0),keep:!!o.keep})};
+  tx(DV.title,66,{bold:true,color:'#ffffff',lh:80});
+  tx('“'+DV.verse+'”',40,{italic:true,color:'rgba(255,255,255,.92)',lh:54,space:36});
+  tx('— '+DV.scripture,32,{bold:true,color:'#f4d68a',lh:44,space:14});
+  if(DV.question){tx("TODAY'S QUESTION",28,{bold:true,color:'rgba(255,255,255,.66)',lh:40,space:36,keep:true});tx(DV.question,34,{color:'#ffffff',lh:46,space:8})}
+  (DV.message||[]).forEach(p=>tx(p,34,{lh:48,space:32}));
+  tx('Reflect',44,{bold:true,color:'#f4d68a',lh:56,space:44,keep:true});
+  tx(DV.reflection,34,{lh:46,space:8});
+  tx('Prayer',44,{bold:true,color:'#f4d68a',lh:56,space:44,keep:true});
+  tx(DV.prayer,34,{lh:46,space:8});
+  F.push({kind:'box',text:DV.action,font:'bold '+r(26)+'px Georgia, serif',textFont:r(32)+'px Georgia, serif',lh:r(44),space:r(44),pad:r(26),labelH:r(36)});
+  return F;
+}
+function devCardLayout(g,flow){
+  for(const b of flow){
+    if(b.kind==='box'){b.lines=devWrapLines(g,b.text,b.textFont,888);b.h=b.pad*2+b.labelH+b.lines.length*b.lh}
+    else b.lines=devWrapLines(g,b.text,b.font,912);
+  }
+  const pages=[];const BOTTOM=1190;let page={top:380,items:[]},y=380;
+  const newPage=()=>{pages.push(page);page={top:300,items:[]};y=300};
+  for(let bi=0;bi<flow.length;bi++){
+    const b=flow[bi],next=flow[bi+1];
+    let sp=y>page.top?b.space:0;
+    if(b.kind==='box'){
+      if(y+sp+b.h>BOTTOM&&page.items.length){newPage();sp=0}
+      y+=sp;page.items.push({b,box:true,y});y+=b.h;continue;
+    }
+    /* heading stays with the line beneath it; long blocks need 2 lines of room */
+    if(b.keep&&next&&y+sp+b.lh+(next.kind==='box'?next.h:next.lh)>BOTTOM&&page.items.length){newPage();sp=0}
+    if(!b.keep&&b.lines.length>=3&&y+sp+2*b.lh>BOTTOM&&page.items.length){newPage();sp=0}
+    y+=sp;
+    for(let i=0;i<b.lines.length;i++){
+      if(y+b.lh>BOTTOM&&page.items.length)newPage();
+      page.items.push({b,i,y});y+=b.lh;
+    }
+  }
+  pages.push(page);
+  return pages;
+}
+function devPaintPage(g,pages,idx,logo,track,total){
   const bg=g.createLinearGradient(0,0,1080,1350);bg.addColorStop(0,'#0a1128');bg.addColorStop(.6,'#12204a');bg.addColorStop(1,'#1b2a56');
   g.fillStyle=bg;g.fillRect(0,0,1080,1350);
   g.strokeStyle='rgba(244,214,138,.5)';g.lineWidth=4;g.strokeRect(36,36,1008,1278);
-  const logo=await devCardImage('assets/logo.png');
-  if(logo){try{g.drawImage(logo,84,84,150,150)}catch(e){}}
-  g.fillStyle='#f4d68a';g.font='bold 40px Georgia, serif';g.fillText('KINGDOM BIBLE',266,150);
-  g.fillStyle='rgba(255,255,255,.72)';g.font='26px Georgia, serif';
-  g.fillText(`DAILY DEVOTIONAL · ${track==='youth'?'YOUTH':'ADULT'} TRACK`,266,192);
-  g.fillStyle='#f4d68a';g.fillRect(84,286,180,5);
-  let y=380;
-  g.fillStyle='#ffffff';g.font='bold 66px Georgia, serif';
-  y=wrapCanvasText(g,DV.title,84,y,912,80,4)+36;
-  g.fillStyle='rgba(255,255,255,.92)';g.font='italic 40px Georgia, serif';
-  y=wrapCanvasText(g,'“'+DV.verse+'”',84,y,912,54,5)+14;
-  g.fillStyle='#f4d68a';g.font='bold 32px Georgia, serif';g.fillText('— '+DV.scripture,84,y);
-  y+=70;
-  if(DV.question){g.fillStyle='rgba(255,255,255,.66)';g.font='30px Georgia, serif';g.fillText("TODAY'S QUESTION",84,y);y+=44;g.fillStyle='#ffffff';g.font='34px Georgia, serif';y=wrapCanvasText(g,DV.question,84,y,912,44,3)+40}
-  g.fillStyle='rgba(244,214,138,.16)';g.fillRect(64,y-34,952,220);
-  g.strokeStyle='rgba(244,214,138,.55)';g.lineWidth=2;g.strokeRect(64,y-34,952,220);
-  g.fillStyle='#f4d68a';g.font='bold 28px Georgia, serif';g.fillText("TODAY'S STEP",96,y+8);
-  g.fillStyle='#ffffff';g.font='32px Georgia, serif';wrapCanvasText(g,DV.action,96,y+58,888,42,3);
+  g.textAlign='left';
+  if(idx===0){
+    if(logo){try{g.drawImage(logo,84,84,150,150)}catch(e){}}
+    g.fillStyle='#f4d68a';g.font='bold 40px Georgia, serif';g.fillText('KINGDOM BIBLE',266,150);
+    g.fillStyle='rgba(255,255,255,.72)';g.font='26px Georgia, serif';
+    g.fillText(`DAILY DEVOTIONAL · ${track==='youth'?'YOUTH':'ADULT'} TRACK`,266,192);
+    g.fillStyle='#f4d68a';g.fillRect(84,286,180,5);
+    if(total>1){g.fillStyle='rgba(244,214,138,.9)';g.font='bold 26px Georgia, serif';g.textAlign='right';g.fillText(`PAGE 1 / ${total}`,996,150);g.textAlign='left'}
+  }else{
+    g.fillStyle='#f4d68a';g.font='bold 36px Georgia, serif';g.fillText('KINGDOM BIBLE',84,124);
+    g.fillStyle='rgba(255,255,255,.72)';g.font='26px Georgia, serif';g.fillText('DAILY DEVOTIONAL · CONTINUED',84,168);
+    g.fillStyle='rgba(244,214,138,.9)';g.font='bold 26px Georgia, serif';g.textAlign='right';g.fillText(`PAGE ${idx+1} / ${total}`,996,124);g.textAlign='left';
+    g.fillStyle='#f4d68a';g.fillRect(84,224,180,5);
+  }
+  for(const it of pages[idx].items){
+    const b=it.b;
+    if(it.box){
+      g.fillStyle='rgba(244,214,138,.16)';g.fillRect(64,it.y,952,b.h);
+      g.strokeStyle='rgba(244,214,138,.55)';g.lineWidth=2;g.strokeRect(64,it.y,952,b.h);
+      g.fillStyle='#f4d68a';g.font=b.font;g.fillText("TODAY'S STEP",96,it.y+b.pad+Math.round(b.labelH*.75));
+      g.fillStyle='#ffffff';g.font=b.textFont;
+      b.lines.forEach((l,i)=>g.fillText(l,96,it.y+b.pad+b.labelH+i*b.lh+Math.round(b.lh*.75)));
+    }else{g.font=b.font;g.fillStyle=b.color;g.fillText(b.lines[it.i],84,it.y+Math.round(b.lh*.75))}
+  }
   g.fillStyle='rgba(255,255,255,.55)';g.font='24px Georgia, serif';
   g.fillText(fmtDate(new Date()),84,1268);
   g.textAlign='right';g.fillText('Read with me on KINGDOM BIBLE',996,1268);g.textAlign='left';
-  return new Promise(res=>c.toBlob(res,'image/png'));
+}
+async function devShareCardBlobs(DV,track){
+  const logo=await devCardImage('assets/logo.png');
+  const m=document.createElement('canvas');m.width=1080;m.height=1350;
+  const g=m.getContext('2d');
+  let pages=devCardLayout(g,devCardFlow(DV,1));
+  if(pages.length>4)pages=devCardLayout(g,devCardFlow(DV,.85)); /* safety: never exceed 4 pages */
+  const blobs=[];
+  for(let i=0;i<pages.length;i++){
+    const c=document.createElement('canvas');c.width=1080;c.height=1350;
+    devPaintPage(c.getContext('2d'),pages,i,logo,track,pages.length);
+    blobs.push(await new Promise(res=>c.toBlob(res,'image/png')));
+  }
+  return blobs;
 }
 async function shareDevCard(DV,track){
   try{
-    const blob=await devShareCardBlob(DV,track);if(!blob)throw new Error('no blob');
-    const file=new File([blob],'kingdom-devotional.png',{type:'image/png'});
-    if(navigator.canShare&&navigator.canShare({files:[file]})&&navigator.share){
-      await navigator.share({files:[file],title:'KINGDOM BIBLE',text:DV.title+' — daily devotional'});return;
+    const blobs=await devShareCardBlobs(DV,track);if(!blobs.length)throw new Error('no blob');
+    const n=blobs.length;
+    const files=blobs.map((b,i)=>new File([b],`kingdom-devotional-${i+1}-of-${n}.png`,{type:'image/png'}));
+    if(navigator.share&&navigator.canShare&&navigator.canShare({files})){
+      try{await navigator.share({files,title:'KINGDOM BIBLE',text:`${DV.title} — full daily devotional card (${n} page${n>1?'s':''})`});return}
+      catch(e){if(e&&e.name==='AbortError')throw e}
     }
-    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='kingdom-devotional.png';
-    document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),4000);
-    toast('Card saved — share it from your gallery','success');
+    /* Fallback: save every page so no part of the message is lost. */
+    blobs.forEach((b,i)=>setTimeout(()=>{
+      const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=`kingdom-devotional-${i+1}-of-${n}.png`;
+      document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+    },i*700));
+    toast(n>1?`Saved ${n} cards — share them in order (page 1 of ${n} first)`:'Card saved — share it from your gallery','success');
   }catch(err){if(err&&err.name!=='AbortError')toast('Could not build the card','error')}
 }
 function openDevShareSheet(DV,track){
   const{url,short,body}=devShareStrings(DV,track);
   modal(`<div class="modal-head"><div><div class="eyebrow">SHARE · ${track==='youth'?'YOUTH':'ADULT'} TRACK</div><h2>${esc(DV.title)}</h2></div><button class="close-btn" data-close>×</button></div>
-  <div style="display:grid;gap:10px;margin-top:14px"><button class="primary-btn" id="shareCardBtn">🖼 Share card with logo</button><button class="secondary-btn" id="copyDevBtn">⧉ Copy text + link</button></div>
+  <div style="display:grid;gap:10px;margin-top:14px"><button class="primary-btn" id="shareCardBtn">🖼 Share full card (all pages)</button><button class="secondary-btn" id="shareTextBtn">↗ Share full devotional text</button><button class="secondary-btn" id="copyDevBtn">⧉ Copy full text + link</button></div>
   <div class="eyebrow" style="margin-top:18px">SHARE TO</div>
   <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px"><button class="secondary-btn" data-share="wa">WhatsApp</button><button class="secondary-btn" data-share="fb">Facebook</button><button class="secondary-btn" data-share="x">X / Twitter</button><button class="secondary-btn" data-share="tg">Telegram</button><button class="secondary-btn" data-share="li">LinkedIn</button><button class="secondary-btn" data-share="mail">Email</button></div>
-  <p style="color:var(--muted);font-size:12px;margin-top:14px">Every share carries your personal referral link, so new readers are credited to you.</p>`);
+  <p style="color:var(--muted);font-size:12px;margin-top:14px">Copy, WhatsApp, Telegram and Email carry the full devotional; X and Facebook show a short preview (platform limits). Every share carries your personal referral link, so new readers are credited to you.</p>`);
   $('#shareCardBtn').onclick=()=>shareDevCard(DV,track);
+  $('#shareTextBtn').onclick=async()=>{
+    if(navigator.share)try{await navigator.share({title:'KINGDOM BIBLE',text:body,url});closeModal();return}catch(e){if(e&&e.name==='AbortError')return}
+    try{await navigator.clipboard.writeText(body);toast('Copied — referral link attached','success')}catch{toast('Copy failed','error')}
+  };
   $('#copyDevBtn').onclick=async()=>{try{await navigator.clipboard.writeText(body);toast('Copied — referral link attached','success')}catch{toast('Copy failed','error')}};
   $$('[data-share]').forEach(b=>b.onclick=()=>{
     const k=b.dataset.share;let u='';
     if(k==='wa')u='https://wa.me/?text='+encodeURIComponent(body);
     else if(k==='fb')u='https://www.facebook.com/sharer/sharer.php?u='+encodeURIComponent(url)+'&quote='+encodeURIComponent(short);
     else if(k==='x')u='https://twitter.com/intent/tweet?text='+encodeURIComponent(short+'\n'+url);
-    else if(k==='tg')u='https://t.me/share/url?url='+encodeURIComponent(url)+'&text='+encodeURIComponent(short);
+    else if(k==='tg')u='https://t.me/share/url?url='+encodeURIComponent(url)+'&text='+encodeURIComponent(body);
     else if(k==='li')u='https://www.linkedin.com/sharing/share-offsite/?url='+encodeURIComponent(url);
     else if(k==='mail')u='mailto:?subject='+encodeURIComponent('Daily Devotional — '+DV.title)+'&body='+encodeURIComponent(body);
     if(k==='mail')location.href=u;else window.open(u,'_blank','noopener');
