@@ -19,7 +19,7 @@ const ctx={
   setTimeout:()=>0,setInterval:()=>0,clearTimeout(){},clearInterval(){},addEventListener(){},
   $:s=>s==='#main'?main:sel(s), $$:()=>[],
   esc:s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])),
-  books,state:{reader:{book:42,chapter:3,translation:'kjv',lastVerse:16},bookmarks:{'John 3:16':{}},chaptersRead:['42:3'],prayers:[{id:1}],readingDays:[],profile:{name:'Ada',theme:'light'},ministry:{theme:'royal',church:'KINGDOM BIBLE'}},
+  books,state:{reader:{book:42,chapter:3,translation:'kjv',lastVerse:16},bookmarks:{'John 3:16':{}},chaptersRead:['42:3'],prayers:[{id:1}],readingDays:[],profile:{name:'Ada',theme:'light',devotionalTrack:'adult'},ministry:{theme:'royal',church:'KINGDOM BIBLE'}},
   TR:{kjv:'KJV',asv:'ASV',web:'WEB'},
   DEVOTIONAL:{title:'Walking by Faith',scripture:'2 Corinthians 5:7',verse:'For we walk by faith, not by sight.'},
   QUICK:[['bible','A','Read Bible'],['prayer','B','Pray'],['ministry','C','Present']],
@@ -45,7 +45,7 @@ ctx.renderHome().then(()=>{
   ok('verse-of-the-day present',h.includes('VERSE OF THE DAY')&&h.includes('For God so loved'));
   ok('verse ref rendered',/<cite>— [A-Za-z ]+ \d+:\d+<\/cite>/.test(h));
   ok('continue reading + book initial',h.includes('CONTINUE READING')&&h.includes('book-mark'));
-  ok('devotional card',h.includes('TODAY’S DEVOTIONAL')&&h.includes('Walking by Faith'));
+  ok('devotional card',h.includes("TODAY'S DEVOTIONAL")&&h.includes('Walking by Faith'));
   ok('reading stats: streak',h.includes('>3</strong>')||h.includes('day reading streak'));
   ok('reading stats: 4 panels',(h.match(/stat-card/g)||[]).length>=4);
   ok('quick actions grid',h.includes('Quick actions')&&(h.match(/quick-card/g)||[]).length>=3);

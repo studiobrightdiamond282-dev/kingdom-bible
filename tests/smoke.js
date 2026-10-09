@@ -69,10 +69,15 @@ assert(/Type the email to confirm/.test(adminJsSrc),'deletion must require the o
 const premJsSrc=fs.readFileSync(path.join(pub,'premium.js'),'utf8');
 assert(/Continue my free trial/.test(premJsSrc),'a trial user must be able to leave the plan screen and keep using the app');
 assert(html.includes('/bible-ref.js'),'index.html must load bible-ref.js');
+assert(html.includes('/devotionals.js'),'index.html must load devotionals.js (daily library)');
+assert(html.indexOf('/devotionals.js')<html.indexOf('/app.js'),'devotionals.js must load before app.js');
 assert(html.includes('/voice.js'),'index.html must load voice.js');
 assert(html.includes('/premium.js'),'index.html must load premium.js');
 assert(html.indexOf('/bible-ref.js')<html.indexOf('/app.js'),'bible-ref.js must load before app.js');
 assert(swSrc0.includes('/bible-ref.js')&&swSrc0.includes('/voice.js')&&swSrc0.includes('/premium.js'),'the service worker must precache the reference, voice, and premium modules');
+assert(swSrc0.includes('/devotionals.js'),'the service worker must precache the devotionals bundle');
+assert(app.includes('function devotionFor')&&app.includes('function todaysDevotional'),'app.js must rotate daily devotionals by track');
+assert(app.includes('devotionalTrack'),'devotional youth/adult track preference must be wired');
 assert(app.includes('KingdomRef'),'app.js must use the shared reference engine');
 assert(app.includes('bindVoice')&&app.includes('getPassage'),'Voice Mode + passage resolution wiring missing');
 assert(app.includes('function openManual')&&app.includes('id=\"openManual\"'),'Ministry page must expose the User Manual');
@@ -166,7 +171,7 @@ for(const c of ['welcome-row','home-membership','daily-grid','verse-card','today
   assert(app.includes(c),`home markup must include .${c}`);
 for(const c of ['.welcome-row','.daily-grid','.verse-card','.continue-card','.devotional-card','.home-stats','.stat-card','.quick-grid','.quick-card','.home-membership'])
   assert(css.includes(c),`styles.css must still define ${c}`);
-for(const s of ['Good ${','VERSE OF THE DAY','CONTINUE READING','TODAY’S DEVOTIONAL','Today with God','Quick actions','Your next step','day reading streak','chapters read','verses saved','prayer entries'])
+for(const s of ['Good ${','VERSE OF THE DAY','CONTINUE READING',"TODAY'S DEVOTIONAL",'Today with God','Quick actions','Your next step','day reading streak','chapters read','verses saved','prayer entries'])
   assert(app.includes(s),`home is missing the dashboard copy "${s}"`);
 /* The dashboard must read its verse from the Bible data and greet the signed-in
    reader by name; a hardcoded verse here would quietly go stale or be wrong. */
