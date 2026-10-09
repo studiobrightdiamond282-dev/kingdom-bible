@@ -292,7 +292,7 @@ function editPrayer(i){openPrayerForm(null,state.prayers[i],i)}
 function openReminder(){modal(`<div class="modal-head"><div><h2>Prayer reminder</h2><p>Prayer reminder time</p></div><button class="close-btn" data-close>×</button></div><div class="field"><label>Reminder time</label><input type="time" id="reminderTime" value="${state.profile.prayerTime||'07:00'}"></div><div class="notice" style="margin-top:15px">This reminder is stored on this device only. Kingdom Bible does not request the system notification permission and does not send anything to a server, so nothing is collected and nothing leaves your phone.</div><div class="modal-actions"><button class="primary-btn" id="saveReminder">Save preference</button></div>`);$('#saveReminder').onclick=()=>{state.profile.prayerTime=$('#reminderTime').value;save();closeModal();toast('Reminder preference saved')}}
 
 /* DEVOTIONAL & PLANS */
-function renderDevotional(offset){setTitle('Devotional');offset=Number(offset)||0;const track=state.profile.devotionalTrack||'adult';const d=new Date();d.setDate(d.getDate()+offset);const key=d.toISOString().slice(0,10);const DV=devotionFor(track,d);const done=(state.devotionalDone||[]).includes(key+':'+track);const lib=devLibrary(track);const idx=lib?dayIndex(lib.length,d):0;const total=lib?lib.length:1;$('#main').innerHTML=`<div class="page"><div class="welcome-row"><div><div class="eyebrow">DAILY DEVOTIONAL · ${esc(fmtDate(d))}</div><h1 class="hero-title">Devotional</h1><p class="lead">A new biblical answer every day — youth and adult tracks.</p></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="secondary-btn small-btn" id="devTrack" aria-label="Switch track">◐ ${track==='youth'?'Youth':'Adult'} track</button><button class="secondary-btn small-btn" id="devPrev" aria-label="Yesterday">← Prev</button><button class="secondary-btn small-btn" id="devNext" aria-label="Tomorrow" ${offset>=0?'disabled style="opacity:.4"':''}>Next →</button></div></div><article class="devotional-feature card"><div class="eyebrow">DAY ${idx+1} OF ${total} · ${track==='youth'?'YOUTH':'ADULT'} TRACK${offset!==0?' · BROWSING':''}</div><h1>${esc(DV.title)}</h1><p class="scripture">“${esc(DV.verse)}” — ${esc(DV.scripture)}</p>${DV.question?`<div class="notice" style="margin-top:14px">Today's question: <strong>${esc(DV.question)}</strong></div>`:''}<div style="display:flex;gap:8px;margin-top:25px;flex-wrap:wrap"><button class="primary-btn" id="devSave">${done?'✓ Completed':'Mark completed'}</button><button class="secondary-btn" id="devShare" style="background:rgba(255,255,255,.08);color:white;border-color:rgba(255,255,255,.15)">↗ Share</button></div></article><article class="card devotional-content"><div class="eyebrow">REFLECTION · 5 MIN READ</div><h2>A faithful next step</h2>${DV.message.map(p=>`<p>${esc(p)}</p>`).join('')}<h2>Reflect</h2><p>${esc(DV.reflection)}</p><h2>Prayer</h2><p>${esc(DV.prayer)}</p><h2>Action point</h2><div class="notice">${esc(DV.action)}</div><div style="margin-top:25px"><button class="secondary-btn" id="openDevScripture">Open ${esc(DV.scripture)} in Bible</button></div></article></div>`;$('#devTrack').onclick=()=>{state.profile.devotionalTrack=track==='youth'?'adult':'youth';save();renderDevotional(0);toast((state.profile.devotionalTrack==='youth'?'Youth':'Adult')+' track','success')};$('#devPrev').onclick=()=>renderDevotional(offset-1);const nx=$('#devNext');if(nx&&offset<0)nx.onclick=()=>renderDevotional(offset+1);$('#devSave').onclick=()=>{state.devotionalDone=state.devotionalDone||[];const k=key+':'+track;if(!state.devotionalDone.includes(k))state.devotionalDone.push(k);save();renderDevotional(offset);toast('Devotional completed','success')};$('#devShare').onclick=()=>shareText(`${DV.title}\n${DV.verse}\n— ${DV.scripture}\n\n${DV.message[0]}`);$('#openDevScripture').onclick=()=>openReference(DV.scripture)}
+function renderDevotional(offset){setTitle('Devotional');offset=Number(offset)||0;const track=state.profile.devotionalTrack||'adult';const d=new Date();d.setDate(d.getDate()+offset);const key=d.toISOString().slice(0,10);const DV=devotionFor(track,d);const done=(state.devotionalDone||[]).includes(key+':'+track);const lib=devLibrary(track);const idx=lib?dayIndex(lib.length,d):0;const total=lib?lib.length:1;$('#main').innerHTML=`<div class="page"><div class="welcome-row"><div><div class="eyebrow">DAILY DEVOTIONAL · ${esc(fmtDate(d))}</div><h1 class="hero-title">Devotional</h1><p class="lead">A new biblical answer every day — youth and adult tracks.</p></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="secondary-btn small-btn" id="devTrack" aria-label="Switch track">◐ ${track==='youth'?'Youth':'Adult'} track</button><button class="secondary-btn small-btn" id="devPrev" aria-label="Yesterday">← Prev</button><button class="secondary-btn small-btn" id="devNext" aria-label="Tomorrow" ${offset>=0?'disabled style="opacity:.4"':''}>Next →</button></div></div><article class="devotional-feature card"><div class="eyebrow">DAY ${idx+1} OF ${total} · ${track==='youth'?'YOUTH':'ADULT'} TRACK${offset!==0?' · BROWSING':''}</div><h1>${esc(DV.title)}</h1><p class="scripture">“${esc(DV.verse)}” — ${esc(DV.scripture)}</p>${DV.question?`<div class="notice" style="margin-top:14px">Today's question: <strong>${esc(DV.question)}</strong></div>`:''}<div style="display:flex;gap:8px;margin-top:25px;flex-wrap:wrap"><button class="primary-btn" id="devSave">${done?'✓ Completed':'Mark completed'}</button><button class="secondary-btn" id="devShare" style="background:rgba(255,255,255,.08);color:white;border-color:rgba(255,255,255,.15)">↗ Share</button></div></article><article class="card devotional-content"><div class="eyebrow">REFLECTION · 5 MIN READ</div><h2>A faithful next step</h2>${DV.message.map(p=>`<p>${esc(p)}</p>`).join('')}<h2>Reflect</h2><p>${esc(DV.reflection)}</p><h2>Prayer</h2><p>${esc(DV.prayer)}</p><h2>Action point</h2><div class="notice">${esc(DV.action)}</div><div style="margin-top:25px"><button class="secondary-btn" id="openDevScripture">Open ${esc(DV.scripture)} in Bible</button></div></article></div>`;$('#devTrack').onclick=()=>{state.profile.devotionalTrack=track==='youth'?'adult':'youth';save();renderDevotional(0);toast((state.profile.devotionalTrack==='youth'?'Youth':'Adult')+' track','success')};$('#devPrev').onclick=()=>renderDevotional(offset-1);const nx=$('#devNext');if(nx&&offset<0)nx.onclick=()=>renderDevotional(offset+1);$('#devSave').onclick=()=>{state.devotionalDone=state.devotionalDone||[];const k=key+':'+track;if(!state.devotionalDone.includes(k))state.devotionalDone.push(k);save();renderDevotional(offset);toast('Devotional completed','success')};$('#devShare').onclick=()=>openDevShareSheet(DV,track);$('#openDevScripture').onclick=()=>openReference(DV.scripture)}
 function renderPlans(){setTitle('Reading Plans');$('#main').innerHTML=`<div class="page"><div class="welcome-row"><div><div class="eyebrow">READ WITH PURPOSE</div><h1 class="hero-title">Reading Plans</h1><p class="lead">Build a steady Scripture rhythm without turning progress into a measure of spiritual worth.</p></div><button class="secondary-btn" id="customPlan">＋ Custom plan</button></div><div class="plan-grid">${PLANS.map(p=>{const n=state.planProgress[p.id]||0,pc=Math.round(n/p.days*100);return `<article class="card plan-card"><div class="plan-icon">${p.icon}</div><h3>${p.name}</h3><p>${p.desc}</p><div class="plan-meta"><span>${p.days} days</span><span>${n?pc+'% complete':'Not started'}</span></div><div class="progress"><span style="width:${pc}%"></span></div><button class="${n?'secondary-btn':'primary-btn'} small-btn" style="margin-top:13px" data-plan="${p.id}">${n?'Continue':'Start plan'}</button></article>`}).join('')}</div></div>`;$$('[data-plan]').forEach(b=>b.onclick=()=>openPlan(b.dataset.plan));$('#customPlan').onclick=()=>toast('Custom plan builder is coming soon')}
 function openPlan(id){const p=PLANS.find(x=>x.id===id),n=state.planProgress[id]||0;modal(`<div class="modal-head"><div><div class="eyebrow">DAY ${Math.min(n+1,p.days)} OF ${p.days}</div><h2>${p.name}</h2></div><button class="close-btn" data-close>×</button></div><div class="progress"><span style="width:${Math.round(n/p.days*100)}%"></span></div><div class="card" style="box-shadow:none;margin-top:18px;padding:18px"><strong>Today’s reading</strong><p style="font-family:var(--scripture);font-size:20px">${planReading(id,n)}</p><p style="color:var(--muted);font-size:12px">Read prayerfully and in context. Progress is personal, not competitive.</p></div><div class="modal-actions"><button class="secondary-btn" id="openPlanRead">Open reading</button><button class="primary-btn" id="completePlanDay" ${n>=p.days?'disabled':''}>${n>=p.days?'Plan complete':'Mark day complete'}</button></div>`);const rr=planReading(id,n).split('–')[0];$('#openPlanRead').onclick=()=>openReference(rr.includes(':')?rr:rr+' 1');$('#completePlanDay').onclick=()=>{state.planProgress[id]=Math.min(p.days,n+1);save();closeModal();renderPlans();toast('Today’s reading marked complete','success')}}
 function planReading(id,n){if(id==='psalms30')return `Psalms ${n*5+1}–${Math.min(150,n*5+5)}`;if(id==='proverbs31')return `Proverbs ${Math.min(31,n+1)}`;if(id==='gospels30')return `${['Matthew','Mark','Luke','John'][Math.floor(n/8)%4]} ${n%8+1}`;if(id==='nt90')return `${books[39+(n%27)].name} ${n%books[39+(n%27)].chapters+1}`;if(id==='year')return `Genesis ${n%50+1}`;const refs=['Hebrews 11:1','Philippians 4:6','Matthew 6:33','Romans 8:28','John 15:5','Psalms 46:1','James 1:5'];return refs[n%refs.length]}
@@ -751,6 +751,86 @@ function openCommand(){const items=[...NAV,...QUICK.filter(q=>!NAV.some(n=>n[0]=
 function openQuick(){if($('.quick-menu')){closeModal();return}modal(`<div class="eyebrow" style="padding:8px">QUICK ACTIONS</div>${[['search','⌕','Search Bible'],['prayer','♧','Start prayer'],['bible','✎','Add Scripture note'],['study','✦','Start study'],['ministry','▣','Start presentation']].map(x=>`<button data-route="${x[0]}"><span>${x[1]}</span>${x[2]}</button>`).join('')}`,'quick-menu')}
 function cycleTheme(){const a=['dark','light','sepia','amoled'],i=a.indexOf(state.profile.theme);state.profile.theme=a[(i+1)%a.length];save();toast(`${state.profile.theme[0].toUpperCase()+state.profile.theme.slice(1)} theme`)}
 async function shareText(text){/* Every share carries the reader's referral link so inviting someone always credits the inviter. */const body=text+'\n\nRead with me on KINGDOM BIBLE:\n'+(window.KingdomPremium?.referralLink?.()||location.origin+'/');if(navigator.share)try{await navigator.share({title:'KINGDOM BIBLE',text:body,url:window.KingdomPremium?.referralLink?.()||location.origin+'/'});closeModal();return}catch{}try{await navigator.clipboard.writeText(body);toast('Copied — your referral link is attached','success')}catch{toast('Copy failed','error')}closeModal()}
+/* ---------- devotional share sheet: logo card + every platform ----------
+   Builds a 1080×1350 shareable image in-browser (no server needed), then offers the
+   native share sheet with the file attached, a copy fallback, and direct links to each
+   platform. Every variant carries the reader's referral link. */
+function devShareStrings(DV,track){
+  const url=window.KingdomPremium?.referralLink?.()||location.origin+'/';
+  const short=`${DV.title}\n“${DV.verse}” — ${DV.scripture}\n\n${DV.action}`;
+  const body=`${DV.title}\n“${DV.verse}” — ${DV.scripture}\n\nToday's question: ${DV.question}\n\nToday's step: ${DV.action}\n\nRead with me on KINGDOM BIBLE (${track==='youth'?'Youth':'Adult'} track):\n${url}`;
+  return{url,short,body};
+}
+function wrapCanvasText(g,text,x,y,maxW,lh,maxLines){
+  const words=String(text).split(/\s+/);let line='',lines=[];
+  for(const w of words){const t=line?line+' '+w:w;if(g.measureText(t).width>maxW&&line){lines.push(line);line=w}else line=t}
+  if(line)lines.push(line);
+  if(maxLines&&lines.length>maxLines){lines=lines.slice(0,maxLines);lines[maxLines-1]=lines[maxLines-1].replace(/[.,;:!?]?$/,'…')}
+  lines.forEach((l,i)=>g.fillText(l,x,y+i*lh));
+  return y+lines.length*lh;
+}
+function devCardImage(src){return new Promise(res=>{const img=new Image();img.onload=()=>res(img);img.onerror=()=>res(null);img.src=src+(src.includes('?')?'&':'?')+'cb='+Date.now()})}
+async function devShareCardBlob(DV,track){
+  const c=document.createElement('canvas');c.width=1080;c.height=1350;
+  const g=c.getContext('2d');
+  const bg=g.createLinearGradient(0,0,1080,1350);bg.addColorStop(0,'#0a1128');bg.addColorStop(.6,'#12204a');bg.addColorStop(1,'#1b2a56');
+  g.fillStyle=bg;g.fillRect(0,0,1080,1350);
+  g.strokeStyle='rgba(244,214,138,.5)';g.lineWidth=4;g.strokeRect(36,36,1008,1278);
+  const logo=await devCardImage('assets/logo.png');
+  if(logo){try{g.drawImage(logo,84,84,150,150)}catch(e){}}
+  g.fillStyle='#f4d68a';g.font='bold 40px Georgia, serif';g.fillText('KINGDOM BIBLE',266,150);
+  g.fillStyle='rgba(255,255,255,.72)';g.font='26px Georgia, serif';
+  g.fillText(`DAILY DEVOTIONAL · ${track==='youth'?'YOUTH':'ADULT'} TRACK`,266,192);
+  g.fillStyle='#f4d68a';g.fillRect(84,286,180,5);
+  let y=380;
+  g.fillStyle='#ffffff';g.font='bold 66px Georgia, serif';
+  y=wrapCanvasText(g,DV.title,84,y,912,80,4)+36;
+  g.fillStyle='rgba(255,255,255,.92)';g.font='italic 40px Georgia, serif';
+  y=wrapCanvasText(g,'“'+DV.verse+'”',84,y,912,54,5)+14;
+  g.fillStyle='#f4d68a';g.font='bold 32px Georgia, serif';g.fillText('— '+DV.scripture,84,y);
+  y+=70;
+  if(DV.question){g.fillStyle='rgba(255,255,255,.66)';g.font='30px Georgia, serif';g.fillText("TODAY'S QUESTION",84,y);y+=44;g.fillStyle='#ffffff';g.font='34px Georgia, serif';y=wrapCanvasText(g,DV.question,84,y,912,44,3)+40}
+  g.fillStyle='rgba(244,214,138,.16)';g.fillRect(64,y-34,952,220);
+  g.strokeStyle='rgba(244,214,138,.55)';g.lineWidth=2;g.strokeRect(64,y-34,952,220);
+  g.fillStyle='#f4d68a';g.font='bold 28px Georgia, serif';g.fillText("TODAY'S STEP",96,y+8);
+  g.fillStyle='#ffffff';g.font='32px Georgia, serif';wrapCanvasText(g,DV.action,96,y+58,888,42,3);
+  g.fillStyle='rgba(255,255,255,.55)';g.font='24px Georgia, serif';
+  g.fillText(fmtDate(new Date()),84,1268);
+  g.textAlign='right';g.fillText('Read with me on KINGDOM BIBLE',996,1268);g.textAlign='left';
+  return new Promise(res=>c.toBlob(res,'image/png'));
+}
+async function shareDevCard(DV,track){
+  try{
+    const blob=await devShareCardBlob(DV,track);if(!blob)throw new Error('no blob');
+    const file=new File([blob],'kingdom-devotional.png',{type:'image/png'});
+    if(navigator.canShare&&navigator.canShare({files:[file]})&&navigator.share){
+      await navigator.share({files:[file],title:'KINGDOM BIBLE',text:DV.title+' — daily devotional'});return;
+    }
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='kingdom-devotional.png';
+    document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+    toast('Card saved — share it from your gallery','success');
+  }catch(err){if(err&&err.name!=='AbortError')toast('Could not build the card','error')}
+}
+function openDevShareSheet(DV,track){
+  const{url,short,body}=devShareStrings(DV,track);
+  modal(`<div class="modal-head"><div><div class="eyebrow">SHARE · ${track==='youth'?'YOUTH':'ADULT'} TRACK</div><h2>${esc(DV.title)}</h2></div><button class="close-btn" data-close>×</button></div>
+  <div style="display:grid;gap:10px;margin-top:14px"><button class="primary-btn" id="shareCardBtn">🖼 Share card with logo</button><button class="secondary-btn" id="copyDevBtn">⧉ Copy text + link</button></div>
+  <div class="eyebrow" style="margin-top:18px">SHARE TO</div>
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px"><button class="secondary-btn" data-share="wa">WhatsApp</button><button class="secondary-btn" data-share="fb">Facebook</button><button class="secondary-btn" data-share="x">X / Twitter</button><button class="secondary-btn" data-share="tg">Telegram</button><button class="secondary-btn" data-share="li">LinkedIn</button><button class="secondary-btn" data-share="mail">Email</button></div>
+  <p style="color:var(--muted);font-size:12px;margin-top:14px">Every share carries your personal referral link, so new readers are credited to you.</p>`);
+  $('#shareCardBtn').onclick=()=>shareDevCard(DV,track);
+  $('#copyDevBtn').onclick=async()=>{try{await navigator.clipboard.writeText(body);toast('Copied — referral link attached','success')}catch{toast('Copy failed','error')}};
+  $$('[data-share]').forEach(b=>b.onclick=()=>{
+    const k=b.dataset.share;let u='';
+    if(k==='wa')u='https://wa.me/?text='+encodeURIComponent(body);
+    else if(k==='fb')u='https://www.facebook.com/sharer/sharer.php?u='+encodeURIComponent(url)+'&quote='+encodeURIComponent(short);
+    else if(k==='x')u='https://twitter.com/intent/tweet?text='+encodeURIComponent(short+'\n'+url);
+    else if(k==='tg')u='https://t.me/share/url?url='+encodeURIComponent(url)+'&text='+encodeURIComponent(short);
+    else if(k==='li')u='https://www.linkedin.com/sharing/share-offsite/?url='+encodeURIComponent(url);
+    else if(k==='mail')u='mailto:?subject='+encodeURIComponent('Daily Devotional — '+DV.title)+'&body='+encodeURIComponent(body);
+    if(k==='mail')location.href=u;else window.open(u,'_blank','noopener');
+  });
+}
 /* ---------- app update notification ----------
    A new release only reaches the reader once the service worker swaps. Without this the
    ministry laptop can keep serving a cached shell for weeks, and the symptom is simply
