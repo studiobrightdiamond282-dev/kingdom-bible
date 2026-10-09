@@ -172,6 +172,11 @@ for(const s of ['Good ${','VERSE OF THE DAY','CONTINUE READING','TODAY’S DEVOT
    reader by name; a hardcoded verse here would quietly go stale or be wrong. */
 const homeBlock=app.slice(app.indexOf('async function renderHome()'),app.indexOf('/* BIBLE READER */'));
 assert(homeBlock.includes('getVerse(dr)'),'the verse of the day must be resolved from the Bible data');
+/* A failed verse fetch must never blank Home ("Something went wrong / Failed to
+   fetch"). The render must survive a throwing/null getVerse via its bundled
+   devotional fallback. Regression pin for the 2026-10-09 outage. */
+assert(/try\{dv=await getVerse\(dr\)\}catch/.test(homeBlock.replace(/\s+/g,''))||homeBlock.includes("verse of the day failed"),'home must survive a failed verse-of-the-day fetch');
+assert(homeBlock.includes('DEVOTIONAL.verse'),'home fallback verse must come from the bundled devotional');
 assert(homeBlock.includes('displayName()'),'home must greet the signed-in reader by name');
 assert(/Thy word is a lamp/.test(homeBlock)===false,'home must not hardcode Bible text');
 assert(/book-mark/.test(homeBlock),'the continue-reading card must show the book initial');

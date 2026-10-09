@@ -212,7 +212,12 @@ function translationOptions(sel){return Object.entries(TR).map(([k,v])=>`<option
 /* HOME */
 async function renderHome(){
   setTitle('Home');const dailyRefs=['John 3:16','Psalms 119:105','Proverbs 3:5','Isaiah 41:10','Romans 8:28','Philippians 4:6','Matthew 6:33','Joshua 1:9','2 Corinthians 5:7','Psalms 46:1'];
-  const dr=dailyRefs[Math.floor(Date.now()/86400000)%dailyRefs.length],dv=await getVerse(dr),last=state.reader;
+  const dr=dailyRefs[Math.floor(Date.now()/86400000)%dailyRefs.length],last=state.reader;
+  /* A single offline/failed verse fetch must never blank the whole Home screen
+     ("Something went wrong / Failed to fetch"). Fall back to the bundled
+     devotional verse so Home always renders, online or off. */
+  let dv=null;try{dv=await getVerse(dr)}catch(e){console.warn('verse of the day failed, using fallback',e)}
+  dv=dv&&dv.text?dv:{text:DEVOTIONAL.verse,ref:DEVOTIONAL.scripture,translation:state.reader.translation};
   $('#main').innerHTML=`<div class="page">
     <div class="welcome-row"><div><div class="eyebrow">${esc(fmtDate())}</div><h1 class="hero-title">Good ${new Date().getHours()<12?'morning':new Date().getHours()<18?'afternoon':'evening'}, ${esc(displayName())}.</h1><p class="lead">Make space for the Word today.</p></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="secondary-btn" id="resumeTop">▤ Continue reading</button><button class="primary-btn" id="homeUpgrade">✦ Try Pro free</button></div></div>
     <div class="home-membership card"><div><div class="eyebrow">KINGDOM BIBLE PRO</div><strong>30 days to build a deeper rhythm</strong><p>Unlock ministry tools, guided study, AI Bible questions, and referral rewards. Read the <a href="/privacy" target="_blank">privacy</a> and <a href="/refund" target="_blank">refund</a> policy before subscribing.</p></div><button class="secondary-btn small-btn" id="homeWhatsApp">WhatsApp support</button></div>
@@ -288,7 +293,7 @@ async function renderMinistry(){setTitle('Ministry Mode','KINGDOM BIBLE');await 
      spoken reference must be pure in-memory work. */
   warmTranslation(state.reader.translation);
   let cur=state.ministry.current||await getVerse('John 3:16');state.ministry.current=cur;save();$('#main').innerHTML=`<div class="page"><section class="ministry-hero"><div class="eyebrow">PROFESSIONAL SCRIPTURE PRESENTATION</div><h1>Ministry Mode</h1><p>Present Scripture beautifully for services, sermons, Bible studies, projectors, OBS, and vMix browser sources.</p><div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:22px"><button class="primary-btn" id="openDisplay">▣ Open audience display</button><button class="secondary-btn" id="copyDisplay" style="background:rgba(255,255,255,.08);color:white;border-color:rgba(255,255,255,.15)">Copy browser-source URL</button><button class="secondary-btn" id="openManual" style="background:rgba(255,255,255,.08);color:white;border-color:rgba(255,255,255,.15)">? User Manual</button></div></section>${window.KingdomVoice?window.KingdomVoice.cardHtml():''}${connectCardHtml()}<div class="ministry-grid"><section class="card control-card"><div class="section-head" style="margin:0 0 14px"><div><h2>Presenter control</h2><p>Live preview · updates audience display instantly</p></div><span class="pill">${hub().isLive(hubState)?'<span class="status-dot"></span> Live session':'<span class="status-dot off"></span> This computer only'}</span></div><div class="control-preview ${state.ministry.theme==='light'?'light':state.ministry.theme==='royal'?'royal':''}" id="controlPreview"><blockquote>“${esc(cur.text)}”</blockquote><cite>${esc(cur.ref)} · ${TR[cur.translation||state.reader.translation]}</cite><div class="church-label">${esc(state.ministry.church)}</div></div><div class="control-actions"><button class="secondary-btn" id="minPrev">← Previous</button><button class="primary-btn" id="minSearch">⌕ Change Scripture</button><button class="secondary-btn" id="minNext">Next →</button><button class="secondary-btn" id="minBlank">Blank screen</button></div><div class="form-grid" style="margin-top:16px"><div class="field"><label>Theme</label><select id="minTheme"><option value="royal">Royal Gold</option><option value="dark">Classic Black</option><option value="light">Minimal White</option><option value="sunset">Sunset</option><option value="noir">Noir</option><option value="transparent">Transparent (key)</option></select></div><div class="field"><label>Church / ministry name</label><input id="minChurch" value="${esc(state.ministry.church)}"></div></div></section><aside class="card service-panel"><div class="eyebrow">LIVE SERVICE</div><h2>${esc(state.ministry.sermon||'Sunday Service')}</h2><div class="timer" id="serviceTimer">00:00:00</div><div style="display:flex;gap:8px"><button class="secondary-btn small-btn" id="timerStart">Start timer</button><button class="secondary-btn small-btn" id="timerReset">Reset</button></div><div class="connection" style="margin-top:18px"><span class="status-dot${hub().isLive(hubState)?'':' off'}"></span><span>${hub().isLive(hubState)?'Audience display sync is ready':'Audience display syncs on this computer only'}</span></div><div class="section-head"><div><h2>Media quick start</h2></div></div><button class="secondary-btn" style="width:100%;margin-bottom:8px" id="guideVmix">How to use with vMix</button><button class="secondary-btn" style="width:100%" id="guideObs">How to use with OBS</button></aside></div></div>`;
-  $('#minTheme').value=state.ministry.theme;$('#openDisplay').onclick=()=>window.open(displayUrl(),'kingdomPresentation','width=1280,height=720');$('#copyDisplay').onclick=()=>copyText(displayUrl(),'Browser-source URL copied — paste it into vMix / OBS');$('#openManual').onclick=openManual;$('#minSearch').onclick=openMinistrySearch;$('#minPrev').onclick=()=>minStep(-1);$('#minNext').onclick=()=>minStep(1);$('#minBlank').onclick=()=>sendPresentation({...cur,blank:true});$('#minTheme').onchange=e=>{state.ministry.theme=e.target.value;save();sendPresentation(cur);renderMinistry()};$('#minChurch').onchange=e=>{state.ministry.church=e.target.value.trim()||'KINGDOM BIBLE';save();sendPresentation(cur)};$('#guideVmix').onclick=()=>openGuide('vMix');$('#guideObs').onclick=()=>openGuide('OBS');bindConnectCard();bindTimer();bindVoice()}
+  $('#minTheme').value=state.ministry.theme;$('#openDisplay').onclick=()=>window.open(displayUrl(),'kingdomPresentation','width=1280,height=720');$('#copyDisplay').onclick=()=>copyText(displayUrl(),'Browser-source URL copied — paste it into vMix / OBS');$('#openManual').onclick=openManual;$('#minSearch').onclick=openMinistrySearch;$('#minPrev').onclick=()=>minStep(-1,true);$('#minNext').onclick=()=>minStep(1,true);$('#minBlank').onclick=()=>sendPresentation({...cur,blank:true});$('#minTheme').onchange=e=>{state.ministry.theme=e.target.value;save();sendPresentation(cur);renderMinistry()};$('#minChurch').onchange=e=>{state.ministry.church=e.target.value.trim()||'KINGDOM BIBLE';save();sendPresentation(cur)};$('#guideVmix').onclick=()=>openGuide('vMix');$('#guideObs').onclick=()=>openGuide('OBS');bindConnectCard();bindTimer();bindVoice();bindMinistryKeys()}
 /* Repaint only the presenter preview — Voice Mode fires many updates per
    minute and a full re-render would flicker and tear down the mic UI. */
 function updateMinistryPreview(v){
@@ -304,6 +309,22 @@ async function presentHit(hit,tr){
   updateMinistryPreview(v);
   return v;
 }
+/* Arrow-key verse stepping for the presenter. Only active on the Ministry
+   page, never inside inputs, and always a quiet preview repaint so the
+   Previous/Next buttons stay mounted and cannot shift position. */
+let ministryKeysBound=false;
+function bindMinistryKeys(){
+  if(ministryKeysBound)return;ministryKeysBound=true;
+  document.addEventListener('keydown',e=>{
+    if(route!=='ministry'||e.ctrlKey||e.metaKey||e.altKey)return;
+    const t=e.target;
+    if(t&&/INPUT|TEXTAREA|SELECT/.test(t.tagName))return;
+    if($('#modalRoot')&&$('#modalRoot').firstChild)return;
+    if(e.key==='ArrowRight'){e.preventDefault();minStep(1,true);}
+    else if(e.key==='ArrowLeft'){e.preventDefault();minStep(-1,true);}
+  });
+}
+
 function bindVoice(){
   if(!window.KingdomVoice)return;
   KingdomVoice.bind({

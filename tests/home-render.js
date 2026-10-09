@@ -21,7 +21,7 @@ const ctx={
   esc:s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])),
   books,state:{reader:{book:42,chapter:3,translation:'kjv',lastVerse:16},bookmarks:{'John 3:16':{}},chaptersRead:['42:3'],prayers:[{id:1}],readingDays:[],profile:{name:'Ada',theme:'light'},ministry:{theme:'royal',church:'KINGDOM BIBLE'}},
   TR:{kjv:'KJV',asv:'ASV',web:'WEB'},
-  DEVOTIONAL:{title:'Walking by Faith',scripture:'2 Corinthians 5:7'},
+  DEVOTIONAL:{title:'Walking by Faith',scripture:'2 Corinthians 5:7',verse:'For we walk by faith, not by sight.'},
   QUICK:[['bible','A','Read Bible'],['prayer','B','Pray'],['ministry','C','Present']],
   getVerse:async ref=>({text:'For God so loved the world, that he gave his only begotten Son.',ref,translation:'kjv'}),
   fmtDate:()=>'Friday, March 6',displayName:()=>'Ada',streak:()=>3,today:()=>'2026-10-03',
