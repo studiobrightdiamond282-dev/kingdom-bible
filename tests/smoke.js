@@ -35,6 +35,21 @@ assert(css.includes('.remote-body'),'phone remote styles missing');
 assert(css.includes('.connect-card'),'presenter connect card styles missing');
 assert(app.includes('connectCardHtml')&&app.includes('drawQR'),'presenter QR wiring missing');
 
+/* ---- back navigation: Backspace key + on-screen ‹ button ----
+   .icon-btn paints display:grid, which out-specifies the UA rule for [hidden],
+   so the button needs an explicit [hidden] rule or it shows on Home with
+   nowhere to go. The depth stamp is what tells goBack() whether a previous
+   in-app page exists — without it Backspace would walk out of the document. */
+assert(html.includes('id="backBtn"'),'topbar must render the back button');
+assert(html.indexOf('id="backBtn"')<html.indexOf('id="pageTitle"'),'the back button must precede the page title');
+assert(html.includes('aria-label="Go to previous page"'),'back button needs an accessible name');
+assert(css.includes('.back-btn[hidden]{display:none}'),'the back button must actually hide via [hidden]');
+assert(app.includes("e.key==='Backspace'"),'Backspace must be wired to go back');
+assert(app.includes('function goBack()'),'goBack() missing');
+assert(app.includes('if(t&&(/input|textarea|select/i.test(t.tagName)||t.isContentEditable))return;'),'Backspace must never fire while the caret is in a field');
+assert(app.includes('history.pushState({depth:'),'navigate() must stamp history depth so back knows the previous in-app page');
+assert(app.includes('if(presenting())return;'),'back navigation must stay out of the presentation surface');
+
 /* ---- shared reference engine + Voice Preacher Mode ---- */
 assert(fs.existsSync(path.join(pub,'bible-ref.js')),'Missing bible-ref.js (shared reference engine)');
 assert(fs.existsSync(path.join(pub,'voice.js')),'Missing voice.js (Voice Preacher Mode)');

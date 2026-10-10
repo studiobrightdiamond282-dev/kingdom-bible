@@ -303,6 +303,13 @@ button[disabled]{opacity:.5;cursor:not-allowed}
 /* notifications: a real unread marker, only when there is genuinely something to see */
 .icon-btn.has-dot{position:relative}
 .icon-btn.has-dot:after{content:'';position:absolute;top:7px;right:8px;width:8px;height:8px;border-radius:50%;background:var(--danger);box-shadow:0 0 0 2px var(--bg)}
+/* Back control in the top bar. It only appears when there is a previous page to
+   return to (paintBackBtn() toggles [hidden]), and `.icon-btn` paints as a grid,
+   which out-specifies the UA rule for [hidden] — so the hidden state needs a rule
+   of its own here or the button shows anyway. */
+.back-btn{width:40px;height:40px;flex:none;font-size:24px;line-height:1;color:var(--gold);border-color:color-mix(in srgb,var(--gold),transparent 55%);background:color-mix(in srgb,var(--gold),transparent 90%)}
+.back-btn:hover{background:color-mix(in srgb,var(--gold),transparent 82%)}
+.back-btn[hidden]{display:none}
 /* reader: the chapter nav must not ride up and down with chapter length — it
    sticks to the viewport bottom. On phones it floats above the bottom nav. */
 @media(max-width:900px){.reader-footer{bottom:82px}}

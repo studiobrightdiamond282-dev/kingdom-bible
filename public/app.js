@@ -105,7 +105,7 @@ function bindGlobal(){
     navigate('home',true);
   });
   window.KingdomPremium&&(window.KingdomPremium.onPasswordReset=msg=>{toast(msg||'Password updated — sign in with your new password','success');window.KingdomPremium.open()});
-  $('#commandBtn').onclick=openCommand;$('#quickBtn').onclick=openQuick;$('#themeBtn').onclick=cycleTheme;
+  $('#commandBtn').onclick=openCommand;$('#quickBtn').onclick=openQuick;$('#themeBtn').onclick=cycleTheme;$('#backBtn')&&($('#backBtn').onclick=goBack);
   /* ---- notifications ----
    This used to be a permanent "No new notifications" toast, which is the worst
    kind of dead control: it looks live and can never deliver anything. It now shows
@@ -145,9 +145,49 @@ function bindNotifications(){
 }
 $('#notifBtn')&&bindNotifications();
   window.addEventListener('hashchange',()=>navigate(location.hash.slice(1)||'home',false));
-  window.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openCommand()}if(!/input|textarea|select/i.test(e.target.tagName)&&!e.ctrlKey&&!e.metaKey){if(e.key.toLowerCase()==='b')navigate('bible');if(e.key.toLowerCase()==='s')navigate('search');if(e.key.toLowerCase()==='p')navigate('ministry')}});let adminHold=null;$$('[data-admin-trigger]').forEach(logo=>{const start=()=>{clearTimeout(adminHold);adminHold=setTimeout(()=>{location.href='/admin'},2500)},cancel=()=>clearTimeout(adminHold);logo.addEventListener('pointerdown',start);logo.addEventListener('pointerup',cancel);logo.addEventListener('pointercancel',cancel);logo.addEventListener('pointerleave',cancel)})
+  /* Repaint the ‹ button on every traversal. hashchange misses the one case
+     where two entries share an identical hash (a duplicate push), but popstate
+     always fires — so the button never gets stranded visible or invisible. */
+  window.addEventListener('popstate',paintBackBtn);
+  window.addEventListener('keydown',e=>{
+    if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openCommand();return}
+    if(e.ctrlKey||e.metaKey||e.altKey)return;
+    const t=e.target;
+    /* Backspace is the delete key the moment a caret is in a field — never
+       steal it, or typing would navigate away mid-sentence. */
+    if(t&&(/input|textarea|select/i.test(t.tagName)||t.isContentEditable))return;
+    if(e.key==='Backspace'){e.preventDefault();goBack();return}
+    if(e.key.toLowerCase()==='b')navigate('bible');
+    if(e.key.toLowerCase()==='s')navigate('search');
+    if(e.key.toLowerCase()==='p')navigate('ministry');
+  });let adminHold=null;$$('[data-admin-trigger]').forEach(logo=>{const start=()=>{clearTimeout(adminHold);adminHold=setTimeout(()=>{location.href='/admin'},2500)},cancel=()=>clearTimeout(adminHold);logo.addEventListener('pointerdown',start);logo.addEventListener('pointerup',cancel);logo.addEventListener('pointercancel',cancel);logo.addEventListener('pointerleave',cancel)})
 }
-function navigate(to,push=true){route=to.split('/')[0]||'home';if(push)history.pushState(null,'','#'+to);$$('.nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.route===route));const info=NAV.find(n=>n[0]===route)||NAV[0];$('#pageTitle').textContent=info[2];$('#pageEyebrow').textContent=route==='ministry'?'MINISTRY MODE':'KINGDOM BIBLE';closeModal();renderRoute(to);scrollTo(0,0)}
+/* ---------- back navigation ----------
+   The Backspace key and the on-screen ‹ button both land in goBack(). The
+   previous page is NOT kept in a shadow stack that can drift out of sync — it
+   is the browser's own history, stamped with how many in-app pushes deep the
+   current entry is (state.depth). So the browser back button, the keyboard and
+   the on-screen button always agree, and back/forward traversal restores the
+   right depth for free. depth 0 means this document has no earlier page of its
+   own, so "back" falls home instead of leaving the app for a blank tab. */
+function presenting(){return location.pathname.startsWith('/present')||new URLSearchParams(location.search).has('present')}
+function backDepth(){const s=typeof history!=='undefined'&&history.state;return s&&typeof s.depth==='number'?s.depth:0}
+/* The button is a control, not decoration: it is shown only while pressing it
+   would actually do something. */
+function paintBackBtn(){const b=$('#backBtn');if(b)b.hidden=presenting()||(backDepth()===0&&route==='home')}
+function goBack(){
+  if(presenting())return;
+  /* An open dialog is the page the reader is really on. Backspace dismisses it
+     first — like Escape — instead of navigating away underneath it. (This never
+     fires while the caret sits in a field; bindGlobal filters that out.) */
+  const mr=$('#modalRoot');if(mr&&mr.firstChild){closeModal();return}
+  if(backDepth()>0&&typeof history.back==='function'){history.back();return}
+  /* No earlier page in this document (a deep link straight to /#bible). Swap the
+     entry for Home instead of pushing one — a push would leave Backspace
+     ping-ponging between Home and the deep link forever. */
+  if(route!=='home'){if(typeof history.replaceState==='function')history.replaceState({depth:0},'','#home');navigate('home',false)}
+}
+function navigate(to,push=true){route=to.split('/')[0]||'home';if(push)history.pushState({depth:backDepth()+1},'','#'+to);$$('.nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.route===route));const info=NAV.find(n=>n[0]===route)||NAV[0];$('#pageTitle').textContent=info[2];$('#pageEyebrow').textContent=route==='ministry'?'MINISTRY MODE':'KINGDOM BIBLE';closeModal();renderRoute(to);scrollTo(0,0);paintBackBtn()}
 function renderRoute(full){const m=$('#main');m.innerHTML='<div class="loading-screen"><span></span><p>Opening…</p></div>';const renderers={home:renderHome,bible:renderBible,search:renderSearch,study:renderStudy,prayer:renderPrayer,devotional:renderDevotional,plans:renderPlans,ministry:renderMinistry,profile:renderProfile};Promise.resolve(renderers[route]?.(full)).catch(e=>{console.error(e);m.innerHTML=`<div class="empty-state"><div class="empty-icon">!</div><h3>Something went wrong</h3><p>${esc(e.message)}</p><button class="secondary-btn" data-route="home">Return home</button></div>`})}
 async function loadBook(tr,bi){const key=tr+':'+bi;if(bookCache.has(key))return bookCache.get(key);
   /* Two callers asking for the same unopened book at once (voice dispatch plus
