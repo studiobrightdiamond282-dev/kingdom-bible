@@ -757,8 +757,10 @@ const server=http.createServer(async(req,res)=>{
         /* The support number is injected here instead of being typed into each page.
            A wrong digit in a static policy page is invisible until a real user tries
            to use it, and there is no test that would catch a stale copy. The origin
-           is injected for the same reason: the link-preview urls in the head must be
-           absolute and machine-derived, never a relative path or a typed hostname. */
+           is injected for the same reason on pages that still use {{ORIGIN}}.
+           index.html is the exception: its og:image / twitter:image / canonical
+           urls are hardcoded to the public Vercel build, because crawlers must
+           fetch the share image from a stable public url, never a hub hostname. */
         if(/\.html$/i.test(ext)){
           const html=fs.readFileSync(f,'utf8')
             .replace(/\{\{ORIGIN\}\}/g,escHtml(publicOrigin(req)))

@@ -43,12 +43,15 @@ A premium, local-first Progressive Web App for Bible reading, Scripture study, p
 - **App icons** are generated from `public/assets/logo.png` by `npm run icons`. The favicon,
   PWA icons, and maskable icon therefore always match the real logo.
 - **Shared-link branding.** `public/assets/logo-social.png` (1200×630, built from
-  `logo-hero.png` by `npm run social`) is the picture shown when the hub URL is shared on
+  `logo-hero.png` by `npm run social`) is the picture shown when the site URL is shared on
   WhatsApp, Facebook or X. `index.html` wires it up as `og:image` / `twitter:image` with full
-  Open Graph, Twitter and canonical tags. Every one of those URLs is emitted through the
-  `{{ORIGIN}}` placeholder, which `server.js` fills from the request host (or `PUBLIC_URL`
-  when the hub is reached under a different name). Do not hardcode a hostname in a page: a
-  relative `og:image` is ignored by every crawler, which is why the link used to preview as
+  Open Graph, Twitter and canonical tags, hardcoded to the public Vercel build
+  (`https://kingdom-bible-wine.vercel.app`). Vercel serves static files with no server, so a
+  `{{ORIGIN}}` placeholder there would reach crawlers literally and render as bare text —
+  do not switch these back to a placeholder or a relative path. The hub (`server.js`)
+  keeps its `{{ORIGIN}}` injection for any other page that still uses it, but leaves
+  absolute http(s) urls alone, so both sites emit the same stable share image.
+  A relative `og:image` is ignored by every crawler, which is why the link used to preview as
   bare text. The card is deliberately not in the service-worker precache — crawlers never run
   the worker, and 400 KB of image would slow first install for no offline benefit.
 - AI study access uses plan fair-use allowances rather than an unsafe promise of unlimited

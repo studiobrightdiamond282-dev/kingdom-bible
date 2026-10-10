@@ -1,6 +1,6 @@
-/* Bumped for back navigation (Backspace key + on-screen ‹ button): without a
+/* Bumped for the share-logo fix (absolute og:image on index.html): without a
    new VERSION every returning install keeps serving the cached shell. */
-const VERSION='kingdom-bible-v1.2.1-back-nav';
+const VERSION='kingdom-bible-v1.2.1-share-logo';
 const SHELL=[
   '/', '/index.html','/styles.css','/app.js','/devotionals.js','/auth-fix.js','/profile-fix.js','/reader-fix.js','/study-fix.js','/audit-fix.js','/premium.js','/qr.js','/hub-probe.js','/bible-ref.js','/voice.js','/remote.js','/remote.html','/admin.html','/admin.js','/privacy.html','/refund.html','/status.html',
   '/search-worker.js','/offline.html','/manifest.json','/favicon.svg','/favicon.png',
