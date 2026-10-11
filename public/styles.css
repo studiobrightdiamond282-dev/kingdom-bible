@@ -44,11 +44,11 @@ body.presentation-body{background:#020617;overflow:hidden;font-synthesis-weight:
 .presentation-stage.sunset cite{color:#ffb4a2}
 .presentation-stage.noir{background:#000;color:#fff}
 .presentation-stage.noir cite{color:#cfcfcf}
-.presentation-stage blockquote{font-family:var(--scripture);font-weight:800;font-size:clamp(34px,5.2vw,94px);line-height:1.35;margin:0;
-  max-width:1500px;text-wrap:balance;text-shadow:0 3px 26px rgba(0,0,0,.36);letter-spacing:.004em}
-.presentation-stage cite{display:block;margin-top:3.5vh;color:#f5d778;font-style:normal;font-weight:700;
-  font-size:clamp(18px,2vw,34px);font-family:var(--ui);letter-spacing:.06em;
-  display:inline-flex;align-items:center;gap:.7em}
+.presentation-stage blockquote{font-family:var(--scripture);font-weight:900;font-size:clamp(48px,7.2vw,132px);line-height:1.22;margin:0;
+  max-width:1600px;text-wrap:balance;text-shadow:0 4px 32px rgba(0,0,0,.55);letter-spacing:.004em}
+.presentation-stage cite{display:block;margin-top:3vh;color:#f5d778;font-style:normal;font-weight:800;
+  font-size:clamp(24px,2.8vw,46px);font-family:var(--ui);letter-spacing:.06em;
+  display:inline-flex;align-items:center;gap:.7em;text-shadow:0 2px 14px rgba(0,0,0,.5)}
 .presentation-stage cite::before,.presentation-stage cite::after{content:'';width:clamp(18px,3vw,54px);height:1px;
   background:linear-gradient(90deg,transparent,currentColor);opacity:.55}
 .presentation-stage cite::after{background:linear-gradient(270deg,transparent,currentColor)}
@@ -144,12 +144,12 @@ body.presentation-body.is-debug .presentation-status{display:block}
   .connect-info{width:100%}.code-row{justify-content:center}.url-row{flex-direction:column;align-items:stretch}
   .hub-actions{justify-content:center}}
 /* multi-verse passages + capture hint */
-.presentation-verse{max-width:min(92vw,1700px);transform-origin:center center}
+.presentation-verse{max-width:min(94vw,1800px);transform-origin:center center}
 /* fitText() may scale the whole block when a very long passage cannot fit at the
    readability floor; the origin above keeps it centred while doing so. */
 .presentation-verse .vnum{font-size:.46em;vertical-align:super;color:#f5d778;margin:0 .18em;line-height:0;font-family:var(--ui)}
 .presentation-stage.light .vnum{color:#99710a}
-.presentation-verse.is-multiverse blockquote{font-size:clamp(26px,3.6vw,64px)}
+.presentation-verse.is-multiverse blockquote{font-size:clamp(38px,5vw,92px)}
 .presentation-verse.is-blank blockquote{min-height:1em}
 .presentation-hint{position:absolute;left:0;right:0;bottom:1.4vh;text-align:center;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#f0b429;opacity:.85}
 /* Presentation output is captured by vMix/OBS and treated as a still image.

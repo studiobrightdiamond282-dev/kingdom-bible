@@ -78,19 +78,19 @@ const john10Chars=bible.books[42][9].join(' ').length;
 /* Psalm 23:1 — the everyday case: should stay at the large display size. */
 {
   const text='The LORD is my shepherd; I shall not want.';
-  const{stage,box,quote,budget}=scene({height:1080,padding:97,chars:text.length,maxWidth:1500,cssFont:94});
-  const px=fitText(box,stage,94,14);
-  ok('single verse keeps a large, projector-readable size',px>=80,px+'px');
+  const{stage,box,quote,budget}=scene({height:1080,padding:97,chars:text.length,maxWidth:1600,cssFont:132});
+  const px=fitText(box,stage,132,20);
+  ok('single verse keeps a large, projector-readable size',px>=110,px+'px');
   ok('single verse is not shrunk at all',quote.scrollHeight<=budget,Math.round(quote.scrollHeight)+'px vs '+Math.round(budget)+'px');
 }
 
 /* John 10 (whole chapter) — the case that overflowed before. */
 {
-  const s=scene({height:1080,padding:97,chars:john10Chars,maxWidth:1500,cssFont:64});
-  const px=fitText(s.box,s.stage,56,14);
+  const s=scene({height:1080,padding:97,chars:john10Chars,maxWidth:1600,cssFont:92});
+  const px=fitText(s.box,s.stage,92,20);
   ok('whole chapter fits inside the frame instead of being cropped',s.box.rendered<=s.budget,
     'needs '+Math.round(s.box.rendered)+'px, budget '+Math.round(s.budget)+'px');
-  ok('whole chapter still renders at a legible size',px>=16,px+'px for '+john10Chars+' chars');
+  ok('whole chapter still renders at a legible size',px>=20,px+'px for '+john10Chars+' chars');
 }
 
 /* The reported bug: /present inside a small preview window (VS Code's simple browser,
@@ -98,8 +98,8 @@ const john10Chars=bible.books[42][9].join(' ').length;
    A full 1920x1080 stage has enough room to hide the defect, so the regression is
    reproduced at the size where it actually showed up. */
 {
-  const s=scene({height:700,padding:63,citeH:24,chars:john10Chars,maxWidth:1100,cssFont:46});
-  const px=fitText(s.box,s.stage,56,14);
+  const s=scene({height:700,padding:63,citeH:24,chars:john10Chars,maxWidth:1100,cssFont:64});
+  const px=fitText(s.box,s.stage,92,20);
   ok('a whole chapter still fits a small preview window',s.box.rendered<=s.budget,
     Math.round(s.box.rendered)+'px vs '+Math.round(s.budget)+'px (font '+px+'px)');
 }
@@ -114,7 +114,7 @@ const john10Chars=bible.books[42][9].join(' ').length;
   while(s.quote.scrollHeight>oldLimit&&old>18){old-=2;s.quote.style.fontSize=old+'px'}
   ok('the old 18px floor really did overflow the frame',s.quote.scrollHeight>oldLimit,
     'stopped at '+old+'px needing '+Math.round(s.quote.scrollHeight)+'px but only had '+Math.round(oldLimit)+'px');
-  fitText(s.box,s.stage,56,14);
+  fitText(s.box,s.stage,92,20);
   ok('the new fit brings the same passage inside the frame',s.box.rendered<=s.budget,
     'now '+Math.round(s.box.rendered)+'px vs '+Math.round(s.budget)+'px');
 }
@@ -122,30 +122,30 @@ const john10Chars=bible.books[42][9].join(' ').length;
 /* Resizing the vMix input (1280x720 -> 1920x1080) must re-fit rather than keep the
    stale size that was correct for the previous frame. */
 {
-  const a=scene({height:720,padding:65,citeH:28,chars:2500,maxWidth:900,cssFont:46});
-  const pxA=fitText(a.box,a.stage,56,14);
-  const b=scene({height:1080,padding:97,chars:2500,maxWidth:1500,cssFont:64});
-  const pxB=fitText(b.box,b.stage,56,14);
+  const a=scene({height:720,padding:65,citeH:28,chars:2500,maxWidth:900,cssFont:64});
+  const pxA=fitText(a.box,a.stage,92,20);
+  const b=scene({height:1080,padding:97,chars:2500,maxWidth:1600,cssFont:92});
+  const pxB=fitText(b.box,b.stage,92,20);
   ok('both frame sizes fit the same passage',a.box.rendered<=a.budget&&b.box.rendered<=b.budget,
     '720p '+Math.round(a.box.rendered)+'/'+Math.round(a.budget)+', 1080p '+Math.round(b.box.rendered)+'/'+Math.round(b.budget));
   ok('the larger frame restores a larger type size',pxB>pxA,pxA+'px -> '+pxB+'px');
   /* re-fitting the same box after a resize must clear the previous transform */
   b.box.style.transform='scale(0.5)';
-  fitText(b.box,b.stage,56,14);
+  fitText(b.box,b.stage,92,20);
   ok('re-fitting clears a stale scale transform',!/scale\(0\.5/.test(b.box.style.transform),b.box.style.transform||'(none)');
 }
 /* Respects the lower bound rather than looping forever on pathological input. */
 {
-  const s=scene({height:1080,padding:97,chars:200000,maxWidth:1500,cssFont:94});
-  const px=fitText(s.box,s.stage,94,14);
-  ok('never shrinks below the 14px floor',px>=14,px+'px');
+  const s=scene({height:1080,padding:97,chars:200000,maxWidth:1600,cssFont:132});
+  const px=fitText(s.box,s.stage,132,20);
+  ok('never shrinks below the 20px floor',px>=20,px+'px');
   ok('terminates on absurd input',typeof px==='number'&&isFinite(px),String(px));
 }
 
 /* A blanked screen must not be "fitted" into something visible. */
 {
-  const s=scene({height:1080,padding:97,citeH:34,chars:0,maxWidth:1500,cssFont:94});
-  const px=fitText(s.box,s.stage,94,14);
+  const s=scene({height:1080,padding:97,citeH:34,chars:0,maxWidth:1600,cssFont:132});
+  const px=fitText(s.box,s.stage,132,20);
   ok('an empty (blanked) stage resolves to a real size without overflowing',
     typeof px==='number'&&isFinite(px)&&s.box.rendered<=s.budget,'size '+px+'px, rendered '+Math.round(s.box.rendered)+'px');
 }

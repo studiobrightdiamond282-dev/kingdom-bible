@@ -659,8 +659,9 @@ async function renderPresentation(){
     document.addEventListener('selectionchange',()=>{if(document.activeElement&&/INPUT|TEXTAREA/.test(document.activeElement.tagName))return;const s=window.getSelection();if(s&&!s.isCollapsed)s.removeAllRanges()});
 
     const stage=$('#stage'),verseBox=$('#stageVerse'),brand=$('#stageBrand'),hint=$('#stageHint');
-    /* a multi-verse passage needs a smaller ceiling than a single verse */
-    const fit=p=>verseBox.classList.contains('is-blank')?0:fitText(verseBox,stage,p&&p.multiverse?56:94,14);
+    /* Short verses project HUGE; multi-verse passages get a high ceiling too but
+       leave headroom so the auto-fit keeps them inside the capture frame. */
+    const fit=p=>verseBox.classList.contains('is-blank')?0:fitText(verseBox,stage,p&&p.multiverse?92:132,20);
     const apply=p=>{
       if(!p)return;
       stage.className='presentation-stage '+(p.theme||'royal');

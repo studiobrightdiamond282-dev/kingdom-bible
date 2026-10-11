@@ -326,27 +326,41 @@ function requireAdmin(req,res){const g=adminGate(req);if(!g.ok){denyAdmin(res,g)
    `remoteAddress === 127.0.0.1` — measured, not assumed. An allowlist on that would
    either lock the owner out or admit the whole internet.
 
-   What does work is Tailscale's identity headers (tailscale.com/s/serve-headers).
-   tailscaled injects `Tailscale-User-Login` for tailnet members and strips any
-   client-supplied copy of these headers, so they cannot be forged over HTTP.
-   They are only trustworthy when the request actually arrived over the tunnel, so
-   we additionally require a loopback peer:
+   Measured 2026-10-11 on this PC (`GET /__headers` locally vs over the Funnel):
 
-     A) not through the tunnel at all (no `Tailscale-Headers-Info`) AND loopback
-        => a real local browser on this machine;
-     B) through the tunnel AND the identity login is on ADMIN_TAILNET_LOGINS
-        => a tailnet member, anywhere.
+     local direct:  Host 127.0.0.1:4173, NO Tailscale-* headers, NO X-Forwarded-*.
+     over Funnel (this PC, tailnet-logged-in): Host <name>.ts.net PLUS
+       Tailscale-Headers-Info, Tailscale-User-Login/Name/Profile-Pic AND
+       X-Forwarded-For/Host/Proto.
 
-   Everything else — including any visitor arriving over Funnel from the open web,
-   who has no identity header — is refused. Fails closed. */
+   So `tailscaled` DOES inject the identity headers for tailnet members over
+   Funnel (tailscale.com/s/serve-headers) and strips any client-supplied forgery,
+   so they cannot be forged over HTTP. A stranger on the open internet gets the
+   X-Forwarded-* proxy headers but NEVER an identity. The gate fails closed:
+
+     A) allowlisted Tailscale identity login (Serve / tailnet path, incl. this
+        PC over its own Funnel URL) => you: allow.
+     B) loopback AND no tunnel indicators at all (no Tailscale-Headers-Info, no
+        X-Forwarded-*, Host is not a *.ts.net tunnel name) => a real local
+        browser on this machine: allow.
+
+   Everything else — including EVERY anonymous visitor arriving over the public
+   Funnel — is refused with 403 before the password is even considered. A 200 for
+   /admin from THIS PC over the Funnel URL is therefore the CORRECT answer: it is
+   you, with an allowlisted identity. To administer remotely, use a tailnet
+   device signed in as an ADMIN_TAILNET_LOGINS login, or this PC's own browser
+   at http://localhost:4173/admin. */
 const ADMIN_TAILNET_LOGINS=new Set(String(process.env.ADMIN_TAILNET_LOGINS||'').split(',').map(s=>s.trim().toLowerCase()).filter(Boolean));
 function adminGate(req){
   const loopback=['127.0.0.1','::1','::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
-  const viaTunnel=Boolean(req.headers['tailscale-headers-info']);
   if(!loopback)return{ok:false,why:'This computer is not the ministry hub'};
-  if(!viaTunnel)return{ok:true,how:'local'};
   const login=String(req.headers['tailscale-user-login']||'').trim().toLowerCase();
   if(login&&ADMIN_TAILNET_LOGINS.has(login))return{ok:true,how:'tailnet:'+login};
+  const host=String(req.headers['x-forwarded-host']||req.headers.host||'').split(',')[0].trim().toLowerCase();
+  const viaTunnel=Boolean(req.headers['tailscale-headers-info'])
+    ||Boolean(req.headers['x-forwarded-for']||req.headers['x-forwarded-proto']||req.headers['x-forwarded-host'])
+    ||/\.ts\.net(:\d+)?$/.test(host)||/\.tailscale\.com(:\d+)?$/.test(host);
+  if(!viaTunnel)return{ok:true,how:'local'};
   return{ok:false,why:'The administrator portal is private to this Tailscale network'};
 }
 function denyAdmin(res,g){return json(res,403,{ok:false,error:g.why||'Administrator portal unavailable'})}
