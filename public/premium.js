@@ -137,7 +137,7 @@ function googleButton(mount) {
 }
 async function apiPost(path,body){const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Request failed');return d}
 async function api(path,opts={}){const r=await fetch(path,{...opts,headers:{'content-type':'application/json',...(opts.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Request failed');return d}
-async function load(){try{const [c,m]=await Promise.all([api('/api/premium/config'),api('/api/auth/me')]);config=c;user=m.user||null;return user}catch{return null}}
+async function load(){try{const [c,m]=await Promise.all([api('/api/premium/config'),api('/api/auth/me')]);config=c;user=m.user||null;return user}catch{return undefined}}
 function close(){root().innerHTML=''}
 /* Where a newly signed-in account should land. The plan screen used to open the
    instant somebody signed up, so finishing the trial felt like being stuck on a

@@ -1,6 +1,7 @@
-/* Bumped for the share-logo fix (absolute og:image on index.html): without a
-   new VERSION every returning install keeps serving the cached shell. */
-const VERSION='kingdom-bible-v1.2.1-share-logo';
+/* Bumped for the phone devotional + banner fix (dev-controls visible ≤580px,
+   Devotional in bottom nav, guest banner waits for resolved session + dismiss):
+   without a new VERSION every returning install keeps serving the cached shell. */
+const VERSION='kingdom-bible-v1.2.1-phone-devotional';
 const SHELL=[
   '/', '/index.html','/styles.css','/app.js','/devotionals.js','/auth-fix.js','/profile-fix.js','/reader-fix.js','/study-fix.js','/audit-fix.js','/premium.js','/qr.js','/hub-probe.js','/bible-ref.js','/voice.js','/remote.js','/remote.html','/admin.html','/admin.js','/privacy.html','/refund.html','/status.html',
   '/search-worker.js','/offline.html','/manifest.json','/favicon.svg','/favicon.png',

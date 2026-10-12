@@ -16,7 +16,11 @@ function wrap() {
   paintTrialBanner = function () {
     var el = banner();
     if (!el) return;
-    var s = (typeof accountState !== 'undefined') ? accountState : { status: 'signed_out' };
+    var s = (typeof accountState !== 'undefined') ? accountState : { status: 'unknown' };
+    /* 'unknown' = session fetch unresolved (slow 4G / first paint). Never flash
+       the guest invite for a signed-in reader: stay hidden until app.js resolves
+       a real state via applyAccount(). */
+    if (!s || s.status === 'unknown') { el.hidden = true; el.innerHTML = ''; return; }
     if (!window.__kbAuthKnown && s.status === 'signed_out' && !s.signedIn) {
       el.hidden = true; el.innerHTML = ''; return;
     }
@@ -99,10 +103,10 @@ var iv = setInterval(function () {
     try {
       var el = banner();
       var s = (typeof accountState !== 'undefined') ? accountState : null;
-      if (el && !el.hidden && s && s.status === 'signed_out' && !window.__kbAuthKnown) {
+      if (el && !el.hidden && s && (s.status === 'signed_out' || s.status === 'unknown') && !window.__kbAuthKnown) {
         el.hidden = true; el.innerHTML = '';
         revalidate(3);
-      } else if (!window.__kbAuthKnown && (!s || s.status === 'signed_out')) {
+      } else if (!window.__kbAuthKnown && (!s || s.status === 'signed_out' || s.status === 'unknown')) {
         revalidate(2);
       }
     } catch (e) {}

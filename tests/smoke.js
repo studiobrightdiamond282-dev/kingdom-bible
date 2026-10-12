@@ -93,6 +93,11 @@ assert(swSrc0.includes('/bible-ref.js')&&swSrc0.includes('/voice.js')&&swSrc0.in
 assert(swSrc0.includes('/devotionals.js'),'the service worker must precache the devotionals bundle');
 assert(app.includes('function devotionFor')&&app.includes('function todaysDevotional'),'app.js must rotate daily devotionals by track');
 assert(app.includes('devotionalTrack'),'devotional youth/adult track preference must be wired');
+assert(app.includes('id="devTrack"')&&app.includes('id="devPrev"')&&app.includes('id="devNext"'),'devotional page must keep the youth/adult switch plus Prev/Next day buttons');
+assert(app.includes("devotionalTrack=track==='youth'?'adult':'youth'"),'the track button must actually switch youth/adult');
+assert(app.includes('renderDevotional(offset-1)')&&app.includes('renderDevotional(offset+1)'),'Prev/Next must step backward/forward a day');
+assert(css.includes('.dev-controls'),'dev-controls CSS must exist so the buttons survive the small-phone rule');
+assert(/\.welcome-row \.dev-controls/.test(css),'devotional controls must be exempt from the ≤580px secondary-btn hide');
 assert(app.includes('KingdomRef'),'app.js must use the shared reference engine');
 assert(app.includes('bindVoice')&&app.includes('getPassage'),'Voice Mode + passage resolution wiring missing');
 assert(app.includes('function openManual')&&app.includes('id=\"openManual\"'),'Ministry page must expose the User Manual');
@@ -153,6 +158,9 @@ assert(/if\(!accountState\.signedIn\)\{box\.innerHTML='[\s\S]{0,200}?Sign in to 
 assert(/registerPWA\(\); networkStatus\(\);/.test(app),'the service worker and network status must be set up for guests too');
 assert(/clearSignInGate\(\);\s*[\r\n]+\s*paintTrialBanner\(\);/.test(app),'init() must tear the gate down and paint the banner for every visitor');
 assert(/s\.status==='signed_out'/.test(app),'the banner must have a signed-out state, not only trial/expired');
+assert(/status==='unknown'/.test(app),'the banner must stay hidden while the session is unresolved so a signed-in reader never sees the guest invite flash');
+assert(/kb\.bannerDismissed\.v1/.test(app),'the guest banner must be dismissible and remember the dismissal');
+assert(/data-banner-x/.test(app),'the guest banner must carry a dismiss control');
 assert(/data-open-auth="register"/.test(app)&&/data-open-auth="login"/.test(app),'the guest banner must offer both create-account and sign-in');
 assert(/openAuth/.test(app),'the guest banner buttons must open the form they promise, via openAuth');
 assert(/body\.gate-open[^{]*\.quick-fab\{display:none!important\}/.test(css),'the floating quick-action button must never sit on top of a full-screen gate');
