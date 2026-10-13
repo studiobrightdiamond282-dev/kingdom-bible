@@ -374,11 +374,17 @@ function scan(text,books,opts){
 }
 
 /* ---- presenter voice commands --------------------------------------------
-   Deliberately narrow phrases so ordinary preaching never fires one. */
+   Deliberately narrow phrases so ordinary preaching never fires one.
+   Bare "next"/"previous" alone are ALSO commands when the frame holds almost
+   nothing else — a preacher saying "next verse" split across interim frames
+   ("next…" then "…verse") must still step immediately. Guarded by word-count
+   so "the next thing Jesus said" never fires. */
 function command(text){
   const s=' '+String(text||'').toLowerCase().replace(/[^a-z\s]/g,' ').replace(/\s+/g,' ').trim()+' ';
-  if(/\b(next|following) (verse|scripture)\b/.test(s))return 'next';
-  if(/\b(previous|preceding) (verse|scripture)\b/.test(s)||/\bback (one|a) verse\b/.test(s)||/\b(one|a) verse back\b/.test(s))return 'prev';
+  const words=s.trim().split(/\s+/).filter(Boolean);
+  const bare=(w)=>words.length<=3&&words.indexOf(w)>=0;
+  if(/\b(next|following) (verse|scripture|slide|one)\b/.test(s)||bare('next'))return 'next';
+  if(/\b(previous|preceding) (verse|scripture|slide|one)\b/.test(s)||/\bback (one|a) verse\b/.test(s)||/\b(one|a) verse back\b/.test(s)||bare('previous')||bare('back'))return 'prev';
   if(/\b(blank|clear|hide|black) (the |that )?(screen|display|projector)\b/.test(s))return 'blank';
   if(/\b(show|unblank|restore) (the |that )?(screen|display|verse)\b/.test(s)||/\bbring (the verse |it )?back\b/.test(s))return 'show';
   if(/\b(stop|pause|end) (the )?(listening|voice|recognition|dictation|microphone)\b/.test(s))return 'stop';

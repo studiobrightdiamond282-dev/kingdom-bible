@@ -151,6 +151,31 @@ async function main(){
   assert.equal(warmed,42,'the spoken book is prefetched at parse time');
   Voice.stop(true);
 
+  /* ---- preacher flow: Joshua 1:1 -> next -> previous, memory stays on ----
+     Interim "next" must step immediately (not only on final results), and a
+     repeated verse must re-display after the 6 s memory window. */
+  const R3=require('../public/bible-ref.js');
+  assert.equal(R3.command('next'), 'next', 'bare "next" is a command');
+  assert.equal(R3.command('previous'), 'prev', 'bare "previous" is a command');
+  assert.equal(R3.command('the next thing Jesus said was wonderful'), null, 'preaching prose is never a command');
+  const flow={presented:[],nexted:0,preved:0};
+  Voice.bind({
+    books,
+    present:hit=>{flow.presented.push(hit);return Promise.resolve({ref:R3.format(hit,books)})},
+    gotoVerse:()=>Promise.resolve({ref:'x'}),
+    next:()=>{flow.nexted++;return Promise.resolve()},
+    prev:()=>{flow.preved++;return Promise.resolve()},
+    blank:()=>Promise.resolve(),show:()=>Promise.resolve(),notify:()=>{},
+  });
+  Voice.start();
+  frame('Joshua chapter one verse one says be strong');
+  assert(flow.presented.length===1&&flow.presented[0].book===5&&flow.presented[0].chapter===1&&flow.presented[0].verse===1,'Joshua 1:1 displays from an interim frame');
+  frame('next');
+  assert.equal(flow.nexted,1,'interim "next" steps immediately');
+  frame('previous');
+  assert.equal(flow.preved,1,'interim "previous" steps immediately');
+  Voice.stop(true);
+
   console.log('✓ Voice Preacher Mode interim timing, fuses, dedupe lock, restart recovery, and spoken-book preservation');
 }
 main().catch(err=>{console.error(err.stack||err);process.exitCode=1});

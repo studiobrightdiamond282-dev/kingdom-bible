@@ -27,7 +27,7 @@ const LSV='kingdomVoice.v1';
 const LANGS=[['en-US','English (US)'],['en-GB','English (UK)'],['en-NG','English (Nigeria)'],['en-GH','English (Ghana)'],['en-ZA','English (South Africa)'],['en-IN','English (India)'],['en-AU','English (Australia)']];
 let hooks=null,rec=null,wantListen=false,starting=false,restartTimer=null,restartWait=60;
 let meterCtx=null,meterStream=null,meterRAF=0;
-let finalTail='',lastTailScan='',fuseTimer=null,pending={key:'',hit:null},dispatchKeys=new Set(),entries=[],entrySeq=0;
+let finalTail='',lastTailScan='',fuseTimer=null,pending={key:'',hit:null},dispatchKeys=new Set(),dispatchAt=new Map(),entries=[],entrySeq=0;
 /* A short edge fuse lets the recogniser append a verse without making the
    preacher wait for a pause. Chapter-only references get a longer hold because
    the next frame often contains the verse. */
@@ -398,10 +398,12 @@ function handleSegment(text,isFinal,alts){
       if(v)break;
     }
   }catch(e){}
-  if(isFinal){
-    const cmd=firstCmd(list);
-    if(cmd)return runCommand(cmd);
-  }
+  /* Commands must win on EVERY frame, not only finals: "next verse" spoken as
+     an interim fragment ("next…" then "…verse") must step immediately, the way
+     verse references already do. References and commands never collide — a
+     command frame holds no book name — so checking commands first is safe. */
+  const cmdNow=firstCmd(list);
+  if(cmdNow)return runCommand(cmdNow);
   /* scan() is intentionally called for every interim frame. A complete
      book+chapter+verse followed by more words is safe to dispatch now; waiting
      for isFinal made Voice Mode lag until the preacher paused. */
@@ -412,7 +414,14 @@ function handleSegment(text,isFinal,alts){
     else if(hooks.warm)hooks.warm(settings.tr);
   }catch(e){}
   const key=keyFor(hit);
-  if(dispatchKeys.has(key)){clearPending();return}
+  /* Memory that stays active: a verse repeats during teaching ("Joshua 1:1…
+     Joshua 1:1 again"). The lock expires after 6 s so re-calling a verse
+     re-displays it, while same-frame duplicates still can't double-fire. */
+  if(dispatchKeys.has(key)){
+    const age=Date.now()-(dispatchAt.get(key)||0);
+    if(age<6000){clearPending();return}
+    dispatchKeys.delete(key);dispatchAt.delete(key);
+  }
   if(hit.type==='ref'&&hit.verse==null){
     schedule(hit,key,CHAPTER_HOLD_MS);
     return;
@@ -423,16 +432,18 @@ function handleSegment(text,isFinal,alts){
     else{clearPending();dispatch({...hit,ctx:true},key)}
     return;
   }
-  if(hit.atEnd===false){
-    clearPending();
-    dispatch(hit,key);
-  }else schedule(hit,key,FUSE_MS);
+  /* Complete verse mid-sentence ("Joshua 1:1 says…") fires NOW — waiting for
+     a pause is what made verses feel dead. A verse at the very edge of the
+     frame ("…Joshua 1:1" with nothing after) keeps its 350 ms fuse so a
+     following verse number can still join it. */
+  if(hit.atEnd===false){clearPending();dispatch(hit,key)}
+  else schedule(hit,key,FUSE_MS);
 }
 function dispatch(hit,key){
   /* Lock before any async resolver/display work. The recogniser commonly emits
      the same verse again while the first send is still in flight. */
   if(key&&dispatchKeys.has(key))return;
-  if(key)dispatchKeys.add(key);
+  if(key){dispatchKeys.add(key);try{dispatchAt.set(key,Date.now())}catch(e){}}
   if(!settings.auto){
     const label=hit.ctx?('verse '+hit.verse+(hit.verseEnd?'-'+hit.verseEnd:'')):(g.KingdomRef.format(hit,hooks.books)||'reference');
     addLog('Heard “'+label+'” — approve to send',' ',null,hit,'',key);
@@ -444,7 +455,7 @@ function fire(hit,key){
   /* Manual approval normally arrives with a key already locked by dispatch().
      Keep this guard for direct callers so every path has dispatch-time locking. */
   key=key||keyFor(hit);
-  if(key&&!dispatchKeys.has(key))dispatchKeys.add(key);
+  if(key&&!dispatchKeys.has(key)){dispatchKeys.add(key);try{dispatchAt.set(key,Date.now())}catch(e){}}
   const started=(g.performance&&performance.now)?performance.now():Date.now();
   const done=v=>{
     if(v&&v.ref){

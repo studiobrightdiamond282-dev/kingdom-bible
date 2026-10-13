@@ -1,7 +1,7 @@
-/* Bumped for the voice no-display fix (meter releases mic after 5 s, 12 s
-   no-result watchdog, language/network honesty):
+/* Bumped for instant voice commands (interim "next"/"previous" fire on the
+   first frame, verse locks expire after 6 s so a re-called verse re-displays):
    without a new VERSION every returning install keeps serving the cached shell. */
-const VERSION='kingdom-bible-v1.2.1-voice-no-display-fix';
+const VERSION='kingdom-bible-v1.2.1-voice-instant-commands';
 const SHELL=[
   '/', '/index.html','/styles.css','/app.js','/devotionals.js','/auth-fix.js','/profile-fix.js','/reader-fix.js','/study-fix.js','/audit-fix.js','/premium.js','/qr.js','/hub-probe.js','/bible-ref.js','/voice.js','/remote.js','/remote.html','/admin.html','/admin.js','/privacy.html','/refund.html','/status.html',
   '/search-worker.js','/offline.html','/manifest.json','/favicon.svg','/favicon.png',
