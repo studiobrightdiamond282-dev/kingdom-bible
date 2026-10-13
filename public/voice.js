@@ -129,7 +129,7 @@ function start(){
   });
   spin();
   setStatus('Listening',true);
-  startMeter();refreshDevices();
+  startMeter();refreshDevices();pokeNoResultWatch();
   addLog('Microphone on — listening for Scripture references','', null,null,'');
 }
 function spin(){
@@ -191,16 +191,20 @@ function ensureOnDevice(){
     .catch(()=>{engine='cloud';return false});
 }
 function stop(silent){
-  wantListen=false;starting=false;clearTimeout(restartTimer);clearPending();stopMeter();
+  wantListen=false;starting=false;clearTimeout(restartTimer);clearPending();stopMeter();stopNoResultWatch();
   if(rec){try{rec.onend=null;rec.stop()}catch{}rec=null}
   setStatus('Ready',false);setTranscript('','');
   if(!silent)addLog('Microphone off','');
 }
-/* Live input level: AnalyserNode on a permission-probe stream. Chrome's
-   SpeechRecognition listens to the OS default input, so this meter is honesty
-   instrumentation — it shows the selected device is alive, never a promise
-   that the recogniser hears that exact device. Any failure disables quietly. */
+/* Live input level: brief AnalyserNode probe, NOT a held stream. Holding a
+   getUserMedia stream open for the whole sermon risks fighting Chrome's
+   SpeechRecognition for exclusive mic access on Windows (audio-capture /
+   silence with a dancing meter — exactly the reported symptom). Measure for
+   ~5 seconds to prove the device is alive, then release it and let the
+   recogniser own the mic alone. Any failure disables quietly. */
+let meterStopTimer=null;
 function stopMeter(){
+  try{if(meterStopTimer){clearTimeout(meterStopTimer);meterStopTimer=null}}catch(e){}
   try{if(meterRAF){const cf=g.cancelAnimationFrame||(typeof cancelAnimationFrame!=='undefined'?cancelAnimationFrame:null);if(cf)cf(meterRAF)}}catch(e){}
   meterRAF=0;
   try{if(meterStream)meterStream.getTracks().forEach(t=>{try{t.stop()}catch(e2){}})}catch(e){}
@@ -219,7 +223,7 @@ async function startMeter(){
     if(!wantListen){stream.getTracks().forEach(t=>{try{t.stop()}catch(e){}});return}
     meterStream=stream;
     const Ctx=g.AudioContext||g.webkitAudioContext;
-    if(!Ctx)return;
+    if(!Ctx){stopMeter();return}
     meterCtx=new Ctx();
     const src=meterCtx.createMediaStreamSource(stream);
     const an=meterCtx.createAnalyser();an.fftSize=512;
@@ -228,18 +232,20 @@ async function startMeter(){
     let peak=0;
     const fill=$('#voiceMeterFill'),hint=$('#voiceMeterHint');
     const tick=()=>{
-      if(!wantListen)return;
+      if(!wantListen||!meterStream)return;
       an.getByteTimeDomainData(buf);
       let sum=0;
       for(let i=0;i<buf.length;i++){const v=(buf[i]-128)/128;sum+=v*v}
       const lvl=Math.min(1,Math.sqrt(sum/buf.length)*2.4);
       peak=Math.max(peak*0.92,lvl);
       if(fill&&fill.style){fill.style.width=Math.round(peak*100)+'%';fill.className=peak>0.75?'hot':peak>0.4?'warm':''}
-      if(hint)hint.textContent=peak<0.05?'Level very low — move closer or check the microphone.':'Mic level live — the recogniser uses the system default input.';
+      if(hint)hint.textContent=peak<0.05?'Level very low — move closer or check the microphone.':'Mic level live — releasing the meter now so the recogniser owns the mic.';
       const raf=g.requestAnimationFrame||(typeof requestAnimationFrame!=='undefined'?requestAnimationFrame:null);
       if(raf)meterRAF=raf(tick);
     };
     tick();
+    /* Release after 5 s: level proven, mic handed back to the recogniser. */
+    meterStopTimer=setTimeout(()=>{stopMeter();const h=$('#voiceMeterHint');if(h&&wantListen)h.textContent='Level checked — meter released so speech recognition owns the microphone.'},5000);
   }catch(e){}
 }
 async function refreshDevices(){
@@ -270,16 +276,40 @@ function onError(e){
   }
   if(code==='network'){
     setStatus('Speech service unreachable',false);
-    addLog('The browser’s speech service needs an internet connection. Check the connection — listening will keep retrying.','miss');
+    addLog('The browser’s speech service needs an internet connection (Chrome sends audio to Google for transcription). Check the connection — listening will keep retrying. Your en-NG accent setting is applied to that cloud service when it is reachable.','miss');
     return;
   }
   if(code==='audio-capture'){
     stop(true);setStatus('No microphone found',false);
     addLog('No microphone was found on this computer.','miss');
   }
+  if(code==='language-not-supported'||code==='not-supported'){
+    stop(true);setStatus('Accent not supported',false);
+    addLog('This accent (“'+settings.lang+'”) is not supported by the browser’s speech service here. Switch Accent to English (US) and try again.','miss');
+    notify('Accent not supported — switched suggestion: English (US)','error');
+  }
+}
+/* No-result watchdog: if the recogniser runs 12 s with zero results while the
+   meter proved the mic is alive, the engine is stalled (cloud unreachable,
+   language unsupported, or a zombie session). Say so honestly instead of a
+   silent red dot. Reset on every result. */
+let noResultTimer=null,lastResultAt=0;
+function stopNoResultWatch(){try{if(noResultTimer){clearTimeout(noResultTimer);noResultTimer=null}}catch(e){}}
+function pokeNoResultWatch(){
+  lastResultAt=Date.now();
+  stopNoResultWatch();
+  try{
+    noResultTimer=setTimeout(()=>{
+      if(!wantListen)return;
+      if(Date.now()-lastResultAt<11000)return;
+      addLog('Listening but hearing no words for 12 s — the mic has level, so the browser’s speech service is not returning text. Check: 1) internet (Chrome transcribes online), 2) Windows Settings → Sound → Input is the same mic, 3) Accent English (US) as a test. Listening continues.','miss');
+      const h=$('#voiceMeterHint');if(h)h.textContent='Mic has level but no words arrived — see the log for the 3 checks.';
+    },12000);
+  }catch(e){}
 }
 function onResult(e){
   let interim='',finals='';
+  try{pokeNoResultWatch()}catch(err){}
   const altTexts=r=>{
     /* Every recognition alternative in confidence order; the canon parser is
        the judge, so a wrong guess can never reach the display. */
@@ -381,7 +411,6 @@ function handleSegment(text,isFinal,alts){
     if(hit.book!=null&&hooks.warmBook)hooks.warmBook(settings.tr,hit.book);
     else if(hooks.warm)hooks.warm(settings.tr);
   }catch(e){}
-  if(!hit)return;
   const key=keyFor(hit);
   if(dispatchKeys.has(key)){clearPending();return}
   if(hit.type==='ref'&&hit.verse==null){
