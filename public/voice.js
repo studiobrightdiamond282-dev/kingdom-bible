@@ -26,6 +26,7 @@ const SR=g.SpeechRecognition||g.webkitSpeechRecognition;
 const LSV='kingdomVoice.v1';
 const LANGS=[['en-US','English (US)'],['en-GB','English (UK)'],['en-NG','English (Nigeria)'],['en-GH','English (Ghana)'],['en-ZA','English (South Africa)'],['en-IN','English (India)'],['en-AU','English (Australia)']];
 let hooks=null,rec=null,wantListen=false,starting=false,restartTimer=null,restartWait=60;
+let meterCtx=null,meterStream=null,meterRAF=0;
 let finalTail='',lastTailScan='',fuseTimer=null,pending={key:'',hit:null},dispatchKeys=new Set(),entries=[],entrySeq=0;
 /* A short edge fuse lets the recogniser append a verse without making the
    preacher wait for a pause. Chapter-only references get a longer hold because
@@ -38,7 +39,7 @@ const FUSE_MS=350,CHAPTER_HOLD_MS=1100;
 const RESTART_MS=60,RESTART_MAX_MS=800;
 /* 'unknown' | 'on' | 'cloud' — which speech engine answered. See ensureOnDevice(). */
 let engine='unknown',engineNote='';
-const settings=Object.assign({lang:'en-US',auto:true,tr:'',onDevice:true},load());
+const settings=Object.assign({lang:'en-US',auto:true,tr:'',numStyle:'chapter',deviceId:'',onDevice:true},load());
 function load(){try{return JSON.parse(localStorage.getItem(LSV)||'{}')}catch{return{}}}
 function persist(){try{localStorage.setItem(LSV,JSON.stringify(settings))}catch{}}
 const $=s=>document.querySelector(s);
@@ -79,8 +80,14 @@ function cardHtml(){
       <option value="web" ${settings.tr==='web'?'selected':''}>WEB</option>
     </select></div>
     <div class="field"><label>Accent / language</label><select id="voiceLang">${LANGS.map(l=>`<option value="${l[0]}" ${settings.lang===l[0]?'selected':''}>${l[1]}</option>`).join('')}</select></div>
+    <div class="field"><label>Spoken numbers</label><select id="voiceNumStyle">
+      <option value="chapter" ${settings.numStyle!=='split'?'selected':''}>“Genesis 13” is chapter 13</option>
+      <option value="split" ${settings.numStyle==='split'?'selected':''}>“Genesis 13” is 1:3</option>
+    </select></div>
+    <div class="field"><label>Microphone</label><select id="voiceDevice"><option value="">System default</option></select></div>
     <label class="voice-toggle"><input type="checkbox" id="voiceAuto" ${settings.auto?'checked':''}> Send to the display instantly (untick to approve each verse first)</label>
   </div>
+  <div class="voice-meter" aria-hidden="true"><span id="voiceMeterFill"></span><em id="voiceMeterHint">Mic level appears while listening — speak and watch for green movement.</em></div>
   <div class="voice-log" id="voiceLog">${logHtml()}</div>
   <div class="notice" style="margin-top:12px">Your voice is processed by this browser’s speech service (Chrome and Edge may use their online recognisers while listening). KINGDOM BIBLE stores no audio and sends nothing to its own servers. Recognised references are resolved only against the real Bible text — never guessed.</div>
 </section>`;
@@ -122,6 +129,7 @@ function start(){
   });
   spin();
   setStatus('Listening',true);
+  startMeter();refreshDevices();
   addLog('Microphone on — listening for Scripture references','', null,null,'');
 }
 function spin(){
@@ -133,7 +141,10 @@ function spin(){
     rec.lang=settings.lang;
     rec.continuous=true;
     rec.interimResults=true;
-    rec.maxAlternatives=1;
+    /* Five guesses per phrase: the parser (never a guesser) picks the first
+       alternative that resolves against the real canon — cheap accuracy win
+       for version names and spoken numbers. */
+    try{rec.maxAlternatives=5}catch(e){try{rec.maxAlternatives=1}catch(e2){}}
     /* On-device recognition keeps the audio on the ministry computer. It is
        both faster and immune to a slow or busy church wifi mid-sentence.
        Chrome only accepts this once the language pack is present, so probe
@@ -180,10 +191,72 @@ function ensureOnDevice(){
     .catch(()=>{engine='cloud';return false});
 }
 function stop(silent){
-  wantListen=false;starting=false;clearTimeout(restartTimer);clearPending();
+  wantListen=false;starting=false;clearTimeout(restartTimer);clearPending();stopMeter();
   if(rec){try{rec.onend=null;rec.stop()}catch{}rec=null}
   setStatus('Ready',false);setTranscript('','');
   if(!silent)addLog('Microphone off','');
+}
+/* Live input level: AnalyserNode on a permission-probe stream. Chrome's
+   SpeechRecognition listens to the OS default input, so this meter is honesty
+   instrumentation — it shows the selected device is alive, never a promise
+   that the recogniser hears that exact device. Any failure disables quietly. */
+function stopMeter(){
+  try{if(meterRAF){const cf=g.cancelAnimationFrame||(typeof cancelAnimationFrame!=='undefined'?cancelAnimationFrame:null);if(cf)cf(meterRAF)}}catch(e){}
+  meterRAF=0;
+  try{if(meterStream)meterStream.getTracks().forEach(t=>{try{t.stop()}catch(e2){}})}catch(e){}
+  meterStream=null;
+  try{if(meterCtx)meterCtx.close()}catch(e){}
+  meterCtx=null;
+  const f=$('#voiceMeterFill');if(f&&f.style)f.style.width='0%';
+}
+async function startMeter(){
+  stopMeter();
+  try{
+    const md=(typeof navigator!=='undefined'&&navigator.mediaDevices)||null;
+    if(!md||typeof md.getUserMedia!=='function')return;
+    const constraints=settings.deviceId?{audio:{deviceId:{exact:settings.deviceId}}}:{audio:true};
+    const stream=await md.getUserMedia(constraints);
+    if(!wantListen){stream.getTracks().forEach(t=>{try{t.stop()}catch(e){}});return}
+    meterStream=stream;
+    const Ctx=g.AudioContext||g.webkitAudioContext;
+    if(!Ctx)return;
+    meterCtx=new Ctx();
+    const src=meterCtx.createMediaStreamSource(stream);
+    const an=meterCtx.createAnalyser();an.fftSize=512;
+    src.connect(an);
+    const buf=new Uint8Array(an.frequencyBinCount);
+    let peak=0;
+    const fill=$('#voiceMeterFill'),hint=$('#voiceMeterHint');
+    const tick=()=>{
+      if(!wantListen)return;
+      an.getByteTimeDomainData(buf);
+      let sum=0;
+      for(let i=0;i<buf.length;i++){const v=(buf[i]-128)/128;sum+=v*v}
+      const lvl=Math.min(1,Math.sqrt(sum/buf.length)*2.4);
+      peak=Math.max(peak*0.92,lvl);
+      if(fill&&fill.style){fill.style.width=Math.round(peak*100)+'%';fill.className=peak>0.75?'hot':peak>0.4?'warm':''}
+      if(hint)hint.textContent=peak<0.05?'Level very low — move closer or check the microphone.':'Mic level live — the recogniser uses the system default input.';
+      const raf=g.requestAnimationFrame||(typeof requestAnimationFrame!=='undefined'?requestAnimationFrame:null);
+      if(raf)meterRAF=raf(tick);
+    };
+    tick();
+  }catch(e){}
+}
+async function refreshDevices(){
+  const sel=$('#voiceDevice');
+  const md=(typeof navigator!=='undefined'&&navigator.mediaDevices)||null;
+  if(!sel||!md||typeof md.enumerateDevices!=='function')return;
+  try{
+    const all=await md.enumerateDevices();
+    const ins=all.filter(d=>d.kind==='audioinput');
+    const cur=sel.value||settings.deviceId||'';
+    sel.innerHTML='<option value="">System default</option>'+ins.map((d,i)=>`<option value="${esc(d.deviceId||'')}">${esc(d.label||('Microphone '+(i+1)))}</option>`).join('');
+    if(cur)sel.value=cur;
+    if(!ins.length){
+      const h=$('#voiceMeterHint');
+      if(h)h.textContent='No microphone was found on this computer.';
+    }
+  }catch(e){}
 }
 function onError(e){
   const code=e&&e.error;
@@ -207,22 +280,46 @@ function onError(e){
 }
 function onResult(e){
   let interim='',finals='';
+  const altTexts=r=>{
+    /* Every recognition alternative in confidence order; the canon parser is
+       the judge, so a wrong guess can never reach the display. */
+    const out=[];
+    try{
+      const n=(r&&typeof r.length==='number')?r.length:0;
+      for(let j=0;j<n&&j<5;j++){const t=r[j]&&r[j].transcript;if(t)out.push(t)}
+    }catch(e){}
+    if(!out.length&&r[0]&&r[0].transcript)out.push(r[0].transcript);
+    return out;
+  };
   for(let i=e.resultIndex;i<e.results.length;i++){
-    const r=e.results[i];
-    if(r.isFinal)finals+=r[0].transcript+' ';
-    else interim+=r[0].transcript+' ';
+    const r=e.results[i],alts=altTexts(r);
+    const best=alts[0]||'';
+    if(r.isFinal)finals+=best+' ';
+    else interim+=best+' ';
+    try{r._alts=alts}catch(e){}
   }
   if(finals.trim())finalTail=(finalTail+' '+finals).slice(-240);
   setTranscript(finalTail,interim);
   /* SpeechRecognition can deliver a final result and a newer interim result
      in the same event. Scan both: interim frames are not a preview to ignore,
      they are the earliest usable Scripture signal. */
-  if(finals.trim())handleSegment(finals,true);
-  if(interim.trim()){handleSegment(interim,false);lastTailScan=finalTail}
+  if(finals.trim())handleSegment(finals,true,collectAlts(e,0,true));
+  if(interim.trim()){handleSegment(interim,false,collectAlts(e,0,false));lastTailScan=finalTail}
   /* A reference can straddle a recogniser restart: "the book of" lands in the
      last session and "John three sixteen" opens the next one. Re-scan the tail
      only when it actually changed, so an idle frame costs nothing. */
-  else if(finalTail.trim()&&finalTail!==lastTailScan){handleSegment(finalTail,false);lastTailScan=finalTail}
+  else if(finalTail.trim()&&finalTail!==lastTailScan){handleSegment(finalTail,false,null);lastTailScan=finalTail}
+  function collectAlts(e,from,isFinal){
+    const out=[];
+    for(let i=from;i<e.results.length;i++){
+      const r=e.results[i];
+      if(!!r.isFinal!==!!isFinal)continue;
+      const alts=r._alts||(r[0]&&r[0].transcript?[r[0].transcript]:[]);
+      for(const t of alts){if(t&&out.indexOf(t)<0)out.push(t);if(out.length>=5)break}
+      if(out.length>=5)break;
+    }
+    return out;
+  }
 }
 function clearPending(){
   if(fuseTimer){clearTimeout(fuseTimer);fuseTimer=null}
@@ -248,16 +345,42 @@ function schedule(hit,key,delay){
     if(next.hit)dispatch(next.hit,next.key);
   },delay);
 }
-function handleSegment(text,isFinal){
+function handleSegment(text,isFinal,alts){
   if(!hooks||!g.KingdomRef)return;
+  const list=(Array.isArray(alts)&&alts.length?[text].concat(alts):[text]).filter(Boolean);
+  const firstCmd=items=>{
+    for(const t of items){const c=g.KingdomRef.command(t);if(c)return c}
+    return null;
+  };
+  const firstScan=items=>{
+    for(const t of items){
+      const h=g.KingdomRef.scan(t,hooks.books,{numberStyle:settings.numStyle});
+      if(h){try{h._text=t}catch(e){}return h}
+    }
+    return null;
+  };
+  try{
+    const known=(hooks&&hooks.translations)||['kjv','asv','web'];
+    for(const t of list){
+      const det=g.KingdomRef.detectVersion;
+      const v=(typeof det==='function')?det(t,known):null;
+      if(v&&v!==settings.tr){settings.tr=v;persist();const tr=$('#voiceTr');if(tr)tr.value=v;notify('Voice translation: '+v.toUpperCase());addLog('Voice translation switched to '+v.toUpperCase(),'hit',null,null,'◈')}
+      if(v)break;
+    }
+  }catch(e){}
   if(isFinal){
-    const cmd=g.KingdomRef.command(text);
+    const cmd=firstCmd(list);
     if(cmd)return runCommand(cmd);
   }
   /* scan() is intentionally called for every interim frame. A complete
      book+chapter+verse followed by more words is safe to dispatch now; waiting
      for isFinal made Voice Mode lag until the preacher paused. */
-  const hit=g.KingdomRef.scan(text,hooks.books);
+  const hit=firstScan(list);
+  if(!hit)return;
+  try{
+    if(hit.book!=null&&hooks.warmBook)hooks.warmBook(settings.tr,hit.book);
+    else if(hooks.warm)hooks.warm(settings.tr);
+  }catch(e){}
   if(!hit)return;
   const key=keyFor(hit);
   if(dispatchKeys.has(key)){clearPending();return}
@@ -309,7 +432,7 @@ function runCommand(cmd){
   const label={next:'Next verse',prev:'Previous verse',blank:'Screen blanked',show:'Verse restored'}[cmd];
   const fn={next:hooks.next,prev:hooks.prev,blank:hooks.blank,show:hooks.show}[cmd];
   if(!fn)return;
-  Promise.resolve(fn()).then(()=>addLog(label+' (voice command)','hit',null,null,'◆')).catch(()=>{});
+  Promise.resolve(fn()).then(()=>addLog('▶ '+label+' (voice command)','hit',null,null,'◆')).catch(()=>{});
 }
 
 /* ---------- wiring (called every time Ministry Mode renders) ---------- */
@@ -320,6 +443,8 @@ function bind(h){
   const tr=$('#voiceTr');if(tr)tr.onchange=e=>{settings.tr=e.target.value;persist();if(hooks.warm)hooks.warm(settings.tr)};
   const lang=$('#voiceLang');if(lang)lang.onchange=e=>{settings.lang=e.target.value;persist();engine='unknown';engineNote='';if(wantListen){/* apply the new language live */if(rec){try{rec.onend=null;rec.stop()}catch{}rec=null;starting=false}ensureOnDevice();spin()}};
   const auto=$('#voiceAuto');if(auto)auto.onchange=e=>{settings.auto=!!e.target.checked;persist()};
+  const num=$('#voiceNumStyle');if(num){num.value=settings.numStyle||'chapter';num.onchange=e=>{settings.numStyle=(e.target.value==='split')?'split':'chapter';persist();notify(settings.numStyle==='split'?'Spoken numbers: “Genesis 13” reads as 1:3':'Spoken numbers: “Genesis 13” reads as chapter 13')}};
+  const dev=$('#voiceDevice');if(dev){refreshDevices();dev.onchange=e=>{settings.deviceId=e.target.value||'';persist();if(wantListen)startMeter();notify(settings.deviceId?'Microphone preference saved — also set this mic as the OS default input so the recogniser hears it.':'Using the system default microphone.')}};
   const logEl=$('#voiceLog');
   if(logEl)logEl.onclick=e=>{
     const b=e.target.closest('[data-vsend]');if(!b)return;

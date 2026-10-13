@@ -196,6 +196,11 @@ body.presentation-body img{-webkit-user-drag:none;user-drag:none;pointer-events:
 .voice-log .vlog.miss{border:1px solid color-mix(in srgb,var(--danger),transparent 72%)}
 .voice-log .vlog .t{margin-left:auto;font-size:10px;color:var(--gold);font-weight:800;flex:none}
 .voice-log .vlog button{margin-left:auto;flex:none}
+.voice-meter{margin-top:10px;display:flex;align-items:center;gap:10px;min-height:14px}
+.voice-meter span{display:block;height:8px;width:0%;border-radius:99px;background:#16a34a;transition:width .09s linear;max-width:220px;flex:none}
+.voice-meter span.warm{background:#d97706}
+.voice-meter span.hot{background:#dc2626}
+.voice-meter em{font-size:11px;color:var(--muted);font-style:normal}
 @media(max-width:580px){.voice-card{padding:16px}.voice-settings .field{min-width:120px;flex:1}}
 /* ---- admin portal: usable at scale (tabs, search, sort, status, activity) ---- */
 .admin-tabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--line);margin:20px 0 0}

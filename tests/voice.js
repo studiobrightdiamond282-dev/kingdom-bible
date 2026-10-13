@@ -9,11 +9,11 @@ const REF=require('../public/bible-ref.js');
 const books=require('../public/data/books.json').books;
 
 class Element{
-  constructor(){this.className='';this.innerHTML='';this.textContent='';this.value='';this.onclick=null;this.onchange=null;this.classList={toggle:()=>{}}}
+  constructor(){this.className='';this.innerHTML='';this.textContent='';this.value='';this.onclick=null;this.onchange=null;this.classList={toggle:()=>{}};this.style={}}
   setAttribute(){}
 }
 const elements=new Map();
-for(const id of ['voiceMic','voiceStatus','voiceHint','voiceTranscript','voiceLog','voiceTr','voiceLang','voiceAuto'])elements.set('#'+id,new Element());
+for(const id of ['voiceMic','voiceStatus','voiceHint','voiceTranscript','voiceLog','voiceTr','voiceLang','voiceAuto','voiceNumStyle','voiceDevice','voiceMeterFill','voiceMeterHint'])elements.set('#'+id,new Element());
 global.document={querySelector:s=>elements.get(s)||new Element()};
 global.localStorage={getItem:()=>null,setItem:()=>{}};
 global.location={hostname:'localhost'};
@@ -127,6 +127,28 @@ async function main(){
   frame('now verse sixteen for the next point');
   assert(seen&&seen.verse===16,'a bare verse number still resolves inside the current passage');
   assert(seen&&seen.book==null,'with no book spoken, no book hint is invented');
+  Voice.stop(true);
+
+  /* ---- spoken numbers, alternatives, versions, prefetch (safe slice) ---- */
+  const R2=require('../public/bible-ref.js');
+  assert.equal(R2.parse('Genesis 13',books).verse,null,'default keeps Genesis 13 as chapter 13');
+  assert.equal(R2.parse('Genesis 13',books).chapter,13,'default chapter is 13');
+  const split=R2.parse('Genesis 13',books,{numberStyle:'split'});
+  assert(split&&split.chapter===1&&split.verse===3,'split mode reads Genesis 13 as 1:3');
+  assert.equal(R2.parse('Psalm 23',books,{numberStyle:'split'}).verse,null,'Psalms never split');
+  assert.equal(R2.parse('Genesis chapter 13',books,{numberStyle:'split'}).verse,null,'explicit chapter never splits');
+  assert.equal(R2.detectVersion('read it in the world english bible',['kjv','asv','web']),'web','spoken version detected');
+  assert.equal(R2.detectVersion('our text for tonight',['kjv','asv','web']),null,'no version invented from plain speech');
+  Voice.bind(hooks);calls=[];Voice.start();
+  recogniser.onresult({resultIndex:0,results:[Object.assign({isFinal:false},{length:2,'0':{transcript:'the lion 3 16 for the next point'},'1':{transcript:'John 3:16 for the next point'}})]});
+  assert.equal(calls.length,1,'an alternative that resolves wins over a miss');
+  assert.equal(calls[0]&&calls[0].book,42,'and it is John');
+  Voice.stop(true);
+  let warmed=null;
+  Voice.bind(Object.assign({},hooks,{warmBook:(tr,bi)=>{warmed=bi}}));
+  calls=[];Voice.start();
+  frame('John 3:16 for the next point');
+  assert.equal(warmed,42,'the spoken book is prefetched at parse time');
   Voice.stop(true);
 
   console.log('✓ Voice Preacher Mode interim timing, fuses, dedupe lock, restart recovery, and spoken-book preservation');

@@ -213,18 +213,52 @@ function refine(bi,chapter,verse,verseEnd,books){
   return{book:bi,chapter,verse:verse==null?null:verse,verseEnd:verseEnd==null?null:verseEnd};
 }
 
+/* ---- spoken translation switching -----------------------------------------
+   Voice aliases ("king james" -> kjv) so "read it in the world english bible"
+   can switch the presented translation. Keys must match the app TR table;
+   unknown names return null and never change behaviour. */
+const VERSION_ALIASES={'king james':'kjv',kjv:'kjv','new king james':'kjv',
+  asv:'asv','american standard':'asv','web':'web','world english':'web',
+  'world english bible':'web','amplified':'web','niv':'kjv','esv':'kjv'};
+function detectVersion(text,known){
+  const s=' '+String(text||'').toLowerCase().replace(/[^a-z\s]/g,' ').replace(/\s+/g,' ').trim()+' ';
+  const keys=Object.keys(VERSION_ALIASES).sort((a,b)=>b.length-a.length);
+  for(const k of keys){
+    if(s.indexOf(' '+k+' ')>=0||s.indexOf(' '+k+' bible ')>=0||s.indexOf('in '+k+' ')>=0||s.indexOf('in the '+k+' ')>=0){
+      const tr=VERSION_ALIASES[k];
+      if(!known||known.indexOf(tr)>=0)return tr;
+    }
+  }
+  return null;
+}
+
 /* ---- parse one typed/spoken reference ------------------------------------
+   opts.numberStyle: 'chapter' (default, unchanged) keeps "Genesis 13" as
+   chapter 13; 'split' reads a bare two-digit number as chapter+verse
+   ("Genesis 13" -> 1:3). Psalms + explicit "chapter" always stay chapters.
    -> {book, chapter, verse|null, verseEnd|null} or null. verse===null means
    the whole chapter was asked for. */
 const REF_RE=/^(.+?)\s+(\d{1,3})(?:[:\s](\d{1,3})(?:-(\d{1,3}))?)?$/;
 function parse(input,books,opts){
   if(!Array.isArray(books)||!books.length)return null;
+  const rawInput=String(input||'');
+  const saidChapter=/\bchapters?\b/i.test(rawInput);
   let s=normalize(input);
   if(!s)return null;
   let m=s.match(REF_RE);
   if(!m){m=s.replace(/:/g,' ').replace(/\s+/g,' ').match(REF_RE);if(!m)return null}
   const bi=matchBook(m[1],books,opts);
   if(bi<0)return null;
+  const style=opts&&opts.numberStyle;
+  if(style==='split'&&!saidChapter&&m[3]==null&&/^\d{2}$/.test(m[2])){
+    const b=books[bi];
+    const nm=String((b&&b.name)||'').toLowerCase();
+    const isPsalm=(nm==='psalm'||nm==='psalms')||(b&&b.chapters===150);
+    if(!isPsalm){
+      const c=+m[2][0],v=+m[2][1];
+      if(v>=1)return refine(bi,c,v,null,books);
+    }
+  }
   return refine(bi,+m[2],m[3]?+m[3]:null,m[4]?+m[4]:null,books);
 }
 
@@ -263,10 +297,22 @@ function frameAtEnd(text,s,m,hit){
   }
   return m.index+m[0].length===s.length;
 }
-function scan(text,books){
+function scan(text,books,opts){
   if(!Array.isArray(books)||!books.length)return null;
   const s=normalize(text);
   if(!s)return null;
+  const splitNums=!!(opts&&opts.numberStyle==='split');
+  const rawSaidChapter=/\bchapters?\b/i.test(String(text||''));
+  const splitHit=(bi,num)=>{
+    if(!splitNums||rawSaidChapter||num==null||!/^\d{2}$/.test(String(num)))return null;
+    const b=books[bi];
+    const nm=String((b&&b.name)||'').toLowerCase();
+    const isPsalm=(nm==='psalm'||nm==='psalms')||(b&&b.chapters===150);
+    if(isPsalm)return null;
+    const c=+String(num)[0],v=+String(num)[1];
+    if(!(v>=1))return null;
+    return refine(bi,c,v,null,books);
+  };
   let best=null,m;
   SCAN_RE.lastIndex=0;
   while((m=SCAN_RE.exec(s))){
@@ -274,7 +320,10 @@ function scan(text,books){
     let hit=null;
     for(let k=0;k<words.length&&!hit;k++){
       const bi=matchBook(words.slice(k).join(' '),books,{fuzzy:false});
-      if(bi>=0)hit=refine(bi,+m[2],m[3]?+m[3]:null,m[4]?+m[4]:null,books);
+      if(bi>=0){
+        if(m[3]==null){const sp=splitHit(bi,m[2]);hit=sp||refine(bi,+m[2],m[3]?+m[3]:null,m[4]?+m[4]:null,books)}
+        else hit=refine(bi,+m[2],m[3]?+m[3]:null,m[4]?+m[4]:null,books);
+      }
     }
     if(hit){
       /* normalize strips punctuation and trailing whitespace, so the end of the
@@ -344,5 +393,5 @@ function format(p,books){
   return base+':'+p.verse+(p.verseEnd?'-'+p.verseEnd:'');
 }
 
-return{normalize,parse,scan,command,matchBook,format,wordsToDigits,compact,VERSION:'1.2.1'};
+return{normalize,parse,scan,command,matchBook,format,wordsToDigits,compact,detectVersion,VERSION_ALIASES,VERSION:'1.2.1'};
 });

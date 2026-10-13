@@ -389,9 +389,11 @@ function bindVoice(){
   if(!window.KingdomVoice)return;
   KingdomVoice.bind({
     books,
+    translations:Object.keys(TR),
     /* Preload the whole translation while the presenter is still setting up, so
        no reference spoken tonight has to wait on a fetch. */
     warm:tr=>warmTranslation(tr||state.reader.translation),
+    warmBook:(tr,bi)=>{try{loadBook(tr||state.reader.translation,bi).catch(()=>{})}catch(e){}},
     present:(hit,tr)=>presentHit(hit,tr),
     /* "…now verse 25": jump inside the passage currently on the display */
     gotoVerse:(verse,verseEnd,tr,bookHint)=>{
