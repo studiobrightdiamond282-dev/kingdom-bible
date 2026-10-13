@@ -84,9 +84,11 @@ async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/heal
   assert.equal(cardBuf.readUInt32BE(16),1200,'share card width must match og:image:width');
   assert.equal(cardBuf.readUInt32BE(20),630,'share card height must match og:image:height');
   /* {{ORIGIN}} is gone from index.html, but the injection path must stay safe for
-     any page that still uses it — a hostile header must never inject markup */
+     any page that still uses it — a hostile header must never inject markup.
+     index.html legitimately boots the theme with a bare inline <script>, so the
+     guard matches the hostile PAYLOAD, never a <script> the page already has. */
   const spoof=await (await fetch(base+'/',{headers:{'x-forwarded-host':'evil.example.com"><script>alert(1)</script>'}})).text();
-  assert(!/<script>/.test(spoof),'a hostile x-forwarded-host must never reach the HTML');
+  assert(!/<script>alert\(1\)<\/script>/.test(spoof),'a hostile x-forwarded-host must never reach the HTML');
   assert(!spoof.includes('evil.example.com'),'a rejected host must not be echoed back at all');
 
   /* ---- referral link is shareable and credits the inviter ---- */
