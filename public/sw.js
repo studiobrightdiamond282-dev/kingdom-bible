@@ -1,11 +1,13 @@
-/* Bumped for instant voice commands (interim "next"/"previous" fire on the
-   first frame, verse locks expire after 6 s so a re-called verse re-displays):
-   without a new VERSION every returning install keeps serving the cached shell. */
-const VERSION='kingdom-bible-v1.2.1-voice-instant-commands';
+/* Bumped for the live-stage carry button (same row as "Open the local hub"):
+   "Open Live Ministry Hub" now carries ?source= into #ministry on the Tailscale
+   stage, checks the stage first (offline = notify + stay, never white screen),
+   and Ministry falls back to a bundled verse when the verse fetch fails.
+   Without a new VERSION every returning install keeps serving the cached shell. */
+const VERSION='kingdom-bible-v1.2.1-live-stage-carry';
 const SHELL=[
-  '/', '/index.html','/styles.css','/app.js','/devotionals.js','/auth-fix.js','/profile-fix.js','/reader-fix.js','/study-fix.js','/audit-fix.js','/premium.js','/qr.js','/hub-probe.js','/bible-ref.js','/voice.js','/remote.js','/remote.html','/admin.html','/admin.js','/privacy.html','/refund.html','/status.html',
+  '/', '/index.html','/theme-init.js','/styles.css','/app.js','/devotionals.js','/auth-fix.js','/profile-fix.js','/reader-fix.js','/study-fix.js','/audit-fix.js','/premium.js','/qr.js','/hub-probe.js','/bible-ref.js','/voice.js','/remote.js','/remote.html','/admin.html','/admin.js','/privacy.html','/refund.html','/status.html','/status.js',
   '/search-worker.js','/offline.html','/manifest.json','/favicon.svg','/favicon.png',
-  '/assets/logo.png','/assets/logo-hero.png','/icons/icon-192.png','/icons/icon-512.png','/data/books.json',
+  '/assets/logo.png','/assets/logo-hero.png','/assets/logo-social.png','/icons/icon-192.png','/icons/icon-512.png','/data/books.json',
   '/data/bibles/kjv/44.json','/data/bibles/kjv/42.json','/data/bibles/kjv/18.json'
 ];
 /* live routes must never be served from cache: a stale verse on a projector is worse than no verse */

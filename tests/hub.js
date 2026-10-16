@@ -40,7 +40,10 @@ const htmlOnApi={status:200,json:false,body:null};
     ok('describe("'+s+'") returns actionable copy',!!(d.title&&d.body&&Array.isArray(d.steps)),JSON.stringify(d));
   }
   ok('offline copy tells the user to run npm start',
-    /npm start/.test(H.describe('static').body+H.describe('static').steps.join(' ')));
+    /npm start/.test(H.describe('offline').body+H.describe('offline').steps.join(' ')));
+  ok('static copy points at the live ministry hub doorway',
+    /live ministry hub/i.test(H.describe('static').body+H.describe('static').steps.join(' '))
+    &&/^https:\/\/desktop-dqg29pr\.tail876272\.ts\.net$/.test(H.describe('static').liveHubUrl||H.LIVE_HUB_URL||''));
   ok('offline copy never claims a live session',
     !/live session|is live|connected now/i.test(H.describe('static').title+H.describe('static').body)
     &&!/Live/.test(H.describe('static').title));
@@ -60,8 +63,9 @@ const htmlOnApi={status:200,json:false,body:null};
   const livePillAt=app.indexOf("ready?'Live':'Needs Wi-Fi'");
   ok('the offline card is rendered before the LAN-ready card',offlineAt>0&&livePillAt>offlineAt,
      'offline@'+offlineAt+' lan-ready@'+livePillAt);
-  ok('the offline branch returns before the live card is built',
-    /if\(!live\)\{[\s\S]*?return `<section class="card connect-card hub-offline-card">[\s\S]*?`;\s*\}/.test(app));
+  ok('the offline branch renders the live doorway first, then the local-only card',
+    /liveHubCardHtml\(\)/.test(app)&&/const offlineCard=`<section class="card connect-card hub-offline-card">/.test(app)
+    &&/return `\$\{liveHubCardHtml\(\)\}\$\{offlineCard\}`/.test(app));
   ok('the "Live session" pill is conditional on a live hub',
     /isLive\(hubState\)\?'<span class="status-dot"><\/span> Live session':'<span class="status-dot off"><\/span> This computer only'/.test(app));
   ok('a blank QR canvas is removed rather than shown',/qr-wrap'\)\?\.remove\(\)/.test(app));
@@ -96,6 +100,37 @@ const htmlOnApi={status:200,json:false,body:null};
   ok('no dashed placeholder service code is rendered',!/sessionCode\|\|'------'/.test(app)||/sessionCode\|\|'------'/.test(app));
   ok('the old misleading LAN message is gone',!/No LAN address found/.test(app));
   ok('the old "sync is ready" claim is conditional',/Audience display sync is ready':'Audience display syncs on this computer only'/.test(app));
+
+  console.log('\n--- live ministry hub doorway (single-site design) ---');
+  {
+    /* Vercel is the REAL always-online site; Tailscale is the live stage behind
+       one tap. These pins stop the doorway URL drifting across server/probe/app. */
+    const serverSrc=fs.readFileSync(path.join(__dirname,'../server.js'),'utf8');
+    const probeSrc=fs.readFileSync(path.join(__dirname,'../public/hub-probe.js'),'utf8');
+    const css=fs.readFileSync(path.join(__dirname,'../public/styles.css'),'utf8');
+    ok('server exposes the live hub URL in premium config',/liveHubUrl/.test(serverSrc));
+    ok('server live hub defaults to the Tailscale Funnel address',
+      serverSrc.includes('https://desktop-dqg29pr.tail876272.ts.net'));
+    ok('hub-probe exports the live hub URL',/LIVE_HUB_URL/.test(probeSrc)&&/LIVE_HUB_URL=/.test(probeSrc));
+    ok('ministry renders the live doorway card with new-tab link',
+      /liveHubCardHtml/.test(app)&&/Open Live Ministry Hub/.test(app)&&/target="_blank"/.test(app)
+      &&/copyLiveHub/.test(app));
+    ok('the live button carries ?source= into #ministry on the live stage',
+      /function liveHubLink/.test(app)&&/source/.test(app)&&/#ministry/.test(app)
+      &&/liveHubUrl\(\)\+q\+'#ministry'/.test(app));
+    ok('the live button checks the stage first and notifies instead of a white screen',
+      /function openLiveHub/.test(app)&&/window\.open\(url,'_blank'/.test(app)
+      &&/ministry PC is off or Tailscale is not running/.test(app)&&/window\.open\(url,'_blank'/.test(app));
+    ok('the live button is wired in the same row position (bindConnectCard)',
+      /#openLiveHub/.test(app)&&/goLive\.onclick=openLiveHub/.test(app));
+    ok('ministry never blanks on a failed verse fetch (white-screen guard)',
+      /ministry verse failed, using fallback/.test(app)&&/DEVOTIONAL\.verse,ref:DEVOTIONAL\.scripture/.test(app));
+    ok('the doorway resolves server config first, then probe, then fallback',
+      /KingdomPremium\?\.config\?/.test(app)&&/LIVE_HUB_URL/.test(app));
+    ok('the doorway has premium gold styling',/\.live-hub-card/.test(css));
+    ok('handover documents the single-site design',
+      fs.readFileSync(path.join(__dirname,'../HANDOVER.md'),'utf8').includes('kingdom-bible-wine.vercel.app'));
+  }
 
   console.log('\n--- against the real local hub and the real deployment ---');
   if(process.env.LIVE_HUB){

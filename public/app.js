@@ -6,7 +6,7 @@ const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
 const today=()=>new Date().toISOString().slice(0,10);
 const fmtDate=d=>new Intl.DateTimeFormat('en',{weekday:'long',month:'long',day:'numeric'}).format(d||new Date());
 const LS='kingdomBible.v1';
-const DEFAULT={profile:{name:'',translation:'kjv',theme:'dark',font:'serif',fontSize:20,lineHeight:1.9,readingTime:'06:30',notifications:false,avatar:'',devotionalTrack:'adult'},reader:{book:44,chapter:8,translation:'kjv',lastVerse:1},bookmarks:{},highlights:{},notes:{},prayers:[],planProgress:{},history:[],favorites:{},aiHistory:[],readingDays:[],chaptersRead:[],installed:false,devotionalDone:[],onboarded:true,ministry:{theme:'royal',church:'KINGDOM BIBLE',speaker:'',sermon:''}};
+const DEFAULT={profile:{name:'',translation:'kjv',theme:'dark',font:'serif',fontSize:20,lineHeight:1.9,readingTime:'06:30',notifications:false,avatar:'',devotionalTrack:'adult',voice:'device'},reader:{book:44,chapter:8,translation:'kjv',lastVerse:1},bookmarks:{},highlights:{},notes:{},prayers:[],planProgress:{},history:[],favorites:{},aiHistory:[],readingDays:[],chaptersRead:[],installed:false,devotionalDone:[],onboarded:true,ministry:{theme:'royal',church:'KINGDOM BIBLE',speaker:'',sermon:''}};
 let state=loadState(),books=[],bookCache=new Map(),bookPending=new Map(),xrefCache=new Map(),route='home',selectedVerse=null,deferredInstall=null,searchWorker=null,searchState={query:'',results:[],total:0,status:''};
 function loadState(){try{return deepMerge(structuredClone(DEFAULT),JSON.parse(localStorage.getItem(LS)||'{}'))}catch{return structuredClone(DEFAULT)}}
 function deepMerge(a,b){for(const k in b){if(b[k]&&typeof b[k]==='object'&&!Array.isArray(b[k])&&a[k]&&typeof a[k]==='object'&&!Array.isArray(a[k]))deepMerge(a[k],b[k]);else a[k]=b[k]}return a}
@@ -318,8 +318,30 @@ function openNote(v){const old=state.notes[v.ref]||{};modal(`<div class="modal-h
 async function openCompare(v){const vals=await Promise.all(Object.keys(TR).map(t=>getVerse(v.ref,t)));modal(`<div class="modal-head"><div><h2>Compare translations</h2><p>${esc(v.ref)} · Public-domain editions</p></div><button class="close-btn" data-close>×</button></div>${vals.map(x=>`<div style="padding:14px 0;border-bottom:1px solid var(--line)"><span class="pill">${TR[x.translation]}</span><p style="font:17px/1.7 var(--scripture);margin:9px 0">${esc(x.text||'Verse numbering differs in this edition.')}</p></div>`).join('')}`)}
 async function loadXrefs(bi){if(xrefCache.has(bi))return xrefCache.get(bi);const d=await(await fetch(`/data/xrefs/${bi}.json`)).json();xrefCache.set(bi,d);return d}
 async function openXrefs(v){const d=await loadXrefs(v.book),refs=d[v.ref]||[];modal(`<div class="modal-head"><div><h2>Cross references</h2><p>${esc(v.ref)} · Treasury of Scripture Knowledge</p></div><button class="close-btn" data-close>×</button></div>${refs.length?`<div>${refs.map(r=>`<button class="xref" data-ref="${esc(r.split(',')[0])}">${esc(r)}</button>`).join('')}</div>`:'<div class="empty-state"><p>No cross references are indexed for this verse.</p></div>'}<div class="notice" style="margin-top:15px">Cross references suggest related passages; they are study aids, not part of the Bible text.</div>`);$$('[data-ref]').forEach(b=>b.onclick=()=>openReference(b.dataset.ref))}
-function openReaderSettings(){modal(`<div class="modal-head"><div><h2>Reading appearance</h2><p>Make the Bible comfortable to read.</p></div><button class="close-btn" data-close>×</button></div><div class="field"><label>Text size · <span id="fontVal">${state.profile.fontSize}px</span></label><input id="fontRange" type="range" min="15" max="34" value="${state.profile.fontSize}"/></div><div class="field" style="margin-top:16px"><label>Line spacing</label><select id="lineSelect"><option value="1.6">Compact</option><option value="1.9" ${state.profile.lineHeight==1.9?'selected':''}>Comfortable</option><option value="2.2" ${state.profile.lineHeight==2.2?'selected':''}>Spacious</option></select></div><div class="modal-actions"><button class="primary-btn" id="applyReading">Apply</button></div>`);$('#fontRange').oninput=e=>$('#fontVal').textContent=e.target.value+'px';$('#applyReading').onclick=()=>{state.profile.fontSize=+$('#fontRange').value;state.profile.lineHeight=+$('#lineSelect').value;save();closeModal();renderBible()}}
-function speakChapter(ch,r){if(!('speechSynthesis'in window)){toast('Device speech is unavailable','error');return}if(speechSynthesis.speaking){speechSynthesis.cancel();toast('Reading stopped');return}const u=new SpeechSynthesisUtterance(`${books[r.book].name} chapter ${r.chapter}. `+ch.map((x,i)=>`Verse ${i+1}. ${x}`).join(' '));u.rate=.92;u.onend=()=>toast('Reading complete');speechSynthesis.speak(u);toast('Device read-aloud started. Tap again to stop.')}
+function openReaderSettings(){modal(`<div class="modal-head"><div><h2>Reading appearance</h2><p>Make the Bible comfortable to read.</p></div><button class="close-btn" data-close>×</button></div><div class="field"><label>Text size · <span id="fontVal">${state.profile.fontSize}px</span></label><input id="fontRange" type="range" min="15" max="34" value="${state.profile.fontSize}"/></div><div class="field" style="margin-top:16px"><label>Line spacing</label><select id="lineSelect"><option value="1.6">Compact</option><option value="1.9" ${state.profile.lineHeight==1.9?'selected':''}>Comfortable</option><option value="2.2" ${state.profile.lineHeight==2.2?'selected':''}>Spacious</option></select></div><select id="voiceSelect" aria-label="Read-aloud voice"><option value="device" ${state.profile.voice!=='studio'?'selected':''}>Device read-aloud (works offline)</option><option value="studio" ${state.profile.voice==='studio'?'selected':''}>Studio voice (clearer, needs connection and account)</option></select></div><div class="modal-actions"><button class="primary-btn" id="applyReading">Apply</button></div>`);$('#fontRange').oninput=e=>$('#fontVal').textContent=e.target.value+'px';$('#applyReading').onclick=()=>{state.profile.fontSize=+$('#fontRange').value;state.profile.lineHeight=+$('#lineSelect').value;state.profile.voice=$('#voiceSelect').value==='studio'?'studio':'device';save();closeModal();renderBible()}}
+/* Device speechSynthesis is the offline default. Studio voice asks the hub's
+   /api/speak proxy (Gemini TTS, cached server-side) for a real WAV; if the hub
+   is offline, the account is signed out or the allowance is spent, the chapter
+   still gets read aloud on the device voice instead of failing outright. */
+let studioAudio=null;
+function stopStudio(){if(studioAudio){studioAudio.pause();studioAudio.src='';studioAudio=null;return true}return false}
+function deviceSpeak(text){if(!('speechSynthesis'in window)){toast('Device speech is unavailable','error');return}if(speechSynthesis.speaking){speechSynthesis.cancel();toast('Reading stopped');return}const u=new SpeechSynthesisUtterance(text);u.rate=.92;u.onend=()=>toast('Reading complete');speechSynthesis.speak(u);toast('Device read-aloud started. Tap again to stop.')}
+async function speakStudio(text){
+  if(stopStudio()){toast('Reading stopped');return}
+  const btn=$('#readerAudio');if(btn){btn.disabled=true;btn.textContent='…'}
+  try{
+    const res=await fetch('/api/speak',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
+    if(!res.ok){const d=await res.json().catch(()=>({}));throw new Error(d.error||`HTTP ${res.status}`)}
+    const blob=await res.blob();studioAudio=new Audio(URL.createObjectURL(blob));
+    studioAudio.onended=()=>{stopStudio();toast('Reading complete')};
+    await studioAudio.play();toast('Studio voice started. Tap again to stop.');
+  }catch(e){
+    stopStudio();
+    toast('Studio voice unavailable — using device voice. '+String(e.message||'').slice(0,80),'error');
+    deviceSpeak(text);
+  }finally{if(btn){btn.disabled=false;btn.textContent='◉'}}
+}
+function speakChapter(ch,r){const head=`${books[r.book].name} chapter ${r.chapter}. `+ch.map((x,i)=>`Verse ${i+1}. ${x}`).join(' ');if(state.profile.voice==='studio'){speakStudio(head);return}deviceSpeak(head)}
 
 /* SEARCH */
 function renderSearch(){setTitle('Search');$('#main').innerHTML=`<div class="page"><div class="search-hero"><div class="eyebrow">FAST · COMPLETE · OFFLINE-CAPABLE</div><h1>Search the Scriptures</h1><p class="lead" style="margin:auto">Search every verse by word, exact phrase, or reference across public-domain Bible translations.</p><form class="big-search" id="searchForm"><input id="searchBox" value="${esc(searchState.query)}" placeholder='Try “faith”, “fear not”, or John 3:16' autocomplete="off"/><button class="primary-btn">Search</button></form><div class="search-filters"><button class="filter-chip active" data-test="all">All Bible</button><button class="filter-chip" data-test="ot">Old Testament</button><button class="filter-chip" data-test="nt">New Testament</button><select class="filter-chip" id="searchTr">${translationOptions(state.reader.translation)}</select></div></div><div class="results-wrap" id="searchResults">${renderSearchResults()}</div></div>`;
@@ -350,9 +372,14 @@ function planReading(id,n){if(id==='psalms30')return `Psalms ${n*5+1}–${Math.m
 /* MINISTRY */
 async function renderMinistry(){setTitle('Ministry Mode','KINGDOM BIBLE');await loadHub();if(hub().isLive(hubState))await ensureSession();
   /* Get Scripture resident before the mic opens: from here on, resolving a
-     spoken reference must be pure in-memory work. */
+     spoken reference must be pure in-memory work.
+     A single failed verse fetch must never blank Ministry (white screen):
+     fall back to the bundled devotional verse so the page always renders. */
   warmTranslation(state.reader.translation);
-  let cur=state.ministry.current||await getVerse('John 3:16');state.ministry.current=cur;save();$('#main').innerHTML=`<div class="page"><section class="ministry-hero"><div class="eyebrow">PROFESSIONAL SCRIPTURE PRESENTATION</div><h1>Ministry Mode</h1><p>Present Scripture beautifully for services, sermons, Bible studies, projectors, OBS, and vMix browser sources.</p><div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:22px"><button class="primary-btn" id="openDisplay">▣ Open audience display</button><button class="secondary-btn" id="copyDisplay" style="background:rgba(255,255,255,.08);color:white;border-color:rgba(255,255,255,.15)">Copy browser-source URL</button><button class="secondary-btn" id="openManual" style="background:rgba(255,255,255,.08);color:white;border-color:rgba(255,255,255,.15)">? User Manual</button></div></section>${window.KingdomVoice?window.KingdomVoice.cardHtml():''}${connectCardHtml()}<div class="ministry-grid"><section class="card control-card"><div class="section-head" style="margin:0 0 14px"><div><h2>Presenter control</h2><p>Live preview · updates audience display instantly</p></div><span class="pill">${hub().isLive(hubState)?'<span class="status-dot"></span> Live session':'<span class="status-dot off"></span> This computer only'}</span></div><div class="control-preview ${state.ministry.theme==='light'?'light':state.ministry.theme==='royal'?'royal':''}" id="controlPreview"><blockquote>“${esc(cur.text)}”</blockquote><cite>${esc(cur.ref)} · ${TR[cur.translation||state.reader.translation]}</cite><div class="church-label">${esc(state.ministry.church)}</div></div><div class="control-actions"><button class="secondary-btn" id="minPrev">← Previous</button><button class="primary-btn" id="minSearch">⌕ Change Scripture</button><button class="secondary-btn" id="minNext">Next →</button><button class="secondary-btn" id="minBlank">Blank screen</button></div><div class="form-grid" style="margin-top:16px"><div class="field"><label>Theme</label><select id="minTheme"><option value="royal">Royal Gold</option><option value="dark">Classic Black</option><option value="light">Minimal White</option><option value="sunset">Sunset</option><option value="noir">Noir</option><option value="transparent">Transparent (key)</option></select></div><div class="field"><label>Church / ministry name</label><input id="minChurch" value="${esc(state.ministry.church)}"></div></div></section><aside class="card service-panel"><div class="eyebrow">LIVE SERVICE</div><h2>${esc(state.ministry.sermon||'Sunday Service')}</h2><div class="timer" id="serviceTimer">00:00:00</div><div style="display:flex;gap:8px"><button class="secondary-btn small-btn" id="timerStart">Start timer</button><button class="secondary-btn small-btn" id="timerReset">Reset</button></div><div class="connection" style="margin-top:18px"><span class="status-dot${hub().isLive(hubState)?'':' off'}"></span><span>${hub().isLive(hubState)?'Audience display sync is ready':'Audience display syncs on this computer only'}</span></div><div class="section-head"><div><h2>Media quick start</h2></div></div><button class="secondary-btn" style="width:100%;margin-bottom:8px" id="guideVmix">How to use with vMix</button><button class="secondary-btn" style="width:100%" id="guideObs">How to use with OBS</button></aside></div></div>`;
+  let cur=state.ministry.current||null;
+  if(!cur){try{cur=await getVerse('John 3:16')}catch(e){console.warn('ministry verse failed, using fallback',e)}}
+  if(!cur||!cur.text)cur={text:DEVOTIONAL.verse,ref:DEVOTIONAL.scripture,translation:state.reader.translation};
+  state.ministry.current=cur;save();$('#main').innerHTML=`<div class="page"><section class="ministry-hero"><div class="eyebrow">PROFESSIONAL SCRIPTURE PRESENTATION</div><h1>Ministry Mode</h1><p>Present Scripture beautifully for services, sermons, Bible studies, projectors, OBS, and vMix browser sources.</p><div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:22px"><button class="primary-btn" id="openDisplay">▣ Open audience display</button><button class="secondary-btn" id="copyDisplay" style="background:rgba(255,255,255,.08);color:white;border-color:rgba(255,255,255,.15)">Copy browser-source URL</button><button class="secondary-btn" id="openManual" style="background:rgba(255,255,255,.08);color:white;border-color:rgba(255,255,255,.15)">? User Manual</button></div></section>${window.KingdomVoice?window.KingdomVoice.cardHtml():''}${connectCardHtml()}<div class="ministry-grid"><section class="card control-card"><div class="section-head" style="margin:0 0 14px"><div><h2>Presenter control</h2><p>Live preview · updates audience display instantly</p></div><span class="pill">${hub().isLive(hubState)?'<span class="status-dot"></span> Live session':'<span class="status-dot off"></span> This computer only'}</span></div><div class="control-preview ${state.ministry.theme==='light'?'light':state.ministry.theme==='royal'?'royal':''}" id="controlPreview"><blockquote>“${esc(cur.text)}”</blockquote><cite>${esc(cur.ref)} · ${TR[cur.translation||state.reader.translation]}</cite><div class="church-label">${esc(state.ministry.church)}</div></div><div class="control-actions"><button class="secondary-btn" id="minPrev">← Previous</button><button class="primary-btn" id="minSearch">⌕ Change Scripture</button><button class="secondary-btn" id="minNext">Next →</button><button class="secondary-btn" id="minBlank">Blank screen</button></div><div class="form-grid" style="margin-top:16px"><div class="field"><label>Theme</label><select id="minTheme"><option value="royal">Royal Gold</option><option value="dark">Classic Black</option><option value="light">Minimal White</option><option value="sunset">Sunset</option><option value="noir">Noir</option><option value="transparent">Transparent (key)</option></select></div><div class="field"><label>Church / ministry name</label><input id="minChurch" value="${esc(state.ministry.church)}"></div></div></section><aside class="card service-panel"><div class="eyebrow">LIVE SERVICE</div><h2>${esc(state.ministry.sermon||'Sunday Service')}</h2><div class="timer" id="serviceTimer">00:00:00</div><div style="display:flex;gap:8px"><button class="secondary-btn small-btn" id="timerStart">Start timer</button><button class="secondary-btn small-btn" id="timerReset">Reset</button></div><div class="connection" style="margin-top:18px"><span class="status-dot${hub().isLive(hubState)?'':' off'}"></span><span>${hub().isLive(hubState)?'Audience display sync is ready':'Audience display syncs on this computer only'}</span></div><div class="section-head"><div><h2>Media quick start</h2></div></div><button class="secondary-btn" style="width:100%;margin-bottom:8px" id="guideVmix">How to use with vMix</button><button class="secondary-btn" style="width:100%" id="guideObs">How to use with OBS</button></aside></div></div>`;
   $('#minTheme').value=state.ministry.theme;$('#openDisplay').onclick=()=>window.open(displayUrl(),'kingdomPresentation','width=1280,height=720');$('#copyDisplay').onclick=()=>copyText(displayUrl(),'Browser-source URL copied — paste it into vMix / OBS');$('#openManual').onclick=openManual;$('#minSearch').onclick=openMinistrySearch;$('#minPrev').onclick=()=>minStep(-1,true);$('#minNext').onclick=()=>minStep(1,true);$('#minBlank').onclick=()=>sendPresentation({...cur,blank:true});$('#minTheme').onchange=e=>{state.ministry.theme=e.target.value;save();sendPresentation(cur);renderMinistry()};$('#minChurch').onchange=e=>{state.ministry.church=e.target.value.trim()||'KINGDOM BIBLE';save();sendPresentation(cur)};$('#guideVmix').onclick=()=>openGuide('vMix');$('#guideObs').onclick=()=>openGuide('OBS');bindConnectCard();bindTimer();bindVoice();bindMinistryKeys()}
 /* Repaint only the presenter preview — Voice Mode fires many updates per
    minute and a full re-render would flicker and tear down the mic UI. */
@@ -548,6 +575,62 @@ function drawQR(text,canvas){
   return true;
 }
 
+/* LIVE ministry hub doorway (the one-tap Livestreaming button).
+   Vercel (kingdom-bible-wine.vercel.app) is the REAL always-online site, but it has
+   no phone-remote/QR/SSE hub — QR, phone remote, vMix and OBS only work on the
+   live stage (the ministry PC via Tailscale Funnel). Tapping the button carries
+   the reader to the live stage: liveHubLink() (same ?source=, #ministry).
+   Resolution order: server config -> probe constant -> hardcoded fallback.
+   If the stage is offline the reader is notified and stays on this site —
+   never a white screen. Direct <a> href is kept as the no-JS fallback. */
+function liveHubUrl(){
+  try{
+    const fromCfg=window.KingdomPremium?.config?.()?.liveHubUrl;
+    if(fromCfg&&/^https?:\/\//.test(fromCfg))return String(fromCfg).replace(/\/+$/,'');
+  }catch{}
+  try{
+    const probeUrl=hub()?.LIVE_HUB_URL;
+    if(probeUrl&&/^https?:\/\//.test(probeUrl))return String(probeUrl).replace(/\/+$/,'');
+  }catch{}
+  return 'https://desktop-dqg29pr.tail876272.ts.net';
+}
+function liveHubLink(){
+  /* Carry the reader to the live ministry stage, keeping the current launch
+     context: same ?source= (pwa / install prompt), landing on #ministry. */
+  let src='';
+  try{src=new URLSearchParams(location.search).get('source')||''}catch{}
+  const q=src?'?source='+encodeURIComponent(src):'';
+  return liveHubUrl()+q+'#ministry';
+}
+function openLiveHub(ev){
+  /* Carry first, notify second. A cross-origin fetch probe from the Vercel
+     site to the Tailscale stage is blocked by the browser (no CORS preflight
+     on the hub), so a probe-first design always reports "offline" even when
+     the stage is up. Instead: open the stage in a new tab immediately (the
+     plain <a> href already does this with no JS), then tell the reader on
+     THIS page how to recognise an offline stage — they stay here, never on
+     a white screen. */
+  const url=liveHubLink();
+  try{if(ev&&ev.preventDefault)ev.preventDefault()}catch{}
+  window.open(url,'_blank','noopener');
+  toast('Opening the live stage in a new tab — if it stays blank or white, the ministry PC is off or Tailscale is not running. Everything here still works.');
+}
+function liveHubCardHtml(){
+  const url=liveHubLink();
+  return `<section class="card connect-card live-hub-card">
+  <div class="section-head" style="margin:0 0 14px">
+    <div><h2>Live Ministry Hub</h2><p>Bible presentation with phone remote + live sync, from the ministry PC</p></div>
+    <span class="pill premium-pill"><span class="status-dot"></span> Livestreaming</span>
+  </div>
+  <div class="connect-body"><div class="connect-info" style="width:100%">
+    <p class="hub-lead">This main site stays online for reading, study and local presenting. When it is time to minister — projector, vMix, phone remote, QR code — open the live stage. Those only work on the live stage, never here.</p>
+    <div class="hub-actions">
+      <a class="primary-btn small-btn" href="${esc(url)}" target="_blank" rel="noopener" id="openLiveHub">Open Live Ministry Hub</a>
+      <button class="secondary-btn small-btn" id="copyLiveHub">Copy live link</button>
+    </div>
+    <p class="hint">Needs the ministry PC online (Tailscale running). If the stage is offline you will be notified and stay here — everything here still works.</p>
+  </div></div></section>`;
+}
 /* presenter-facing connection card: code + QR + LAN address
    Three honest states. The old version rendered a green "Live" pill, a dashed
    "------" code and a blank white QR box whenever the hub was missing, which is
@@ -557,10 +640,16 @@ function connectCardHtml(){
   const live=hub().isLive(hubState);
   if(!live){
     const d=hub().describe(hubState)||{};
-    return `<section class="card connect-card hub-offline-card">
+    /* Live-stage carry button sits in the SAME hub-actions row as "Check again"
+       and "Open the local hub" (owner screenshot 2026-10-16): on the main Vercel
+       site the QR / phone remote / vMix / OBS only work on the live Tailscale
+       stage, so one tap carries the reader there (same ?source=, #ministry).
+       Offline stage = notify + stay, never a white screen. */
+    const liveUrl=liveHubLink();
+    const offlineCard=`<section class="card connect-card hub-offline-card">
   <div class="section-head" style="margin:0 0 14px">
-    <div><h2>${esc(d.title||'Connect the ministry hub')}</h2><p>Scan the code, or type the address on any phone on this Wi-Fi</p></div>
-    <span class="pill hub-pill-off"><span class="status-dot off"></span> Hub offline</span>
+    <div><h2>${esc(d.title||'Connect the ministry hub')}</h2><p>Or present locally on this site — no hub needed</p></div>
+    <span class="pill hub-pill-off"><span class="status-dot off"></span> This site only</span>
   </div>
   <div class="connect-body">
     <div class="connect-info" style="width:100%">
@@ -569,10 +658,14 @@ function connectCardHtml(){
       <div class="hub-actions">
         <button class="primary-btn small-btn" id="hubRetry">Check again</button>
         <a class="secondary-btn small-btn" href="${esc(d.launchUrl||'http://localhost:'+HUB_PORT)}" id="hubLaunch">Open the local hub</a>
+        <a class="primary-btn small-btn" href="${esc(liveUrl)}" target="_blank" rel="noopener" id="openLiveHub">Open Live Ministry Hub</a>
       </div>
-      <p class="hint" id="netHint">${esc(d.hint||'')}</p>
+      <p class="hint" id="netHint">${esc(d.hint||'')} The QR code, phone remote, vMix and OBS only work on the live stage — that button carries you there.</p>
     </div>
   </div></section>`;
+    /* Live stage first on the main site: the doorway must be seen before the
+       local-only instructions. Live hub IS the ministry PC online. */
+    return `${liveHubCardHtml()}${offlineCard}`;
   }
   const addr=netInfo&&netInfo.addresses&&netInfo.addresses[0];
   const port=(netInfo&&netInfo.port)||HUB_PORT;
@@ -604,6 +697,10 @@ function connectCardHtml(){
   </div></section>`;
 }
 function bindConnectCard(){
+  const goLive=$('#openLiveHub');
+  if(goLive)goLive.onclick=openLiveHub;
+  const liveBtn=$('#copyLiveHub');
+  if(liveBtn)liveBtn.onclick=()=>copyText(liveHubLink(),'Live ministry link copied — open it when the ministry PC is online');
   const retry=$('#hubRetry');
   if(retry)retry.onclick=async()=>{retry.disabled=true;retry.textContent='Checking…';await loadHub();if(hub().isLive(hubState))await ensureSession();renderMinistry();toast(hub().isLive(hubState)?'Ministry hub connected':'The ministry hub is still not running',hub().isLive(hubState)?'success':'error')};
   const urlEl=$('#sessionUrl');
