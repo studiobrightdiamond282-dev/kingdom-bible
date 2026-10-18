@@ -197,10 +197,12 @@ function applyAction(a){
     case 'next':case 'prev':{
       const cur=state.presentation;
       if(cur.book==null)return{ok:false,error:'Send a verse first'};
-      const list=booksList(),bk=list[cur.book],chs=bibleData(cur.translation).books[cur.book];
+      const list=booksList();
       /* after a range, "next" continues from the END of the range */
       let bi=cur.book,ch=cur.chapter,v=(a.type==='next'?(cur.verseEnd||cur.verse||1):(cur.verse||1))+(a.type==='next'?1:-1);
       if(v<1){if(ch===1){if(bi===0)return{ok:false,error:'Start of Bible'};bi--;ch=list[bi].chapters}else ch--;v=bibleData(cur.translation).books[bi][ch-1].length}
+      /* bk/chs must reflect the book we landed on after any boundary crossing above */
+      const bk=list[bi],chs=bibleData(cur.translation).books[bi];
       if(v>chs[ch-1].length){if(ch>=bk.chapters){if(bi===list.length-1)return{ok:false,error:'End of Bible'};bi++;ch=1}else ch++;v=1}
       const r=resolve(list[bi].name+' '+ch+':'+v,cur.translation);
       if(!r)return{ok:false,error:'Cannot advance'};
@@ -217,10 +219,10 @@ function applyAction(a){
    public key; the secret key, account store and admin actions never leave this
    process. Set the values in .env.example in the deployment environment. */
 const PREMIUM_PLANS={
-  silver:{id:'silver',name:'Silver',price:2500,period:'month',tagline:'A steady Scripture rhythm',benefits:['Full Bible reader and search','Reading plans, notes and bookmarks','100 AI study questions per month','Phone remote and presentation tools'],aiMonthly:100},
-  gold:{id:'gold',name:'Gold',price:5000,period:'month',tagline:'For serious personal study',benefits:['Everything in Silver','500 AI study questions per month','Translation comparison and deeper study','Priority feature access'],aiMonthly:500},
-  premium:{id:'premium',name:'Premium',price:10000,period:'month',tagline:'The complete ministry toolkit',benefits:['Everything in Gold','2,000 AI study questions per month','Voice Preacher Mode','Ministry presentation and remote'],aiMonthly:2000},
-  unlimited:{id:'unlimited',name:'Unlimited',price:20000,period:'month',tagline:'For churches and heavy use',benefits:['Everything in Premium','10,000 AI questions per month (fair use)','Multiple ministry operators','Priority support and early access'],aiMonthly:10000},
+  silver:{id:'silver',name:'Silver',price:2500,period:'month',tagline:'A steady Scripture rhythm',benefits:['Full Bible reader and search','Reading plans, notes and bookmarks','100 AI study questions per month','30 Studio voice readings per month','Phone remote and presentation tools'],aiMonthly:100,ttsMonthly:30},
+  gold:{id:'gold',name:'Gold',price:5000,period:'month',tagline:'For serious personal study',benefits:['Everything in Silver','500 AI study questions per month','100 Studio voice readings per month','Translation comparison and deeper study','Priority feature access'],aiMonthly:500,ttsMonthly:100},
+  premium:{id:'premium',name:'Premium',price:10000,period:'month',tagline:'The complete ministry toolkit',benefits:['Everything in Gold','2,000 AI study questions per month','400 Studio voice readings per month','Voice Preacher Mode','Ministry presentation and remote'],aiMonthly:2000,ttsMonthly:400},
+  unlimited:{id:'unlimited',name:'Unlimited',price:20000,period:'month',tagline:'For churches and heavy use',benefits:['Everything in Premium','10,000 AI questions per month (fair use)','2,000 Studio voice readings per month (fair use)','Multiple ministry operators','Priority support and early access'],aiMonthly:10000,ttsMonthly:2000},
 };
 const PREMIUM_CONFIG={
   adminEmail:String(process.env.ADMIN_EMAIL||'stanley.okonkwo282@gmail.com').trim().toLowerCase(),
@@ -230,6 +232,14 @@ const PREMIUM_CONFIG={
   aiApiKey:String(process.env.AI_API_KEY||''),
   aiApiUrl:String(process.env.AI_API_URL||'https://api.openai.com/v1/chat/completions'),
   aiModel:String(process.env.AI_MODEL||'gpt-4o-mini'),
+  /* Studio voice (Gemini TTS). Key stays server-side; model + voice are env-pinned
+     because Google renames TTS models (2.5-flash-preview-tts -> newer generations).
+     TTS_* names are canonical; GEMINI_* aliases are honoured for compatibility.
+     Empty key = feature off with a clean 503, same pattern as AI_API_KEY. */
+  ttsApiKey:String(process.env.TTS_API_KEY||process.env.GEMINI_API_KEY||''),
+  ttsModel:String(process.env.TTS_MODEL||process.env.GEMINI_TTS_MODEL||'gemini-2.5-flash-preview-tts'),
+  ttsVoice:String(process.env.TTS_VOICE||process.env.GEMINI_TTS_VOICE||'Fenrir'),
+  ttsCacheDir:process.env.TTS_CACHE_DIR||path.join(__dirname,'.data','tts-cache'),
   storePath:process.env.PREMIUM_STORE_PATH||path.join(__dirname,'.data','premium-store.json'),
   /* A web OAuth client ID is PUBLIC by design — Google documents it for browser use and
      it grants no access on its own. Verification happens server-side against Google's
@@ -243,6 +253,13 @@ const PREMIUM_CONFIG={
      operator can take it away and steer everyone to email + password, which
      always works. Set GOOGLE_SIGNIN=off (0/false/no also accepted). */
   googleSignInOn:!/^(off|0|false|no|disabled)$/i.test(String(process.env.GOOGLE_SIGNIN||'').trim()),
+  /* LIVE ministry hub — the always-online Tailscale Funnel address of the ministry
+     PC (https://desktop-dqg29pr.tail876272.ts.net). The static Vercel build has no
+     phone remote / SSE / service-code hub, so Ministry Mode offers a one-tap
+     "Open Live Ministry Hub" doorway to this URL. Browsers block cross-origin
+     fetch, so this is a plain link (target _blank), never an API call. Changing
+     the PC or tailnet name = change it here + .env + hub-probe fallback. */
+  liveHubUrl:String(process.env.LIVE_HUB_URL||'https://desktop-dqg29pr.tail876272.ts.net').trim().replace(/\/+$/,''),
 };
 const premiumSessions=new Map();
 function blankPremiumStore(){return{users:[],transactions:[],withdrawals:[],audit:[],notifications:[],passwordResets:[]}}
@@ -420,6 +437,40 @@ async function askAi(question){
   }
   throw new Error(`AI provider unavailable (HTTP ${status}): ${String(why).slice(0,180)}`);
 }
+/* ---------- Studio voice (Gemini TTS, dependency-free) ----------
+   Device speechSynthesis stays the offline default; this is the online upgrade.
+   Gemini TTS answers with raw PCM (16-bit mono, 24 kHz). An <audio> element
+   cannot play that — it must be wrapped in a WAV header first (see pcmToWav).
+   Billing is per character, so: auth + monthly allowance (tighter than AI text),
+   verse-group chunking (long chapters are many requests), disk cache keyed on
+   text+voice+model (survives restarts), 402 accounting even on cache hits would
+   let cached reads bypass quota — instead cached reads are free but the request
+   still requires a signed-in account, so anonymous scraping cannot farm audio. */
+const TTS_SAMPLE_RATE=24000,TTS_MAX_CHARS=900,TTS_BODY_LIMIT=8192;
+function ttsAllowance(u){const e=entitlementOf(u);if(e.status==='admin')return 100000;if(e.status==='expired')return 0;if(e.status==='trial')return 20;const p=currentPlanFor(u);if(!p)return 0;return{silver:60,gold:200,premium:600,unlimited:2000}[p.id]||0}
+function ttsDir(){return process.env.PREMIUM_STORE_PATH?path.join(path.dirname(PREMIUM_CONFIG.storePath),'tts-cache'):PREMIUM_CONFIG.ttsCacheDir}
+function ttsPathFor(text){return path.join(ttsDir(),crypto.createHash('sha256').update(PREMIUM_CONFIG.ttsModel+'|'+PREMIUM_CONFIG.ttsVoice+'|'+text).digest('hex')+'.wav')}
+function chunkForTts(text){const parts=String(text||'').split(/(?<=[.!?])\s+/).map(s=>s.trim()).filter(Boolean);const out=[];let cur='';for(const s of parts){if((cur+' '+s).trim().length>TTS_MAX_CHARS){if(cur)out.push(cur);cur=s}else cur=(cur+' '+s).trim()}if(cur)out.push(cur);return out.slice(0,12)}
+function pcmToWav(pcm){const n=pcm.length,head=Buffer.alloc(44);head.write('RIFF',0);head.writeUInt32LE(36+n,4);head.write('WAVE',8);head.write('fmt ',12);head.writeUInt32LE(16,16);head.writeUInt16LE(1,20);head.writeUInt16LE(1,22);head.writeUInt32LE(TTS_SAMPLE_RATE,24);head.writeUInt32LE(TTS_SAMPLE_RATE*2,28);head.writeUInt16LE(2,32);head.writeUInt16LE(16,34);head.write('data',36);head.writeUInt32LE(n,40);return Buffer.concat([head,pcm])}
+/* Gemini TTS is a billed call, so the test suite must never reach it: when the
+   key is exactly TEST_KEY the route serves wrapped silence instead. Any other
+   value (including empty) follows the production path and its guards. */
+async function geminiTts(text){
+  if(PREMIUM_CONFIG.ttsApiKey==='TEST_KEY')return pcmToWav(Buffer.alloc(TTS_SAMPLE_RATE*2));
+  const url='https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(PREMIUM_CONFIG.ttsModel)+':generateContent?key='+encodeURIComponent(PREMIUM_CONFIG.ttsApiKey);
+  const payload=JSON.stringify({contents:[{parts:[{text:'Read aloud clearly and naturally, at a calm measured pace: '+text}]}],generationConfig:{responseModalities:['AUDIO'],speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:PREMIUM_CONFIG.ttsVoice}}}}});
+  let status=0,why='';
+  for(let attempt=0;attempt<2;attempt++){
+    if(attempt)await new Promise(s=>setTimeout(s,900));
+    let r;try{r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:payload})}catch(e){why='network: '+(e.message||e);continue}
+    const d=await r.json().catch(()=>({}));status=r.status;
+    const b64=d.candidates?.[0]?.content?.parts?.find(p=>p.inlineData?.data)?.inlineData?.data;
+    if(r.ok&&b64)return pcmToWav(Buffer.from(b64,'base64'));
+    why=d.error?.message||`empty body (${r.statusText||'no status text'})`;
+    if(status!==429&&status!==503)break;
+  }
+  throw new Error(`Studio voice unavailable (HTTP ${status}): ${String(why).slice(0,180)}`);
+}
 async function settlePayment(reference,verified){
   const tx=premiumStore.transactions.find(x=>x.reference===reference);if(!tx||tx.status==='success')return tx;
   if(!verified)return tx;
@@ -428,7 +479,7 @@ async function settlePayment(reference,verified){
   if(u.referredBy&&!u.referralRewarded){const ref=premiumStore.users.find(x=>x.referralCode===u.referredBy&&x.id!==u.id);if(ref){addWallet(ref,Math.round(tx.amount*.1),'commission','10% first-payment referral commission',{fromUser:u.id,reference});u.referralRewarded=true;}}
   savePremiumStore();audit('payment.success',u.id,{reference,plan:tx.plan,amount:tx.amount});return tx;
 }
-function premiumPublic(){return{plans:Object.values(PREMIUM_PLANS).map(({aiMonthly,...p})=>p),trialDays:30,trialWarningDays:7,referral:{signupNaira:100,firstPaymentPercent:10,pointValueNaira:1,minWithdrawal:1000,payoutSlaWorkingDays:3},paystackPublicKey:PREMIUM_CONFIG.paystackPublicKey,googleClientId:PREMIUM_CONFIG.googleClientId,googleSignInEnabled:PREMIUM_CONFIG.googleSignInOn&&!!PREMIUM_CONFIG.googleClientId,appVersion:VERSION,whatsapp:SUPPORT_PHONE,whatsappDisplay:SUPPORT_PHONE_DISPLAY,whatsappLink:supportLink()}}
+function premiumPublic(){return{plans:Object.values(PREMIUM_PLANS).map(({aiMonthly,...p})=>p),trialDays:30,trialWarningDays:7,referral:{signupNaira:100,firstPaymentPercent:10,pointValueNaira:1,minWithdrawal:1000,payoutSlaWorkingDays:3},paystackPublicKey:PREMIUM_CONFIG.paystackPublicKey,googleClientId:PREMIUM_CONFIG.googleClientId,googleSignInEnabled:PREMIUM_CONFIG.googleSignInOn&&!!PREMIUM_CONFIG.googleClientId,appVersion:VERSION,liveHubUrl:PREMIUM_CONFIG.liveHubUrl,whatsapp:SUPPORT_PHONE,whatsappDisplay:SUPPORT_PHONE_DISPLAY,whatsappLink:supportLink()}}
 
 /* ---------- HTTP server ---------- */
 const server=http.createServer(async(req,res)=>{
@@ -510,6 +561,46 @@ const server=http.createServer(async(req,res)=>{
       if(!PREMIUM_CONFIG.aiApiKey)return json(res,503,{ok:false,error:'AI_API_KEY is not configured on the server'});
       const b=await body(req),question=String(b.question||'').trim().slice(0,4000);if(!question)return json(res,400,{ok:false,error:'Ask a Bible study question'});
       try{const answer=await askAi(question);let remaining=allowance;if(s.role!=='admin'){s.user.ai=s.user.ai?.month===monthKey()?s.user.ai:{month:monthKey(),used:0};s.user.ai.used++;remaining=Math.max(0,allowance-s.user.ai.used);savePremiumStore()}audit('ai.question',s.role==='admin'?s.email:s.user.id,{month:monthKey()});return json(res,200,{ok:true,answer,remaining});}catch(e){return json(res,502,{ok:false,error:e.message})}
+    }
+    /* ---------- Studio voice: Gemini TTS proxy ----------
+       Same guard chain as /api/ai/ask: signed-in, monthly allowance, configured
+       key. The response is a real WAV (Gemini's raw PCM wrapped by pcmToWav), so
+       an <audio> element plays it directly. Repeated passages hit the disk cache
+       and are free, but still require a session so anonymous traffic cannot farm
+       audio. Chapters are chunked at sentence boundaries because Gemini TTS has a
+       per-request text limit and a whole-chapter single call would be both slow
+       and impossible to retry piecewise. */
+    if(p==='/api/speak'&&req.method==='POST'){
+      const s=requireAuth(req,res);if(!s)return;
+      const allowance=s.role==='admin'?100000:ttsAllowance(s.user),used=s.role==='admin'?0:s.user.tts?.month===monthKey()?s.user.tts.used:0;
+      if(used>=allowance)return json(res,402,{ok:false,error:'Your studio voice allowance is exhausted for this period',upgrade:true});
+      if(!PREMIUM_CONFIG.ttsApiKey)return json(res,503,{ok:false,error:'Studio voice is not configured on the server'});
+      const b=await body(req,TTS_BODY_LIMIT),text=String(b.text||'').trim().slice(0,4000);
+      if(!text)return json(res,400,{ok:false,error:'Send the text to be read aloud'});
+      const chunks=chunkForTts(text);if(!chunks.length)return json(res,400,{ok:false,error:'Send the text to be read aloud'});
+      try{
+        const dir=ttsDir();if(!fs.existsSync(dir))fs.mkdirSync(dir,{recursive:true});
+        let generated=0;const wavs=[];
+        for(const c of chunks){
+          const f=ttsPathFor(c);let wav;
+          if(fs.existsSync(f))wav=fs.readFileSync(f);
+          else{wav=await geminiTts(c);fs.writeFileSync(f,wav);generated++}
+          wavs.push(wav);
+        }
+        /* Only freshly generated chunks are charged; a cache hit costs nothing.
+           The remaining count is always derived from the stored usage, not from
+           this request's generation count — otherwise a cache hit would report
+           a full allowance the user does not actually have. Once used reaches
+           the allowance the NEXT request is refused with 402. */
+        let remaining=allowance;
+        if(s.role!=='admin'){s.user.tts=s.user.tts?.month===monthKey()?s.user.tts:{month:monthKey(),used:0};s.user.tts.used+=generated;remaining=Math.max(0,allowance-s.user.tts.used);if(generated)savePremiumStore()}
+        audit('tts.speak',s.role==='admin'?s.email:s.user.id,{chars:text.length,chunks:chunks.length,generated});
+        /* Every chunk is a complete WAV; drop the 44-byte headers of all but the
+           first and rebuild one header around the joined PCM. */
+        const out=pcmToWav(Buffer.concat(wavs.map(w=>w.slice(44))));
+        res.setHeader('Content-Type','audio/wav');res.setHeader('Content-Length',out.length);res.setHeader('Cache-Control','no-store');res.setHeader('X-TTS-Remaining',String(remaining));
+        return res.end(out);
+      }catch(e){return json(res,502,{ok:false,error:e.message})}
     }
     if(p==='/api/admin/overview'&&req.method==='GET'){
       if(!requireAdmin(req,res))return;return json(res,200,{ok:true,notifications:premiumStore.notifications.slice(0,50),withdrawals:premiumStore.withdrawals.slice(0,100),users:premiumStore.users.map(publicUser),audit:premiumStore.audit.slice(0,150),plans:Object.values(PREMIUM_PLANS).map(({aiMonthly,...x})=>x),passwordResets:(premiumStore.passwordResets||[]).filter(r=>!r.usedAt&&r.expiresAt>Date.now()).map(r=>({id:r.id,email:r.email,userId:r.userId,createdAt:r.createdAt,expiresAt:new Date(r.expiresAt).toISOString()}))});
