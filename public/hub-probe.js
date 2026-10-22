@@ -17,6 +17,13 @@
 'use strict';
 const APP='KINGDOM BIBLE';
 const PORT=4173;
+/* LIVE ministry hub — the ministry PC's always-online Tailscale Funnel address.
+   The static Vercel build (kingdom-bible-wine.vercel.app) is the REAL site and is
+   always online, but it has no phone-remote/SSE/service-code hub. When the
+   presenter wants the live stage, Ministry Mode offers a one-tap doorway to this
+   URL (new tab). Only works while the ministry PC + Tailscale are on — that is
+   expected until a proper domain replaces it. Keep in sync with LIVE_HUB_URL. */
+const LIVE_HUB_URL='https://desktop-dqg29pr.tail876272.ts.net';
 
 /* GET a path and try to read it as JSON. Never throws. */
 async function readJSON(path,fetchImpl){
@@ -63,16 +70,15 @@ function describe(state){
     launchUrl:'http://localhost:'+PORT,dot:'off'
   };
   return {
-    title:'Phone remote needs the ministry hub',
-    body:'This page is running from a website. Reading, study and the audience display all work here, but the service code, the phone remote and live sync are served by the ministry computer itself.',
-    hint:'You can still present from this computer: open the audience display and use Presenter control. To control it from a phone, use the local hub.',
-    steps:['On the ministry computer, open the KINGDOM BIBLE folder in a terminal.',
-           'Run `npm start`.',
-           'Open the LAN address it prints, for example `http://192.168.1.20:'+PORT+'`, and go to Ministry Mode.',
-           'Choose "Check again" here once the hub is running.'],
-    launchUrl:'http://localhost:'+PORT,dot:'off'
+    title:'Phone remote needs the live ministry hub',
+    body:'This is the main KINGDOM BIBLE site — always online for reading, study and local presenting. The service code, phone remote and live sync run on the live ministry hub (your ministry PC via Tailscale).',
+    hint:'Present from here any time. When you need phone control + live sync, open the live hub below — it needs the ministry PC online.',
+    steps:['If the ministry PC is on (Tailscale running), tap “Open Live Ministry Hub” below — the live stage opens in a new tab.',
+           'On the live hub, go to Ministry Mode and start your session there.',
+           'This page keeps working for reading, study and local presenting.'],
+    launchUrl:'http://localhost:'+PORT,dot:'off',liveHubUrl:LIVE_HUB_URL
   };
 }
 
-g.KingdomHub={APP,PORT,probe,isLive,describe,readJSON};
+g.KingdomHub={APP,PORT,LIVE_HUB_URL,probe,isLive,describe,readJSON};
 })(typeof window!=='undefined'?window:globalThis);

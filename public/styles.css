@@ -114,6 +114,11 @@ body.presentation-body.is-debug .presentation-status{display:block}
 /* presenter connect card (QR + service code + LAN address) */
 .connect-card{padding:20px;margin-top:18px;border-color:color-mix(in srgb,var(--gold),transparent 72%);
   background:linear-gradient(135deg,color-mix(in srgb,var(--gold),transparent 94%),var(--surface))}
+/* LIVE ministry hub doorway — the one-tap Livestreaming button. Gold-tinted so it
+   reads as the primary action on Ministry Mode when on the main (Vercel) site. */
+.live-hub-card{border-color:color-mix(in srgb,var(--gold),transparent 45%);
+  background:linear-gradient(135deg,color-mix(in srgb,var(--gold),transparent 88%),var(--surface));
+  box-shadow:0 14px 42px rgba(212,175,55,.14)}
 .connect-body{display:grid;grid-template-columns:auto minmax(0,1fr);gap:18px;align-items:start}
 .qr-wrap{display:flex;flex-direction:column;align-items:center;gap:7px;padding:10px;background:#fff;border-radius:14px;
   box-shadow:0 8px 22px rgba(15,23,42,.14);flex:0 0 auto}

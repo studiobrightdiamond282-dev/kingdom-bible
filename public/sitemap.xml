@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://app.kingdombible.com/</loc></url>
-  <url><loc>https://app.kingdombible.com/#bible</loc></url>
-  <url><loc>https://app.kingdombible.com/#search</loc></url>
-  <url><loc>https://app.kingdombible.com/#devotional</loc></url>
-  <url><loc>https://app.kingdombible.com/#plans</loc></url>
+  <url><loc>https://kingdom-bible-wine.vercel.app/</loc></url>
+  <url><loc>https://kingdom-bible-wine.vercel.app/status</loc></url>
+  <url><loc>https://kingdom-bible-wine.vercel.app/privacy</loc></url>
+  <url><loc>https://kingdom-bible-wine.vercel.app/refund</loc></url>
+  <url><loc>https://kingdom-bible-wine.vercel.app/remote</loc></url>
 </urlset>
+

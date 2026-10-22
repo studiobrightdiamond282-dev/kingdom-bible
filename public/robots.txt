@@ -1,4 +1,6 @@
 User-agent: *
 Allow: /
 Disallow: /api/
-Sitemap: /sitemap.xml
+Disallow: /admin
+Sitemap: https://kingdom-bible-wine.vercel.app/sitemap.xml
+

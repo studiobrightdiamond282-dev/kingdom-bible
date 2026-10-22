@@ -57,7 +57,7 @@ assert(fs.existsSync(path.join(pub,'premium.js')),'Missing premium.js (accounts 
 assert(fs.existsSync(path.join(pub,'admin.html'))&&fs.existsSync(path.join(pub,'admin.js')),'Missing admin portal');
 assert(fs.existsSync(path.join(pub,'privacy.html'))&&fs.existsSync(path.join(pub,'refund.html')),'Missing legal policy pages');
 const serverPremiumSrc=fs.readFileSync(path.join(root,'server.js'),'utf8');
-for(const ep of ['/api/auth/register','/api/auth/login','/api/payments/initialize','/api/wallet/withdraw','/api/admin/overview','/api/ai/ask'])assert(serverPremiumSrc.includes(ep),`premium endpoint missing ${ep}`);
+for(const ep of ['/api/auth/register','/api/auth/login','/api/payments/initialize','/api/wallet/withdraw','/api/admin/overview','/api/ai/ask','/api/speak'])assert(serverPremiumSrc.includes(ep),`premium endpoint missing ${ep}`);
 assert(serverPremiumSrc.includes('PAYSTACK_SECRET_KEY')&&!serverPremiumSrc.includes('pk_live_15b415df90f55aed4082c964b0fcb61daa642d41'),'live payment credentials must never be hard-coded');
 /* Paystack "pass fees to customers" makes the verified amount the GROSS the
    customer paid (Nigeria: 1.5% + NGN 100), so a Silver plan charges 263,960

@@ -2,11 +2,14 @@
 <html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
-  <script>try{var kbp=JSON.parse(localStorage.getItem('kingdomBible.v1')||'{}');if(kbp&&kbp.profile&&kbp.profile.theme)document.documentElement.setAttribute('data-theme',kbp.profile.theme)}catch(e){}</script>
+  <script src="/theme-init.js"></script>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="theme-color" content="#07142f" />
-  <meta name="description" content="KINGDOM BIBLE — Read, study, understand, and live the Word." />
-  <title>KINGDOM BIBLE</title>
+  <meta name="description" content="KINGDOM BIBLE — Read, study, understand, and live the Word. Complete Bible with study tools, prayer journal and live ministry presentation." />
+  <meta name="application-name" content="KINGDOM BIBLE" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>KINGDOM BIBLE — Read. Study. Understand. Live the Word.</title>
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="/favicon.png" sizes="48x48" />
@@ -41,12 +44,13 @@
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
+  <noscript><div style="max-width:560px;margin:40px auto;padding:24px;text-align:center;font-family:system-ui;background:#0c1930;color:#eef4ff;border:1px solid #1e3352;border-radius:16px"><h1 style="font-family:Georgia,serif;color:#f5d778">KINGDOM BIBLE</h1><p>Read, study, understand and live the Word. This experience needs JavaScript to open the Bible library, search and ministry tools.</p><p>Please enable JavaScript and reload.</p></div></noscript>
   <a class="skip-link" href="#main">Skip to content</a>
   <div id="offlineBar" class="offline-bar" hidden>You’re offline. Saved Bible content and personal data remain available.</div>
   <div class="app-shell">
     <aside class="sidebar" aria-label="Primary navigation">
       <button class="brand" data-route="home" data-admin-trigger aria-label="Kingdom Bible home">
-        <img src="/assets/logo.png" alt="" />
+        <img src="/assets/logo.png" alt="" width="48" height="48" fetchpriority="high" decoding="async" />
         <span><strong>KINGDOM</strong><small>BIBLE</small></span>
       </button>
       <nav id="desktopNav" class="side-nav"></nav>
