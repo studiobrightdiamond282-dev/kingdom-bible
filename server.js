@@ -528,7 +528,7 @@ const server=http.createServer(async(req,res)=>{
       const plan=planBy((await body(req)).plan);if(!plan)return json(res,400,{ok:false,error:'Choose a valid subscription plan'});
       if(s.role==='admin')return json(res,200,{ok:true,admin:true,message:'Administrator access is free'});
       try{
-        const d=await paystack('/transaction/initialize',{method:'POST',body:JSON.stringify({email:s.user.email,amount:plan.price*100,currency:'NGN',metadata:{userId:s.user.id,plan:plan.id},callback_url:String(req.headers.origin||'')+'/#premium'})});
+        const d=await paystack('/transaction/initialize',{method:'POST',body:JSON.stringify({email:s.user.email,amount:plan.price*100,currency:'NGN',metadata:{userId:s.user.id,plan:plan.id},callback_url:'https://kingdom-bible.onrender.com/#premium'})});
         premiumStore.transactions.push({id:uid('tx'),reference:d.data.reference,userId:s.user.id,plan:plan.id,amount:plan.price,status:'pending',createdAt:new Date().toISOString()});savePremiumStore();audit('payment.initialize',s.user.id,{plan:plan.id,amount:plan.price});return json(res,200,{ok:true,authorizationUrl:d.data.authorization_url,reference:d.data.reference,accessCode:d.data.access_code});
       }catch(e){return json(res,503,{ok:false,error:e.message})}
     }

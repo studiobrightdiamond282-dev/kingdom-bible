@@ -138,6 +138,29 @@ function googleButton(mount) {
 async function apiPost(path,body){const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Request failed');return d}
 async function api(path,opts={}){const r=await fetch(path,{...opts,headers:{'content-type':'application/json',...(opts.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Request failed');return d}
 async function load(){try{const [c,m]=await Promise.all([api('/api/premium/config'),api('/api/auth/me')]);config=c;user=m.user||null;return user}catch{return undefined}}
+/* After Paystack redirects back from payment, the URL contains ?reference=xxx.
+   Verify the payment with the server and update the account if successful. */
+async function verifyPendingPayment(){
+  const params=new URLSearchParams(location.search);
+  const reference=params.get('reference')||params.get('trxref');
+  if(!reference||!user)return;
+  try{
+    const d=await api('/api/payments/verify',{method:'POST',body:JSON.stringify({reference})});
+    if(d.ok&&d.user){
+      user=d.user;
+      /* Clean the reference from the URL so reload doesn't re-verify */
+      try{history.replaceState(null,'',location.pathname+location.hash)}catch{}
+      if(typeof toast==='function')toast('Subscription activated — thank you!','success');
+    }
+  }catch(e){
+    /* Payment verification failed — show error but don't block the app */
+    const err=document.createElement('div');
+    err.className='premium-form-error';
+    err.textContent='Payment verification failed: '+e.message;
+    const r=root();if(r)r.append(err);
+    setTimeout(()=>err.remove(),8000);
+  }
+}
 function close(){root().innerHTML=''}
 /* Where a newly signed-in account should land. The plan screen used to open the
    instant somebody signed up, so finishing the trial felt like being stuck on a
@@ -158,7 +181,7 @@ async function signOut(){
 }
 function shell(body,cls='premium-modal'){root().innerHTML=`<div class="modal-backdrop"><div class="modal ${cls}" role="dialog" aria-modal="true">${body}</div></div>`;root().querySelector('.modal-backdrop').onclick=e=>{if(e.target.classList.contains('modal-backdrop'))close()};root().querySelectorAll('[data-premium-close]').forEach(b=>b.onclick=close)}
 function planCards(){return(config?.plans||[]).map(p=>`<article class="premium-plan ${p.id==='premium'?'featured':''}"><div class="eyebrow">${p.name.toUpperCase()}</div><h3>₦${Number(p.price).toLocaleString()}<small>/month</small></h3><p>${esc(p.tagline)}</p><ul>${p.benefits.map(b=>`<li>${esc(b)}</li>`).join('')}</ul><button class="${p.id==='premium'?'primary-btn':'secondary-btn'}" data-buy="${p.id}">Choose ${p.name}</button></article>`).join('')}
-function open(){load().then(()=>user?account():landing())}
+function open(){load().then(async()=>{await verifyPendingPayment();user?account():landing()})}
 /* Open sign-in or sign-up DIRECTLY, skipping the plan screen. The welcome gate
    had two different promises ("Create free account" and "I already have an
    account") but both funnelled into open(), so both landed on the same generic
