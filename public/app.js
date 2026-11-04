@@ -1027,15 +1027,12 @@ async function shareDevCard(DV,track){
     let shared=false;
     if(navigator.share){
       try{
-        const can=navigator.canShare?await navigator.canShare({files}):true;
-        if(can){
-          await navigator.share({files,title:'KINGDOM BIBLE',text:`${DV.title} â€” full daily devotional card (${n} page${n>1?'s':''})`});
-          shared=true;
-        }
+        await navigator.share({files,title:'KINGDOM BIBLE',text:`${DV.title} — full daily devotional card (${n} page${n>1?'s':''})`});
+        shared=true;
       }catch(e){
         if(e&&e.name==='AbortError')throw e;
         try{
-          await navigator.share({files,title:'KINGDOM BIBLE',text:`${DV.title} â€” full daily devotional card (${n} page${n>1?'s':''})`});
+          await navigator.share({files,title:'KINGDOM BIBLE',text:`${DV.title} — full daily devotional card (${n} page${n>1?'s':''})`});
           shared=true;
         }catch(e2){
           if(e2&&e2.name!=='AbortError')throw e2;
