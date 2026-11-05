@@ -253,13 +253,13 @@ const PREMIUM_CONFIG={
      operator can take it away and steer everyone to email + password, which
      always works. Set GOOGLE_SIGNIN=off (0/false/no also accepted). */
   googleSignInOn:!/^(off|0|false|no|disabled)$/i.test(String(process.env.GOOGLE_SIGNIN||'').trim()),
-  /* LIVE ministry hub — the always-online Tailscale Funnel address of the ministry
-     PC (https://desktop-dqg29pr.tail876272.ts.net). The static Vercel build has no
-     phone remote / SSE / service-code hub, so Ministry Mode offers a one-tap
-     "Open Live Ministry Hub" doorway to this URL. Browsers block cross-origin
-     fetch, so this is a plain link (target _blank), never an API call. Changing
-     the PC or tailnet name = change it here + .env + hub-probe fallback. */
-  liveHubUrl:String(process.env.LIVE_HUB_URL||'https://desktop-dqg29pr.tail876272.ts.net').trim().replace(/\/+$/,''),
+  /* LIVE ministry hub — the always-on Render cloud server.
+     The static Vercel build has no phone remote / SSE / service-code hub,
+     so Ministry Mode offers a one-tap "Open Live Ministry Hub" doorway to
+     this URL. Browsers block cross-origin fetch, so this is a plain link
+     (target _blank), never an API call. Changing the hub URL = change it
+     here + .env + hub-probe fallback. */
+  liveHubUrl:String(process.env.LIVE_HUB_URL||'https://kingdom-bible.onrender.com').trim().replace(/\/+$/,''),
 };
 const premiumSessions=new Map();
 function blankPremiumStore(){return{users:[],transactions:[],withdrawals:[],audit:[],notifications:[],passwordResets:[]}}
@@ -528,7 +528,7 @@ const server=http.createServer(async(req,res)=>{
       const plan=planBy((await body(req)).plan);if(!plan)return json(res,400,{ok:false,error:'Choose a valid subscription plan'});
       if(s.role==='admin')return json(res,200,{ok:true,admin:true,message:'Administrator access is free'});
       try{
-        const d=await paystack('/transaction/initialize',{method:'POST',body:JSON.stringify({email:s.user.email,amount:plan.price*100,currency:'NGN',metadata:{userId:s.user.id,plan:plan.id},callback_url:'https://kingdom-bible.onrender.com/#premium'})});
+        const d=await paystack('/transaction/initialize',{method:'POST',body:JSON.stringify({email:s.user.email,amount:plan.price*100,currency:'NGN',metadata:{userId:s.user.id,plan:plan.id},callback_url:publicOrigin(req)+'/#premium'})});
         premiumStore.transactions.push({id:uid('tx'),reference:d.data.reference,userId:s.user.id,plan:plan.id,amount:plan.price,status:'pending',createdAt:new Date().toISOString()});savePremiumStore();audit('payment.initialize',s.user.id,{plan:plan.id,amount:plan.price});return json(res,200,{ok:true,authorizationUrl:d.data.authorization_url,reference:d.data.reference,accessCode:d.data.access_code});
       }catch(e){return json(res,503,{ok:false,error:e.message})}
     }
@@ -896,3 +896,4 @@ server.listen(PORT,HOST,()=>{
 });
 
 process.on('SIGINT',()=>{console.log('\nShutting down.');process.exit(0)});
+

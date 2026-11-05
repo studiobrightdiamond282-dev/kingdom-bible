@@ -578,7 +578,7 @@ function drawQR(text,canvas){
 /* LIVE ministry hub doorway (the one-tap Livestreaming button).
    Vercel (kingdom-bible-wine.vercel.app) is the REAL always-online site, but it has
    no phone-remote/QR/SSE hub "” QR, phone remote, vMix and OBS only work on the
-   live stage (the ministry PC via Tailscale Funnel). Tapping the button carries
+   live stage (Render cloud hub or the local PC on LAN Wi-Fi). Tapping the button carries
    the reader to the live stage: liveHubLink() (same ?source=, #ministry).
    Resolution order: server config -> probe constant -> hardcoded fallback.
    If the stage is offline the reader is notified and stays on this site "”
@@ -592,7 +592,7 @@ function liveHubUrl(){
     const probeUrl=hub()?.LIVE_HUB_URL;
     if(probeUrl&&/^https?:\/\//.test(probeUrl))return String(probeUrl).replace(/\/+$/,'');
   }catch{}
-  return 'https://desktop-dqg29pr.tail876272.ts.net';
+  return 'https://kingdom-bible.onrender.com';
 }
 function liveHubLink(){
   /* Carry the reader to the live ministry stage, keeping the current launch
@@ -628,7 +628,7 @@ function liveHubCardHtml(){
       <a class="primary-btn small-btn" href="${esc(url)}" target="_blank" rel="noopener" id="openLiveHub">Open Live Ministry Hub</a>
       <button class="secondary-btn small-btn" id="copyLiveHub">Copy live link</button>
     </div>
-    <p class="hint">Needs the ministry PC online (Tailscale running). If the stage is offline you will be notified and stay here "” everything here still works.</p>
+    <p class="hint">If the live stage is offline you will be notified and stay here — everything here still works.</p>
   </div></div></section>`;
 }
 /* presenter-facing connection card: code + QR + LAN address
@@ -668,17 +668,15 @@ function connectCardHtml(){
     return `${liveHubCardHtml()}${offlineCard}`;
   }
   const port=(netInfo&&netInfo.port)||HUB_PORT;
-  /* QR code and phone link use the Render cloud URL so they work from ANYWHERE "”
-     cellular, 5G, other Wi-Fi networks, and even when the ministry PC is off.
-     The LAN address (addr) is only shown as a fallback for same-Wi-Fi use. */
-  const CLOUD_ORIGIN='https://kingdom-bible.onrender.com';
+  /* QR code and phone link point at this computer's LAN address so the phone on   *
+     the same Wi-Fi talks to the same hub that issued the service code.            */
   const addr=netInfo&&netInfo.addresses&&netInfo.addresses[0];
   const localHost=['localhost','127.0.0.1','::1'].includes(location.hostname);
   const lanOrigin=addr?`http://${addr}:${port}`:(localHost?'':location.origin);
   const code=sessionCode||'------';
-  /* QR + direct link always point at the cloud hub so the phone can connect
-     from any network, not just the ministry Wi-Fi. */
-  const url=CLOUD_ORIGIN+'/remote?code='+encodeURIComponent(sessionCode||'');
+  /* QR + direct link use the LAN address; the phone must reach the same PC hub     *
+     that created the session code, otherwise pairing and remote control fail.     */
+  const url=lanOrigin+'/remote?code='+encodeURIComponent(sessionCode||'');
   const ready=!!sessionCode;
   return `<section class="card connect-card ${ready?'':'hub-offline-card'}">
   <div class="section-head" style="margin:0 0 14px">

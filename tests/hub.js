@@ -43,7 +43,7 @@ const htmlOnApi={status:200,json:false,body:null};
     /npm start/.test(H.describe('offline').body+H.describe('offline').steps.join(' ')));
   ok('static copy points at the live ministry hub doorway',
     /live ministry hub/i.test(H.describe('static').body+H.describe('static').steps.join(' '))
-    &&/^https:\/\/desktop-dqg29pr\.tail876272\.ts\.net$/.test(H.describe('static').liveHubUrl||H.LIVE_HUB_URL||''));
+    &&/^https:\/\/kingdom-bible\.onrender\.com$/.test(H.describe('static').liveHubUrl||H.LIVE_HUB_URL||''));
   ok('offline copy never claims a live session',
     !/live session|is live|connected now/i.test(H.describe('static').title+H.describe('static').body)
     &&!/Live/.test(H.describe('static').title));
@@ -69,7 +69,7 @@ const htmlOnApi={status:200,json:false,body:null};
   ok('the "Live session" pill is conditional on a live hub',
     /isLive\(hubState\)\?'<span class="status-dot"><\/span> Live session':'<span class="status-dot off"><\/span> This computer only'/.test(app));
   ok('a blank QR canvas is removed rather than shown',/qr-wrap'\)\?\.remove\(\)/.test(app));
-  ok('the phone link embeds the service code exactly once',/origin\+'\/remote\?code='/.test(app)&&/drawQR\(full/.test(app));
+  ok('the phone link embeds the service code exactly once',/lanOrigin\+'\/remote\?code='/.test(app)&&/drawQR\(full/.test(app));
   ok('the old copy-link fallback is visible',/Direct phone link/.test(app)&&/Open phone remote/.test(app)&&/Copy link/.test(app));
   ok('localhost is never placed in the phone QR',/localHost/.test(app)&&/QR is intentionally hidden until a real LAN link/.test(app));
   ok('a retry control exists on the presenter card',/id="hubRetry"/.test(app)&&/id="hubRetry"/.test(app));
@@ -109,8 +109,8 @@ const htmlOnApi={status:200,json:false,body:null};
     const probeSrc=fs.readFileSync(path.join(__dirname,'../public/hub-probe.js'),'utf8');
     const css=fs.readFileSync(path.join(__dirname,'../public/styles.css'),'utf8');
     ok('server exposes the live hub URL in premium config',/liveHubUrl/.test(serverSrc));
-    ok('server live hub defaults to the Tailscale Funnel address',
-      serverSrc.includes('https://desktop-dqg29pr.tail876272.ts.net'));
+    ok('server live hub defaults to the Render cloud hub',
+      serverSrc.includes('https://kingdom-bible.onrender.com'));
     ok('hub-probe exports the live hub URL',/LIVE_HUB_URL/.test(probeSrc)&&/LIVE_HUB_URL=/.test(probeSrc));
     ok('ministry renders the live doorway card with new-tab link',
       /liveHubCardHtml/.test(app)&&/Open Live Ministry Hub/.test(app)&&/target="_blank"/.test(app)
@@ -166,3 +166,4 @@ const htmlOnApi={status:200,json:false,body:null};
   console.log('\n'+pass+' passed, '+fail+' failed');
   if(fail)process.exitCode=1;
 })();
+

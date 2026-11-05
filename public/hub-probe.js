@@ -17,13 +17,14 @@
 'use strict';
 const APP='KINGDOM BIBLE';
 const PORT=4173;
-/* LIVE ministry hub — the ministry PC's always-online Tailscale Funnel address.
+/* LIVE ministry hub — the always-on Render cloud server.
    The static Vercel build (kingdom-bible-wine.vercel.app) is the REAL site and is
    always online, but it has no phone-remote/SSE/service-code hub. When the
    presenter wants the live stage, Ministry Mode offers a one-tap doorway to this
-   URL (new tab). Only works while the ministry PC + Tailscale are on — that is
-   expected until a proper domain replaces it. Keep in sync with LIVE_HUB_URL. */
-const LIVE_HUB_URL='https://desktop-dqg29pr.tail876272.ts.net';
+   URL (new tab). Only works while Render is up (free tier spins down after ~15 min
+   inactivity; first request takes ~30s to wake). That is expected until a proper
+   domain replaces it. Keep in sync with LIVE_HUB_URL. */
+const LIVE_HUB_URL='https://kingdom-bible.onrender.com';
 
 /* GET a path and try to read it as JSON. Never throws. */
 async function readJSON(path,fetchImpl){
@@ -71,9 +72,9 @@ function describe(state){
   };
   return {
     title:'Phone remote needs the live ministry hub',
-    body:'This is the main KINGDOM BIBLE site — always online for reading, study and local presenting. The service code, phone remote and live sync run on the live ministry hub (your ministry PC via Tailscale).',
-    hint:'Present from here any time. When you need phone control + live sync, open the live hub below — it needs the ministry PC online.',
-    steps:['If the ministry PC is on (Tailscale running), tap “Open Live Ministry Hub” below — the live stage opens in a new tab.',
+    body:'This is the main KINGDOM BIBLE site — always online for reading, study and local presenting. The service code, phone remote and live sync run on the live ministry hub (Render cloud hub or your local PC on LAN Wi-Fi).',
+    hint:'Present from here any time. When you need phone control + live sync, open the live hub below.',
+    steps:['Tap “Open Live Ministry Hub” below — the live stage opens in a new tab.',
            'On the live hub, go to Ministry Mode and start your session there.',
            'This page keeps working for reading, study and local presenting.'],
     launchUrl:'http://localhost:'+PORT,dot:'off',liveHubUrl:LIVE_HUB_URL
