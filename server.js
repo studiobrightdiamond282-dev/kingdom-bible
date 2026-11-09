@@ -335,51 +335,19 @@ function dropSessionsFor(userId){let n=0;for(const [token,s]of premiumSessions)i
 function sessionRecord(req){const a=auth(req);if(!a)return null;if(a.role==='admin')return{...a,user:null};const user=findUser(a.userId);return user?{...a,user}:null}
 function requireAuth(req,res){const s=sessionRecord(req);if(!s){json(res,401,{ok:false,error:'Please sign in'});return null}return s}
 function requireAdmin(req,res){const g=adminGate(req);if(!g.ok){denyAdmin(res,g);return null}const s=sessionRecord(req);if(!s||s.role!=='admin'){json(res,403,{ok:false,error:'Administrator access required'});return null}return s}
-/* ---------- admin network gate ----------
-   The hub is published to the open internet through a Tailscale Funnel, so /admin
-   would otherwise be reachable by anyone who guesses the path. IP filtering looks
-   like the obvious fix but does NOT work here: Tailscale proxies Funnel traffic
-   from the local tailscaled process, so every internet visitor arrives with
-   `remoteAddress === 127.0.0.1` — measured, not assumed. An allowlist on that would
-   either lock the owner out or admit the whole internet.
-
-   Measured 2026-10-11 on this PC (`GET /__headers` locally vs over the Funnel):
-
-     local direct:  Host 127.0.0.1:4173, NO Tailscale-* headers, NO X-Forwarded-*.
-     over Funnel (this PC, tailnet-logged-in): Host <name>.ts.net PLUS
-       Tailscale-Headers-Info, Tailscale-User-Login/Name/Profile-Pic AND
-       X-Forwarded-For/Host/Proto.
-
-   So `tailscaled` DOES inject the identity headers for tailnet members over
-   Funnel (tailscale.com/s/serve-headers) and strips any client-supplied forgery,
-   so they cannot be forged over HTTP. A stranger on the open internet gets the
-   X-Forwarded-* proxy headers but NEVER an identity. The gate fails closed:
-
-     A) allowlisted Tailscale identity login (Serve / tailnet path, incl. this
-        PC over its own Funnel URL) => you: allow.
-     B) loopback AND no tunnel indicators at all (no Tailscale-Headers-Info, no
-        X-Forwarded-*, Host is not a *.ts.net tunnel name) => a real local
-        browser on this machine: allow.
-
-   Everything else — including EVERY anonymous visitor arriving over the public
-   Funnel — is refused with 403 before the password is even considered. A 200 for
-   /admin from THIS PC over the Funnel URL is therefore the CORRECT answer: it is
-   you, with an allowlisted identity. To administer remotely, use a tailnet
-   device signed in as an ADMIN_TAILNET_LOGINS login, or this PC's own browser
-   at http://localhost:4173/admin. */
-const ADMIN_TAILNET_LOGINS=new Set(String(process.env.ADMIN_TAILNET_LOGINS||'').split(',').map(s=>s.trim().toLowerCase()).filter(Boolean));
+/* ---------- admin gate ------------
+  /admin is protected by session-based authentication only.
+  An admin session is created via POST /api/auth/login with admin credentials
+  (PREMIUM_CONFIG.adminEmail / PREMIUM_CONFIG.adminPassword). No Tailscale,
+  no tunnel, no IP allowlist — the same credentials work from localhost,
+  Render, or any host that can reach this server. */
 function adminGate(req){
-  const loopback=['127.0.0.1','::1','::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
-  if(!loopback)return{ok:false,why:'This computer is not the ministry hub'};
-  const login=String(req.headers['tailscale-user-login']||'').trim().toLowerCase();
-  if(login&&ADMIN_TAILNET_LOGINS.has(login))return{ok:true,how:'tailnet:'+login};
-  const host=String(req.headers['x-forwarded-host']||req.headers.host||'').split(',')[0].trim().toLowerCase();
-  const viaTunnel=Boolean(req.headers['tailscale-headers-info'])
-    ||Boolean(req.headers['x-forwarded-for']||req.headers['x-forwarded-proto']||req.headers['x-forwarded-host'])
-    ||/\.ts\.net(:\d+)?$/.test(host)||/\.tailscale\.com(:\d+)?$/.test(host);
-  if(!viaTunnel)return{ok:true,how:'local'};
-  return{ok:false,why:'The administrator portal is private to this Tailscale network'};
+  const s=sessionRecord(req);
+  if(!s)return{ok:false,why:'Please sign in'};
+  if(s.role!=='admin')return{ok:false,why:'Administrator access required'};
+  return{ok:true,how:'session'};
 }
+
 function denyAdmin(res,g){return json(res,403,{ok:false,error:g.why||'Administrator portal unavailable'})}
 /* minimal HTML escape for the server-rendered block page; `esc` only exists in the
    browser bundles, so referencing it here threw a ReferenceError (HTTP 500). */

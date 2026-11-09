@@ -499,20 +499,26 @@ async function sendPresentation(v){const payload={...v,theme:state.ministry.them
 
 /* ---------- live service session (presenter side) ----------
    The phone remote, the service code, the SSE stream and server-side verse
-   resolution all live in the local Node hub. On a static host (Vercel) those
-   routes do not exist, so hub-probe.js tells us which world we are in before
-   anything is rendered. Never infer it from a status code: a static host
-   answers /health with 200 text/html. */
+   resolution all live in the Node hub (server.js). On a static host (Vercel)
+   those routes do not exist, so hub-probe.js tells us which world we are in.
+   Never infer it from a status code: a static host answers /health with 200 text/html.
+
+   Phone remote and QR always point at the live hub origin:
+   - Local PC:    the LAN address printed at startup (http://<lan-ip>:4173)
+   - Render cloud: https://kingdom-bible.onrender.com
+   Never localhost on the phone — that means the phone itself.
+   */
 let sessionCode=null,netInfo=null,hubState='checking';
 const HUB_PORT=4173;
 /* If hub-probe.js ever fails to load, fail closed: never claim a live session, and
    still tell the presenter exactly what to do rather than rendering an empty card. */
 const HUB_FALLBACK={PORT:HUB_PORT,isLive:()=>false,probe:async()=>'static',
   describe:()=>({title:'Phone remote needs the ministry hub',
-    body:'The live service is served by the ministry computer itself.',
-    hint:'Run "npm start" on the ministry computer and open the LAN address it prints.',
+    body:'The live service is served by the ministry computer itself (localhost:4173) or the Render cloud hub.',
+    hint:'Run "npm start" on the ministry computer, or use the Live Ministry Hub button to open the Render cloud hub.',
     steps:['Open the KINGDOM BIBLE folder in a terminal.','Run `npm start`.',
-           'Open the LAN address it prints, then choose "Check again".'],
+           'Open the LAN address it prints, then choose "Check again".',
+           'Or tap "Open Live Ministry Hub" to use the cloud hub on Render.'],
     launchUrl:'http://localhost:'+HUB_PORT})};
 function hub(){return window.KingdomHub||HUB_FALLBACK}
 async function loadHub(){
@@ -521,11 +527,20 @@ async function loadHub(){
   return hubState;
 }
 async function loadNet(){try{netInfo=await(await fetch('/api/network',{cache:'no-store'})).json()}catch{netInfo=null}}
-/* The audience display must be reachable from the projector machine and the phone,
-   so it always uses the LAN origin + the live code “ never localhost, never code-less. */
-function lanOrigin(){const a=netInfo&&netInfo.addresses&&netInfo.addresses[0];return a?`http://${a}:${netInfo.port}`:location.origin}
-function remoteUrl(){return lanOrigin()+'/remote'+(sessionCode?'?code='+encodeURIComponent(sessionCode):'')}
-function displayUrl(){return lanOrigin()+'/present'+(sessionCode?'?code='+encodeURIComponent(sessionCode):'')}
+/* Returns the origin the phone remote should use:
+   - On localhost: the LAN address from /api/network (so phone on same Wi-Fi reaches the PC hub)
+   - On Render/Vercel (static): the Render cloud hub (https://kingdom-bible.onrender.com)
+   Never returns localhost — that would mean the phone itself. */
+function hubOrigin(){
+  if(location.hostname==='localhost'||location.hostname==='127.0.0.1'||location.hostname==='::1'){
+    const a=netInfo&&netInfo.addresses&&netInfo.addresses[0];
+    return a?`http://${a}:${(netInfo&&netInfo.port)||HUB_PORT}`:location.origin;
+  }
+  // On any public host (Vercel, Render, etc.), the phone remote talks to Render cloud hub
+  return 'https://kingdom-bible.onrender.com';
+}
+function remoteUrl(){return hubOrigin()+'/remote'+(sessionCode?'?code='+encodeURIComponent(sessionCode):'')}
+function displayUrl(){return hubOrigin()+'/present'+(sessionCode?'?code='+encodeURIComponent(sessionCode):'')}
 async function ensureSession(){
   if(sessionCode)return sessionCode;
   /* only a proven live hub can mint or validate a code */
@@ -613,7 +628,7 @@ function openLiveHub(ev){
   const url=liveHubLink();
   try{if(ev&&ev.preventDefault)ev.preventDefault()}catch{}
   window.open(url,'_blank','noopener');
-  toast('Opening the live stage in a new tab “ if it stays blank or white, the ministry PC is off or Tailscale is not running. Everything here still works.');
+  toast('Opening the live stage in a new tab “ if it stays blank or white, the ministry PC is off. Everything here still works.');
 }
 function liveHubCardHtml(){
   const url=liveHubLink();
@@ -642,7 +657,7 @@ function connectCardHtml(){
     const d=hub().describe(hubState)||{};
     /* Live-stage carry button sits in the SAME hub-actions row as "Check again"
        and "Open the local hub" (owner screenshot 2026-10-16): on the main Vercel
-       site the QR / phone remote / vMix / OBS only work on the live Tailscale
+       site the QR / phone remote / vMix / OBS only work on the live hub
        stage, so one tap carries the reader there (same ?source=, #ministry).
        Offline stage = notify + stay, never a white screen. */
     const liveUrl=liveHubLink();
@@ -672,7 +687,7 @@ function connectCardHtml(){
      the same Wi-Fi talks to the same hub that issued the service code.            */
   const addr=netInfo&&netInfo.addresses&&netInfo.addresses[0];
   const localHost=['localhost','127.0.0.1','::1'].includes(location.hostname);
-  const lanOrigin=addr?`http://${addr}:${port}`:(localHost?'':location.origin);
+  const lanOrigin=addr?`http://${addr}:${port}`:location.hostname.includes('localhost')?'':`https://kingdom-bible.onrender.com`;
   const code=sessionCode||'------';
   /* QR + direct link use the LAN address; the phone must reach the same PC hub     *
      that created the session code, otherwise pairing and remote control fail.     */
