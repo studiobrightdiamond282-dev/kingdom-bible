@@ -3,7 +3,7 @@
    stage, checks the stage first (offline = notify + stay, never white screen),
    and Ministry falls back to a bundled verse when the verse fetch fails.
    Without a new VERSION every returning install keeps serving the cached shell. */
-const VERSION='kingdom-bible-v1.2.1-phone-fix';
+const VERSION='kingdom-bible-v1.2.1-phone-fix2';
 const SHELL=[
   '/', '/index.html','/theme-init.js','/styles.css','/app.js','/devotionals.js','/auth-fix.js','/profile-fix.js','/reader-fix.js','/study-fix.js','/audit-fix.js','/premium.js','/qr.js','/hub-probe.js','/bible-ref.js','/voice.js','/remote.js','/remote.html','/admin.html','/admin.js','/privacy.html','/refund.html','/status.html','/status.js',
   '/search-worker.js','/offline.html','/manifest.json','/favicon.svg','/favicon.png',

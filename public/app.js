@@ -682,12 +682,10 @@ function connectCardHtml(){
        local-only instructions. Live hub IS the ministry PC online. */
     return `${liveHubCardHtml()}${offlineCard}`;
   }
-  const port=(netInfo&&netInfo.port)||HUB_PORT;
-  /* QR code and phone link point at this computer's LAN address so the phone on   *
-     the same Wi-Fi talks to the same hub that issued the service code.            */
-  const addr=netInfo&&netInfo.addresses&&netInfo.addresses[0];
-  const localHost=['localhost','127.0.0.1','::1'].includes(location.hostname);
-  const lanOrigin=addr?`http://${addr}:${port}`:location.hostname.includes('localhost')?'':`https://kingdom-bible.onrender.com`;
+/* QR code and phone link point at Render cloud hub so phone can connect
+     from any network (cellular or Wi-Fi). For same-Wi-Fi LAN mode, the
+     phone can manually type the PC's LAN address: http://<lan-ip>:4173 */
+  const lanOrigin=`https://kingdom-bible.onrender.com`;
   const code=sessionCode||'------';
   /* QR + direct link use the LAN address; the phone must reach the same PC hub     *
      that created the session code, otherwise pairing and remote control fail.     */
