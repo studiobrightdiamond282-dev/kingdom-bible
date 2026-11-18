@@ -4,6 +4,12 @@
 
 A premium, local-first Progressive Web App for Bible reading, Scripture study, prayer journaling, reading plans, memorization, and professional church Scripture presentation.
 
+## New in v1.2.4
+
+- **Clean navigation and action icons.** Replaced remaining corrupted C1/replacement glyph sequences in reader controls, cross-reference actions, and the trial-time indicator.
+- **Stable phone remote controls.** The current-verse card keeps a fixed height when verses change, and lengthy passages scroll inside it so Next and Previous stay anchored.
+- **Cache refresh.** Bumped the service-worker cache and health-check version so installed clients receive the updates.
+
 ## New in v1.2.3
 
 - **Clean presentation quotations.** Fixed stray C1 control characters that appeared as square glyphs after Scripture quotes in the presenter preview and audience display; both now use proper curly quotation marks.
@@ -313,7 +319,7 @@ Never place provider secrets in browser code. Use the names in `.env.example` on
 `GET /health` returns service status without secrets or stack traces:
 
 ```json
-{"ok":true,"app":"KINGDOM BIBLE","version":"1.2.3","presentation":"operational",
+{"ok":true,"app":"KINGDOM BIBLE","version":"1.2.4","presentation":"operational",
  "sessionActive":true,"listeners":1,"uptime":412,"serverTime":1757404800000}
 ```
 
@@ -364,7 +370,7 @@ paired phone plus any vMix input that is mid-service.
 
 ## Version
 
-KINGDOM BIBLE v1.2.3 — `package.json`, `server.js` and the service-worker cache version are
+KINGDOM BIBLE v1.2.4 — `package.json`, `server.js` and the service-worker cache version are
 kept in sync, and a smoke test fails the build if they drift.
 
 ## Duplicate-folder cleanup (one-time, on the ministry PC)
