@@ -1,5 +1,5 @@
-/* Bumped so installed clients receive the presentation quotation rendering fix. */
-const VERSION='kingdom-bible-v1.2.3-quote-glyph-fix';
+/* Bumped so installed clients receive text cleanup and stable remote controls. */
+const VERSION='kingdom-bible-v1.2.4-stable-remote-controls';
 const SHELL=[
   '/', '/index.html','/theme-init.js','/styles.css','/app.js','/devotionals.js','/auth-fix.js','/profile-fix.js','/reader-fix.js','/study-fix.js','/audit-fix.js','/premium.js','/qr.js','/hub-probe.js','/bible-ref.js','/voice.js','/remote.js','/remote.html','/admin.html','/admin.js','/privacy.html','/refund.html','/status.html','/status.js',
   '/search-worker.js','/offline.html','/manifest.json','/favicon.svg','/favicon.png',

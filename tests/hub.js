@@ -57,11 +57,18 @@ const htmlOnApi={status:200,json:false,body:null};
   const app=fs.readFileSync(path.join(__dirname,'../public/app.js'),'utf8');
   const remote=fs.readFileSync(path.join(__dirname,'../public/remote.js'),'utf8');
   const html=fs.readFileSync(path.join(__dirname,'../public/index.html'),'utf8');
+  const styles=fs.readFileSync(path.join(__dirname,'../public/styles.css'),'utf8');
   console.log('\n--- presentation text encoding ---');
-  ok('app.js has no stray U+009D control character that renders as a square',!app.includes('\u009d'));
+  ok('app.js contains no C1 controls or replacement glyphs',!/[\u007f-\u009f\ufffd]/i.test(app));
+  ok('reader and ministry Previous controls use a visible left arrow',(app.match(/← Previous/g)||[]).length>=2);
+  ok('cross-reference and trial-time icons are visible Unicode symbols',app.includes('↔</span>Cross refs')&&app.includes('⏳ <strong>'));
   ok('presenter preview wraps verse text with real curly quotation marks',/<blockquote>“\$\{esc\(cur\.text\)\}”<\/blockquote>/.test(app));
   ok('live presenter-preview updates keep the same quotation marks',/el\.innerHTML=`<blockquote>“\$\{esc\(v\.text\)\}”<\/blockquote>/.test(app));
   ok('audience stage wraps verse text with real curly quotation marks',/verseBox\.innerHTML=`<blockquote>“\$\{body\}”<\/blockquote>/.test(app));
+  const nowCardRule=(styles.match(/\.live-now\{([^}]*)\}/)||[])[1]||'';
+  const nowVerseRule=(styles.match(/\.live-now blockquote\{([^}]*)\}/)||[])[1]||'';
+  ok('phone remote reserves a fixed-height current-verse card',/height:\s*220px/.test(nowCardRule)&&/display:\s*flex/.test(nowCardRule)&&/overflow:\s*hidden/.test(nowCardRule));
+  ok('long remote verse text scrolls inside its reserved card',/overflow-y:\s*auto/.test(nowVerseRule)&&/min-height:\s*0/.test(nowVerseRule));
   /* the old build showed a green "Live" pill, a dashed code and a blank QR on Vercel */
   ok('the connect card branches on the hub state',/if\(!live\)/.test(app));
   /* the offline branch returns early, so the green pill is only ever reachable online */

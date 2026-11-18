@@ -100,9 +100,12 @@ body.presentation-body.is-debug .presentation-status{display:block}
   color:#94a3c4;border-radius:10px;padding:11px 6px;font:800 12px var(--ui);cursor:pointer}
 .rn-seg-wrap button.on,.rn-row.seg button.on{background:rgba(245,215,120,.17);border-color:#f5d778;color:#f5d778}
 .rn-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}
-.live-now{border-color:rgba(245,215,120,.28);background:rgba(245,215,120,.055)}
-.live-now blockquote{margin:0;font-family:var(--scripture);font-size:17px;line-height:1.55;color:#fff}
-.live-now cite{display:block;margin-top:9px;font-style:normal;font:800 10.5px var(--ui);letter-spacing:.12em;color:#f5d778;text-transform:uppercase}
+.live-now{height:220px;display:flex;flex-direction:column;overflow:hidden;
+  border-color:rgba(245,215,120,.28);background:rgba(245,215,120,.055)}
+.live-now blockquote{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch;scrollbar-width:thin;margin:0;font-family:var(--scripture);font-size:17px;line-height:1.55;color:#fff}
+.live-now cite{display:block;flex:0 0 auto;min-height:13px;margin-top:9px;font-style:normal;
+  font:800 10.5px var(--ui);letter-spacing:.12em;color:#f5d778;text-transform:uppercase}
 .remote-toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,20px);background:#0f1b3a;border:1px solid rgba(255,255,255,.16);
   color:#e9eefb;padding:12px 20px;border-radius:999px;font:700 13px var(--ui);opacity:0;pointer-events:none;
   transition:.24s;z-index:20;box-shadow:0 10px 30px rgba(0,0,0,.45);max-width:88vw;text-align:center}

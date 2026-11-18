@@ -10,6 +10,18 @@ for(const tr of ['kjv','asv','web']){const d=JSON.parse(fs.readFileSync(path.joi
 const kjv=JSON.parse(fs.readFileSync(path.join(pub,'data/bible_kjv.json')));assert.equal(kjv.books.flat(2).length,31102);assert(kjv.books[0][0][0].startsWith('In the beginning'));
 const x=JSON.parse(fs.readFileSync(path.join(pub,'data/xrefs/22.json')));assert(x['Isaiah 53:5']?.some(r=>r.startsWith('1 Peter')));
 const html=fs.readFileSync(path.join(pub,'index.html'),'utf8'),app=fs.readFileSync(path.join(pub,'app.js'),'utf8');assert(html.includes('KINGDOM BIBLE'));assert(app.includes('renderBible'));assert(app.includes('renderMinistry'));
+/* Audit every UTF-8 site asset (skip binary images/fonts) and the source xref notes
+   so replacement glyphs cannot slip back into a page or its build input. */
+const walkFiles=dir=>fs.readdirSync(dir,{withFileTypes:true}).flatMap(e=>{
+  const f=path.join(dir,e.name);return e.isDirectory()?walkFiles(f):[f];
+});
+const binaryExts=new Set(['.png','.jpg','.jpeg','.webp','.gif','.ico','.woff','.woff2','.ttf','.otf']);
+const decodeUtf8=new (require('util').TextDecoder)('utf-8',{fatal:true});
+for(const f of [...walkFiles(pub),path.join(root,'data/raw/xrefs_kjv.tsv')]){
+  if(binaryExts.has(path.extname(f).toLowerCase()))continue;
+  const src=decodeUtf8.decode(fs.readFileSync(f));
+  assert(!/[\u007f-\u009f\ufffd]/.test(src),`${path.relative(root,f)} must not contain C1 controls or replacement glyphs`);
+}
 const swSrc0=fs.readFileSync(path.join(pub,'sw.js'),'utf8');
 
 /* ---- ministry remote + vMix capture ---- */
@@ -133,7 +145,7 @@ assert(mf.name&&mf.short_name&&mf.start_url&&mf.display,'manifest is incomplete'
 const pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
 const swSrc=fs.readFileSync(path.join(pub,'sw.js'),'utf8');
 const serverSrc=fs.readFileSync(path.join(root,'server.js'),'utf8');
-assert.equal(pkg.version,'1.2.3','package.json version');
+assert.equal(pkg.version,'1.2.4','package.json version');
 assert(serverSrc.includes("VERSION='"+pkg.version+"'"),'server.js must report the same version as package.json');
 assert(swSrc.includes(`kingdom-bible-v${pkg.version}`),'sw.js cache version must match package.json so updates are picked up');
 
