@@ -23,9 +23,10 @@
 
 ## Deployment and production checks
 
-- **Vercel deployment:** pending.
-- **Production route checks:** pending. Verify `/privacy` and `/refund` contain no `{{WHATSAPP*}}` tokens and show the configured WhatsApp link; `/admin` must be an informational live-service handoff, not a static login form; `/status` and `/` must load after deployment.
-- **Admin sign-in:** verify the handoff URL opens the live account service login, then confirm a non-admin cannot enter and an admin can reach the portal.
+- **Vercel project settings:** build command `node scripts/build-static.js`, output directory `dist`. The production deployment `dpl_44vfXaXqK8Cd4faNcduiBSkvS3N5` is READY/PROMOTED on `https://kingdom-bible-wine.vercel.app` at merged commit `2556f50`.
+- **Vercel production routes:** `/`, `/status`, `/privacy`, `/refund`, and `/admin` returned their expected pages. The legal pages have no unresolved WhatsApp placeholders and link to `wa.me/2348134438808`; `/admin` is the safe live-service handoff. `/admin.js` and `/admin-portal.html` return 404 on static hosting, confirming the private assets are absent.
+- **Render live service:** `/api/premium/config` reports app version `1.2.5` and the shared support number. Unauthenticated `/admin`, `/admin.js`, and `/admin-portal.html` return the private-portal denial; `/api/auth/me` returns a null user. The shipped `/?admin=1` flow opens login for a signed-out visitor and redirects an admin after authentication. A real production sign-in was not performed (no production credentials used); authenticated-admin and non-admin access are covered by the local integration tests.
+- PR #5 was merged; its Vercel preview was SSO-protected, so route checks were performed against the promoted public production alias.
 
 ## Operational note
 
