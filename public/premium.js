@@ -4,7 +4,7 @@
 'use strict';
 const root=()=>document.querySelector('#modalRoot');
 const esc=s=>String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-let config=null,user=null,googleReady=null,configPromise=null,apiState='unknown';
+let config=null,user=null,googleReady=null,configPromise=null,apiState='unknown',paymentVerification=null;
 /* Support contact is served by the server (/api/premium/config) so the number is defined
    in exactly one place. The literal below is only a fallback for the first paint, before
    config has loaded, and must agree with the shared SUPPORT_PHONE in config/site.js. */
@@ -139,7 +139,7 @@ async function apiPost(path,body){const r=await fetch(path,{method:'POST',header
 async function api(path,opts={}){const r=await fetch(path,{...opts,headers:{'content-type':'application/json',...(opts.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Request failed');return d}
 async function load(){
   if(apiState==='static')return undefined;
-  try{const [c,m]=await Promise.all([api('/api/premium/config'),api('/api/auth/me')]);config=c;user=m.user||null;apiState='online';return user}
+  try{const [c,m]=await Promise.all([api('/api/premium/config'),api('/api/auth/me')]);config=c;user=m.user||null;apiState='online';if(user){const q=new URLSearchParams(location.search);if(q.has('reference')||q.has('trxref'))void verifyPendingPayment()}return user}
   catch{
     if(g.KingdomHub&&typeof g.KingdomHub.probe==='function'){
       try{const host=await g.KingdomHub.probe();apiState=g.KingdomHub.isLive(host)?'online':host}
@@ -162,25 +162,27 @@ function showAccountServiceNotice(){
 /* After Paystack redirects back from payment, the URL contains ?reference=xxx.
    Verify the payment with the server and update the account if successful. */
 async function verifyPendingPayment(){
+  if(paymentVerification)return paymentVerification;
   const params=new URLSearchParams(location.search);
   const reference=params.get('reference')||params.get('trxref');
   if(!reference||!user)return;
-  try{
-    const d=await api('/api/payments/verify',{method:'POST',body:JSON.stringify({reference})});
-    if(d.ok&&d.user){
-      user=d.user;
-      /* Clean the reference from the URL so reload doesn't re-verify */
-      try{history.replaceState(null,'',location.pathname+location.hash)}catch{}
-      if(typeof toast==='function')toast('Subscription activated — thank you!','success');
-    }
-  }catch(e){
-    /* Payment verification failed — show error but don't block the app */
-    const err=document.createElement('div');
-    err.className='premium-form-error';
-    err.textContent='Payment verification failed: '+e.message;
-    const r=root();if(r)r.append(err);
-    setTimeout(()=>err.remove(),8000);
-  }
+  paymentVerification=(async()=>{
+    try{
+      const d=await api('/api/payments/verify',{method:'POST',body:JSON.stringify({reference})});
+      if(d.ok&&d.user){
+        user=d.user;
+        try{history.replaceState(null,'',location.pathname+location.hash)}catch{}
+        if(typeof toast==='function')toast('Subscription activated — thank you!','success');
+      }
+    }catch(e){
+      const err=document.createElement('div');
+      err.className='premium-form-error';
+      err.textContent='Payment verification failed: '+e.message;
+      const r=root();if(r)r.append(err);
+      setTimeout(()=>err.remove(),8000);
+    }finally{paymentVerification=null}
+  })();
+  return paymentVerification;
 }
 function close(){root().innerHTML=''}
 /* Where a newly signed-in account should land. The plan screen used to open the
@@ -191,6 +193,10 @@ function close(){root().innerHTML=''}
 function afterAuth(u){
   g.onAuth&&g.onAuth(u);
   try{close()}catch{}
+  /* If Paystack returned here after the session expired during checkout, finish
+     verification immediately after the customer signs back in. */
+  const params=new URLSearchParams(location.search);
+  if(params.has('reference')||params.has('trxref'))void verifyPendingPayment();
 }
 /* Sign out from anywhere in the shell. Clears the session server-side, drops the
    cached user, and re-runs the same onAuth(null) path the app already handles. */
@@ -201,14 +207,15 @@ async function signOut(){
   try{localStorage.removeItem('kb.lastEmail')}catch{}
 }
 function shell(body,cls='premium-modal'){root().innerHTML=`<div class="modal-backdrop"><div class="modal ${cls}" role="dialog" aria-modal="true">${body}</div></div>`;root().querySelector('.modal-backdrop').onclick=e=>{if(e.target.classList.contains('modal-backdrop'))close()};root().querySelectorAll('[data-premium-close]').forEach(b=>b.onclick=close)}
-function planCards(){return(config?.plans||[]).map(p=>`<article class="premium-plan ${p.id==='premium'?'featured':''}"><div class="eyebrow">${p.name.toUpperCase()}</div><h3>₦${Number(p.price).toLocaleString()}<small>/month</small></h3><p>${esc(p.tagline)}</p><ul>${p.benefits.map(b=>`<li>${esc(b)}</li>`).join('')}</ul><button class="${p.id==='premium'?'primary-btn':'secondary-btn'}" data-buy="${p.id}">Choose ${p.name}</button></article>`).join('')}
+function planCards(){const canBuy=!!config?.paystackReady||user?.role==='admin';return(config?.plans||[]).map(p=>`<article class="premium-plan ${p.id==='premium'?'featured':''}"><div class="eyebrow">${p.name.toUpperCase()}</div><h3>₦${Number(p.price).toLocaleString()}<small>/month</small></h3><p>${esc(p.tagline)}</p><ul>${p.benefits.map(b=>`<li>${esc(b)}</li>`).join('')}</ul><button class="${p.id==='premium'?'primary-btn':'secondary-btn'}" data-buy="${p.id}"${canBuy?'':' disabled aria-disabled="true"'}>${canBuy?'Choose '+esc(p.name):'Checkout unavailable'}</button></article>`).join('')}
+function paymentNotice(){if(config?.paystackReady||user?.role==='admin')return'';return`<div class="premium-notice premium-payment-offline" role="status"><strong>Secure checkout is unavailable right now.</strong> No payment can be started here. Please contact <a href="${esc(supportText('Help with KINGDOM BIBLE subscription checkout'))}" target="_blank" rel="noopener">support</a> while payment settings are checked.</div>`}
 function open(){load().then(async()=>{if(apiState!=='online'){showAccountServiceNotice();return}await verifyPendingPayment();user?account():landing()})}
 /* Open sign-in or sign-up DIRECTLY, skipping the plan screen. The welcome gate
    had two different promises ("Create free account" and "I already have an
    account") but both funnelled into open(), so both landed on the same generic
    Premium window and neither matched what the reader had clicked. */
 function openAuth(mode){load().then(()=>{if(apiState!=='online'){showAccountServiceNotice();return}user?account():auth(mode==='login'?'login':'register')})}
-function landing(){shell(`<div class="modal-head"><div><div class="eyebrow">KINGDOM BIBLE PRO</div><h2>Grow deeper. Serve better.</h2><p>Start with a 30-day free trial. We show a warning when seven days remain.</p></div><button class="close-btn" data-premium-close>×</button></div><div class="premium-notice"><strong>Fair and clear:</strong> subscriptions are charged through Paystack. AI access uses fair-use monthly allowances so you are never exposed to an unexpected bill. Read our <a href="/privacy" target="_blank">Privacy Policy</a> and <a href="/refund" target="_blank">Refund Policy</a>.</div><div class="premium-plans">${planCards()}</div><div class="premium-footer"><button class="secondary-btn" id="premiumLogin">Sign in</button><button class="primary-btn" id="premiumRegister">Start free trial</button><a href="${esc(supportText())}" target="_blank" rel="noopener">Questions? WhatsApp support</a></div>`);
+function landing(){shell(`<div class="modal-head"><div><div class="eyebrow">KINGDOM BIBLE PRO</div><h2>Grow deeper. Serve better.</h2><p>Start with a 30-day free trial. We show a warning when seven days remain.</p></div><button class="close-btn" data-premium-close>×</button></div><div class="premium-notice"><strong>Fair and clear:</strong> subscriptions are charged through Paystack. AI access uses fair-use monthly allowances so you are never exposed to an unexpected bill. Read our <a href="/privacy" target="_blank">Privacy Policy</a> and <a href="/refund" target="_blank">Refund Policy</a>.</div>${paymentNotice()}<div class="premium-plans">${planCards()}</div><div class="premium-footer"><button class="secondary-btn" id="premiumLogin">Sign in</button><button class="primary-btn" id="premiumRegister">Start free trial</button><a href="${esc(supportText())}" target="_blank" rel="noopener">Questions? WhatsApp support</a></div>`);
   root().querySelector('#premiumLogin').onclick=()=>auth('login');root().querySelector('#premiumRegister').onclick=()=>auth('register');bindBuy();}
 function auth(mode){
   const remembered=mode==='login'?(localStorage.getItem('kb.lastEmail')||''):'';
@@ -246,11 +253,14 @@ function bindPasswordToggle(){
   };
 }
 /* ---------- forgot password ----------
-   No mail provider is wired into this deployment, so the flow states plainly what
-   happens next: the user requests a reset, an administrator issues a one-time code,
-   and the user exchanges that code for a new password on this screen. */
+   A configured transactional-email provider sends the one-time code automatically;
+   without one, the same UI explains the administrator-assisted WhatsApp fallback. */
 function forgot(){
-  shell(`<div class="modal-head"><div><div class="eyebrow">ACCOUNT RECOVERY</div><h2>Reset your password</h2><p>Enter your account email and we will arrange a one-time reset code.</p></div><button class="close-btn" data-premium-close>×</button></div><form id="forgotForm"><div class="field"><label>Email</label><input id="forgotEmail" type="email" autocomplete="email" value="${esc(localStorage.getItem('kb.lastEmail')||'')}" required></div><div class="premium-form-error" id="forgotError"></div><div class="premium-notice" style="margin-top:14px"><strong>How it works:</strong> this build has no email sender, so an administrator sends your 6-digit code. Request one below, then message us on <a href="${esc(supportText('Password reset for my KINGDOM BIBLE account'))}" target="_blank" rel="noopener">WhatsApp</a> to receive it.</div><div class="modal-actions"><button class="secondary-btn" type="button" id="forgotBack">Back</button><button class="primary-btn">Request code</button></div></form>`);
+  const emailEnabled=!!config?.passwordResetEmailEnabled;
+  const instruction=emailEnabled
+    ?'<strong>Next:</strong> check your inbox and spam folder for a one-time code. It expires in 30 minutes. <a href="'+esc(supportText('Password reset help for my KINGDOM BIBLE account'))+'" target="_blank" rel="noopener">Contact support</a> if it does not arrive.'
+    :'<strong>How it works:</strong> an administrator sends your 6-digit code. Request one below, then message us on <a href="'+esc(supportText('Password reset for my KINGDOM BIBLE account'))+'" target="_blank" rel="noopener">WhatsApp</a> to receive it.';
+  shell(`<div class="modal-head"><div><div class="eyebrow">ACCOUNT RECOVERY</div><h2>Reset your password</h2><p>Enter your account email and we will arrange a one-time reset code.</p></div><button class="close-btn" data-premium-close>×</button></div><form id="forgotForm"><div class="field"><label>Email</label><input id="forgotEmail" type="email" autocomplete="email" value="${esc(localStorage.getItem('kb.lastEmail')||'')}" required></div><div class="premium-form-error" id="forgotError"></div><div class="premium-notice" style="margin-top:14px">${instruction}</div><div class="modal-actions"><button class="secondary-btn" type="button" id="forgotBack">Back</button><button class="primary-btn">Request code</button></div></form>`);
   root().querySelector('#forgotBack').onclick=()=>auth('login');
   root().querySelector('#forgotForm').onsubmit=async e=>{
     e.preventDefault();
@@ -264,7 +274,8 @@ function forgot(){
   };
 }
 function codeStep(email,message){
-  shell(`<div class="modal-head"><div><div class="eyebrow">ACCOUNT RECOVERY</div><h2>Enter your reset code</h2><p>${esc(message||'Enter the 6-digit code from the administrator.')}</p></div><button class="close-btn" data-premium-close>×</button></div><form id="codeForm"><div class="field"><label>Email</label><input id="codeEmail" type="email" value="${esc(email)}" required></div><div class="field" style="margin-top:10px"><label>6-digit code</label><input id="codeValue" inputmode="numeric" maxlength="6" placeholder="000000" required></div><div class="field" style="margin-top:10px"><label>New password</label><div class="password-field"><input id="codePassword" type="password" minlength="8" autocomplete="new-password" required><button type="button" class="password-toggle" id="pwToggle" aria-label="Show password" aria-pressed="false">👁</button></div></div><div class="field" style="margin-top:10px"><label>Confirm new password</label><input id="codeConfirm" type="password" minlength="8" autocomplete="new-password" required></div><div class="premium-form-error" id="codeError"></div><div class="modal-actions"><button class="secondary-btn" type="button" id="codeBack">Back</button><button class="primary-btn">Update password</button></div></form>`);
+  const contact=`<div class="premium-notice" style="margin-top:14px"><a href="${esc(supportText('Password reset help for my KINGDOM BIBLE account'))}" target="_blank" rel="noopener">Need help? WhatsApp support</a></div>`;
+  shell(`<div class="modal-head"><div><div class="eyebrow">ACCOUNT RECOVERY</div><h2>Enter your reset code</h2><p>${esc(message||'Enter the 6-digit code from the administrator.')}</p></div><button class="close-btn" data-premium-close>×</button></div><form id="codeForm"><div class="field"><label>Email</label><input id="codeEmail" type="email" value="${esc(email)}" required></div><div class="field" style="margin-top:10px"><label>6-digit code</label><input id="codeValue" inputmode="numeric" maxlength="6" placeholder="000000" required></div><div class="field" style="margin-top:10px"><label>New password</label><div class="password-field"><input id="codePassword" type="password" minlength="8" autocomplete="new-password" required><button type="button" class="password-toggle" id="pwToggle" aria-label="Show password" aria-pressed="false">👁</button></div></div><div class="field" style="margin-top:10px"><label>Confirm new password</label><input id="codeConfirm" type="password" minlength="8" autocomplete="new-password" required></div><div class="premium-form-error" id="codeError"></div><div class="modal-actions"><button class="secondary-btn" type="button" id="codeBack">Back</button><button class="primary-btn">Update password</button></div></form>${contact}`);
   bindPasswordToggle();
   root().querySelector('#codeBack').onclick=forgot;
   root().querySelector('#codeForm').onsubmit=async e=>{
@@ -286,7 +297,7 @@ function account(){const e=user||{};const warning=e.status==='trial'&&e.daysRema
      feels like being trapped on a paywall. */
   const canContinue=e.status==='trial'||e.status==='expired'||e.status==='active';
   const continueBlock=canContinue?'<div class="trial-continue"><div><strong>'+(e.status==='trial'?'Your free trial is running':'You are signed in')+'</strong><p>'+(e.status==='trial'?`${e.daysRemaining} day${e.daysRemaining===1?'':'s'} left — reading, study and the Voice Preacher Mode stay free until it ends.`:e.status==='expired'?'Your trial has ended. Basic reading stays free; Pro tools need a plan.':'Your plan is active. Go back to the Bible whenever you are ready.')+'</p></div><button class="primary-btn" id="trialContinue">'+(e.status==='trial'?'Continue my free trial':'Continue to the app')+'</button></div>':'';
-  shell(`<div class="modal-head"><div><div class="eyebrow">${e.role==='admin'?'ADMINISTRATOR ACCESS':'YOUR KINGDOM BIBLE ACCOUNT'}</div><h2>Welcome, ${esc(e.name||e.email)}</h2><p>${e.status==='trial'?'30-day free trial':e.status==='expired'?'Trial expired':e.status==='admin'?'Unlimited admin access':String(e.plan||'').toUpperCase()+' plan'}${e.daysRemaining!=null?' · '+e.daysRemaining+' days remaining':''}</p></div><button class="close-btn" data-premium-close>×</button></div>${warning}${continueBlock}<div class="account-grid"><div><strong>₦${Number(e.walletBalance||0).toLocaleString()}</strong><small>referral wallet</small></div><div><strong>${esc(e.referralCode||'—')}</strong><small>your referral code</small></div><div><strong>${e.status==='expired'?'Upgrade required':e.status==='trial'?'Trial access':'Active access'}</strong><small>account status</small></div></div><h3 class="premium-section-title">Choose your plan</h3><div class="premium-plans">${planCards()}</div><div class="referral-box"><strong>Earn with referrals</strong><p>Share your link. You receive ₦100 for a verified signup and 10% of their first successful subscription payment. 1 point equals ₦1. Withdrawals are reviewed by an administrator and paid within three working days.</p><div class="referral-link-row"><input id="referralLink" class="referral-input" readonly value="${esc(referralLink())}" aria-label="Your referral link"></div><div class="referral-actions"><button class="secondary-btn small-btn" id="copyReferral">Copy link</button><button class="primary-btn small-btn" id="shareReferral">Share app</button><button class="secondary-btn small-btn" id="withdrawOpen">Withdraw</button></div></div><div class="premium-footer"><button class="secondary-btn" id="premiumLogout">Sign out</button><a href="/privacy" target="_blank">Privacy</a><a href="/refund" target="_blank">Refunds</a><a href="${esc(supportText())}" target="_blank" rel="noopener">WhatsApp support</a></div>`,'premium-modal');/* Reuses afterAuth on purpose: it is the exact path a fresh sign-in takes, so the
+  shell(`<div class="modal-head"><div><div class="eyebrow">${e.role==='admin'?'ADMINISTRATOR ACCESS':'YOUR KINGDOM BIBLE ACCOUNT'}</div><h2>Welcome, ${esc(e.name||e.email)}</h2><p>${e.status==='trial'?'30-day free trial':e.status==='expired'?'Trial expired':e.status==='admin'?'Unlimited admin access':String(e.plan||'').toUpperCase()+' plan'}${e.daysRemaining!=null?' · '+e.daysRemaining+' days remaining':''}</p></div><button class="close-btn" data-premium-close>×</button></div>${warning}${continueBlock}${paymentNotice()}<div class="account-grid"><div><strong>₦${Number(e.walletBalance||0).toLocaleString()}</strong><small>referral wallet</small></div><div><strong>${esc(e.referralCode||'—')}</strong><small>your referral code</small></div><div><strong>${e.status==='expired'?'Upgrade required':e.status==='trial'?'Trial access':'Active access'}</strong><small>account status</small></div></div><h3 class="premium-section-title">Choose your plan</h3><div class="premium-plans">${planCards()}</div><div class="referral-box"><strong>Earn with referrals</strong><p>Share your link. You receive ₦100 for a verified signup and 10% of their first successful subscription payment. 1 point equals ₦1. Withdrawals are reviewed by an administrator and paid within three working days.</p><div class="referral-link-row"><input id="referralLink" class="referral-input" readonly value="${esc(referralLink())}" aria-label="Your referral link"></div><div class="referral-actions"><button class="secondary-btn small-btn" id="copyReferral">Copy link</button><button class="primary-btn small-btn" id="shareReferral">Share app</button><button class="secondary-btn small-btn" id="withdrawOpen">Withdraw</button></div></div><div class="premium-footer"><button class="secondary-btn" id="premiumLogout">Sign out</button><a href="/privacy" target="_blank">Privacy</a><a href="/refund" target="_blank">Refunds</a><a href="${esc(supportText())}" target="_blank" rel="noopener">WhatsApp support</a></div>`,'premium-modal');/* Reuses afterAuth on purpose: it is the exact path a fresh sign-in takes, so the
    trial banner repaints and Home is reached the same way — no second code path that
    can drift from the one already covered by tests. */
 const cont=root().querySelector('#trialContinue');if(cont)cont.onclick=()=>afterAuth(user);root().querySelector('#premiumLogout').onclick=async()=>{await signOut();landing()};root().querySelector('#withdrawOpen').onclick=withdraw;root().querySelector('#copyReferral').onclick=async()=>{const i=root().querySelector('#referralLink');i.select();try{await navigator.clipboard.writeText(referralLink())}catch{document.execCommand&&document.execCommand('copy')}};root().querySelector('#shareReferral').onclick=()=>shareApp();bindBuy();}
