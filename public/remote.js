@@ -22,11 +22,20 @@ async function api(path,opts){
   try{ r=await fetch(path,Object.assign({headers:{'Content-Type':'application/json'}},opts)); }
   catch{ hubOnline=false; throw new Error('Cannot reach the ministry hub'); }
   let d={};try{d=await r.json()}catch{}
-  /* A successful status is not proof of a hub: a static host answers unknown paths
-     with 200 and the app shell. Only a real JSON body marks the hub as present. */
+  /* A successful status is not proof of a hub: a static host may return the app
+     shell for unknown paths. The Node hub's JSON 401/400 responses are real hub
+     replies, and /api/verse uses JSON 404 only for an unknown Scripture reference. */
   const isJson=/json/i.test(r.headers.get('content-type')||'');
-  if(r.status===404||r.status>=500||!isJson){ hubOnline=false; throw new Error('The ministry hub is not running on this address.'); }
-  if(!r.ok)throw new Error(d.error||('HTTP '+r.status));
+  const verseMiss=path.startsWith('/api/verse')&&r.status===404&&isJson&&d.error==='Reference not found';
+  const appError=[400,401].includes(r.status)&&isJson&&d.ok===false&&typeof d.error==='string';
+  if(r.status>=500||!isJson||(r.status===404&&!verseMiss)){
+    hubOnline=false;
+    throw new Error('The ministry hub is not running on this address.');
+  }
+  if(!r.ok){
+    hubOnline=verseMiss||appError;
+    throw new Error(d.error||('HTTP '+r.status));
+  }
   hubOnline=true;
   return d;
 }
@@ -36,7 +45,7 @@ function showPair(msg){ $('#pairPane').hidden=false; $('#ctlPane').hidden=true; 
 
 async function pair(){
   const c=(code||'').trim().toUpperCase();
-  if(c.length<4)return showPair('Enter the 6-character code.');
+  if(c.length<4)return showPair('Enter the 4–6 character service code shown on the presenter screen.');
   $('#pairBtn').disabled=true;$('#pairBtn').textContent='Connecting…';
   try{
     await api('/api/session/status',{method:'POST',body:JSON.stringify({code:c})});
@@ -45,10 +54,18 @@ async function pair(){
   }catch(e){ showPair(hubOffline(e.message)); }
   finally{ $('#pairBtn').disabled=false;$('#pairBtn').textContent='Connect'; }
 }
-/* Turn a dead hub into actionable guidance instead of a raw HTTP status. */
+/* Give different repair steps for a public static site and a local LAN hub. */
 function hubOffline(msg){
   if(hubOnline)return msg||'Could not connect.';
-  return (msg?msg+' ':'')+'The ministry hub is offline. On the ministry PC run "npm start", then open this page from the LAN address it prints (not this website address).';
+  const host=String(location.hostname||'').toLowerCase();
+  const bareHost=host.startsWith('[')&&host.endsWith(']')?host.slice(1,-1):host;
+  const octets=bareHost.split('.').map(Number);
+  const privateIPv4=octets.length===4&&octets.every(n=>Number.isInteger(n)&&n>=0&&n<=255)&&
+    (octets[0]===10||(octets[0]===192&&octets[1]===168)||(octets[0]===172&&octets[1]>=16&&octets[1]<=31));
+  const local=bareHost==='localhost'||bareHost==='127.0.0.1'||bareHost==='::1'||privateIPv4;
+  const prefix=msg?msg+' ':'';
+  if(local)return prefix+'The local ministry hub is not responding. On the ministry PC run "npm start", open its LAN address, and keep the phone on the same Wi-Fi. Do not use localhost on the phone.';
+  return prefix+'This address does not have the live ministry service. Open the Live Ministry Hub on the presenter, start a session there, then scan its fresh QR or use its full phone link. If the online hub is waking up, wait and reload. For a local service, run "npm start" and use the PC LAN address.';
 }
 
 function openStream(){
@@ -64,7 +81,7 @@ function openStream(){
 async function act(action){
   if(busy)return;busy=true;
   try{ await api('/api/remote/action',{method:'POST',body:JSON.stringify({code,action})}); }
-  catch(e){ toast(e.message||'Failed','err'); }
+  catch(e){ toast(hubOffline(e.message||'Failed'),'err'); }
   finally{ setTimeout(()=>busy=false,120); }
 }
 
@@ -88,7 +105,7 @@ async function send(){
   msg.textContent='Looking up…';
   let v;
   try{ v=await api('/api/verse?ref='+encodeURIComponent(raw)+'&tr='+tr); }
-  catch(e){ msg.textContent='Reference not found. Try "John 3:16".'; return }
+  catch(e){ msg.textContent=hubOnline?(e.message||'Reference not found. Try "John 3:16".'):hubOffline(e.message); return }
   msg.textContent='';
   await act({type:'presentation',payload:{
     ref:v.ref,label:v.label,text:v.text,verses:v.verses,
@@ -154,7 +171,7 @@ document.addEventListener('click',e=>{
   if(code){
     try{ await api('/api/session/status',{method:'POST',body:JSON.stringify({code})}); showCtl(); openStream(); }
     catch{ showPair(hubOnline?'Previous session expired. Enter the current code.':hubOffline('')); }
-  } else showPair('');
+  } else showPair(hubOnline?'Enter the service code shown in Ministry Mode.':hubOffline(''));
   if(!hubOnline)setLink(false);
   /* the hub may simply not have been started yet, so offer a way to try again
      without reloading the phone mid-service */

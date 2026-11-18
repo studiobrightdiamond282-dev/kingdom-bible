@@ -117,6 +117,7 @@ const cases=[
  'http://10.0.0.7:4173/remote',
  'http://192.168.100.5:4173/present?code=ABC123',
  'https://kingdombible.app/remote?code=ZZZZZZ',
+ 'https://kingdom-bible.onrender.com/remote?code=AB12CD',
  'A','http://a',
  'http://192.168.100.5:4173/remote?code=1',
  'http://192.168.100.5:4173/remote?code=12',

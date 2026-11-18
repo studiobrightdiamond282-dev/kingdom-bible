@@ -4,6 +4,13 @@
 
 A premium, local-first Progressive Web App for Bible reading, Scripture study, prayer journaling, reading plans, memorization, and professional church Scripture presentation.
 
+## New in v1.2.2
+
+- **Phone pairing follows the live hub.** Render is the live ministry hub; the Vercel deployment is the static Bible reader. Start the presentation on Render or on a local Node hub, then use the QR/full phone link from that same hub.
+- **No misleading QR codes.** A phone QR is shown only when a real service code and phone-reachable hub URL are available. Localhost links are never sent to a phone; local hubs use a discovered LAN address and explain same-Wi-Fi requirements.
+- **Clear phone-side recovery.** The remote distinguishes a real hub's pairing/reference errors from a static-site fallthrough and gives different next steps for hosted and local hubs.
+- **Cache refresh.** The service-worker cache and health-check version are bumped so installed clients receive the pairing fix.
+
 ## New in v1.2.1
 
 - **Scripture lock for Voice Preacher Mode** scans every interim speech frame. A complete
@@ -131,35 +138,54 @@ chapter, and that resizing a vMix input re-fits the text.
 
 ## Phone remote + vMix
 
-Open **Ministry Mode**. The server runs a **live service session**, so a phone on the same
-Wi-Fi can drive the audience display.
+Use the **same hub** for the presenter, phone remote, and audience display. The main live hub is
+Render at `https://kingdom-bible.onrender.com`; the Vercel deployment is the static reader and
+does not create service codes or host the pairing API.
 
-1. `npm start` prints a LAN address such as `http://192.168.100.5:4173`.
-2. The "Connect a phone remote" card shows a **service code**, a QR code, and a **direct phone link**.
-3. Use **Open phone remote** or **Copy link** first. The direct link already contains the service code. If scanning fails, type that full link on the phone; never use `localhost` on the phone.
-4. If the card says "Needs Wi-Fi", connect the ministry computer to the same Wi-Fi as the phone, open the app from its LAN address, and allow Node.js through the firewall. Do not use a guest network that isolates devices.
-5. Type a reference (`John 3:16`), pick a translation, press **Send**.
+### Online hub (recommended)
 
-The phone can send verses, step next/previous (crossing chapter and book boundaries),
-blank the screen, and switch look. Verses resolve **server-side**, so the phone never
-downloads the multi-megabyte Bible files.
+1. Open the Render hub and choose **Ministry Mode**.
+2. Start the service there. The connection card shows the service code, a QR, and a direct
+   phone link with the code already included.
+3. Scan the QR with the phone camera, tap **Open phone remote**, or copy/open the complete link.
+   If scanning fails, use the full link rather than entering a different hub's address.
+4. Type a reference (`John 3:16`), pick a translation, and press **Send**.
+5. Open the audience display from that same Render hub; it follows phone actions live.
+
+If you begin on Vercel, use **Open Live Ministry Hub**, then start a fresh service in Ministry
+Mode on Render. A code created on Vercel or a local hub cannot be used on a different hub.
+
+### Local hub (same Wi-Fi, works without internet)
+
+1. On the ministry computer, run `npm start`. It prints a LAN address such as
+   `http://192.168.100.5:4173`.
+2. Open Ministry Mode using that address. Scan its QR, tap **Open phone remote**, or copy the
+   full phone link. Keep the phone and presenter on the same Wi-Fi; do not use `localhost` on
+   the phone, because that points back to the phone itself.
+3. If no phone-reachable LAN address is found, the QR stays hidden rather than encoding
+   `localhost`. Connect to Wi-Fi, allow Node.js through the firewall, then choose **Check again**.
+
+The phone can send verses, step next/previous (crossing chapter and book boundaries), blank the
+display, and switch look. Verses resolve **server-side**, so the phone never downloads the
+multi-megabyte Bible files.
 
 **If the phone can't connect**
 
 | Problem | Fix |
 | --- | --- |
-| Times out | Allow Node.js through Windows Firewall: *Windows Security → Firewall → Allow an app → Node.js*, on **Private** networks. |
-| Wrong address shown | Virtual adapters (Docker/WSL `172.17–172.31`) are ignored; use the `192.168.x.x` or `10.x.x.x` address. |
-| Blank output | Put the phone and PC on the same Wi-Fi — guest networks often isolate clients. |
+| Online hub is waking up | Wait briefly, reload the Render hub, then start Ministry Mode there. |
+| Local phone times out | Allow Node.js through the computer's firewall on the displayed port; keep both devices on the same non-isolated Wi-Fi. |
+| Code is rejected | Use the QR/full link from the same hub that created the session; start a new service if the hub restarted. |
+| Verse not found | Check the reference spelling and use an available translation. |
 
-**Pairing security** — every mutating action and the display stream require the 6-character
-code; wrong codes get `401`. Codes live in server memory only and reset on restart.
+**Pairing security** — every mutating action and the display stream require the 4–6 character
+service code; wrong codes are rejected. Codes live in server memory and reset on hub restart.
 
 ### vMix / OBS
 
-1. Ministry Mode → **Copy browser-source URL**. It copies the **LAN address plus the live
-   service code**, e.g. `http://192.168.100.5:4173/present?code=AB12CD` — never
-   `localhost`, and never a code-less URL that would ignore the phone.
+1. Ministry Mode → **Copy browser-source URL**. It copies the active hub origin plus the live
+   service code — a public Render URL for the online hub or a LAN address for a local hub.
+   The display and phone remote must use the same hub.
 2. vMix → **Add Input → Web Browser**, or OBS → **Browser Source**, at 1920×1080.
 3. Paste that URL. The display then follows the phone live.
 4. **Open audience display** opens the same coded URL on the ministry PC for a preview.
@@ -193,13 +219,17 @@ the edge. Deployed from `public/` via `vercel.json`, with SPA rewrites for `/pre
 npx vercel --prod          # manual
 ```
 
-**Live ministry hub (local)** — `/api/*`, the phone remote, vMix SSE and LAN discovery are
-**not** in the static build. They require `npm start` on the ministry PC, because the hub is
-intentionally LAN-only: it discovers the local address, holds the session in memory, and
-streams to devices on the same Wi-Fi with no internet and no cloud account.
+**Live ministry hub (Render)** — `/api/*`, service codes, phone remote, vMix SSE, and live
+presentation run on the Node server deployed at `https://kingdom-bible.onrender.com`. It can
+pair across networks; open Ministry Mode on Render, then use its QR and display URL. Render
+holds sessions in memory, so a hub restart invalidates active service codes.
 
-The static build detects the missing API and tells the user to start the hub rather than
-showing a raw `HTTP 404`.
+**Local ministry hub** — `npm start` is the optional same-Wi-Fi/offline alternative. It discovers
+a LAN address and keeps its session on the ministry computer; phone, presenter, and display
+must use that same local hub.
+
+The Vercel static build detects that it has no pairing API and points presenters to Render
+instead of showing a fake service code, blank QR, or raw `HTTP 404`.
 
 ## Premium deployment configuration
 
@@ -278,7 +308,7 @@ Never place provider secrets in browser code. Use the names in `.env.example` on
 `GET /health` returns service status without secrets or stack traces:
 
 ```json
-{"ok":true,"app":"KINGDOM BIBLE","version":"1.2.1","presentation":"operational",
+{"ok":true,"app":"KINGDOM BIBLE","version":"1.2.2","presentation":"operational",
  "sessionActive":true,"listeners":1,"uptime":412,"serverTime":1757404800000}
 ```
 
@@ -289,26 +319,27 @@ read the pairing code out of a discovery probe and hijack the projector.
 ## Hub detection (why the website cannot run a service)
 
 The phone remote, the service code, the SSE stream and server-side verse resolution all live
-in `server.js`. A static host such as Vercel serves `public/` and nothing else, so the
-ministry controls genuinely do not exist there.
+in `server.js`. The Vercel deployment is a static reader and serves `public/` without the Node API; Render hosts
+the live ministry service and phone-pairing endpoints.
 
 `public/hub-probe.js` decides which world the page is in, and the app renders three honest
 states instead of pretending:
 
 | State | When | What the presenter sees |
 | --- | --- | --- |
-| `online` | `/health` returns real JSON stamped `app: "KINGDOM BIBLE"` | Service code, scannable QR, LAN address, green **Live** |
-| `static` | Host answers, but there is no hub (Vercel) | Instructions to run `npm start`, plus **Check again** |
-| `offline` | Nothing answers (hub stopped) | The same, worded for a local page |
+| `online` | `/health` returns real JSON stamped `app: "KINGDOM BIBLE"` | Service code and code-bearing phone QR/link for the active hub |
+| `static` | Host answers, but has no hub API (Vercel) | Render live-hub link and local setup instructions |
+| `offline` | Nothing answers on a local hub | Online Render and local restart options |
 
 **A status code is never treated as proof.** Vercel answers `GET /health` with **200
 `text/html`** (the SPA rewrite catches every unknown path) and `404` on `/api/*`, so a naive
 `res.ok` check would report a dead hub as live. `hub-probe.js` requires a JSON body carrying
-this application's marker, and the phone remote and `/status` use the same rule.
+this application's marker. The phone remote distinguishes JSON hub errors from a static-page
+fallthrough.
 
-The card never renders a blank QR canvas, a dashed `------` code or a green **Live** pill
-without a real hub. **Check again** re-probes in place, so once `npm start` is running the
-card flips to live without a page reload — no need to reload the phone mid-service.
+The card never renders a blank QR canvas, a fake code, or a green **Live** pill without a real
+hub. **Check again** re-probes the local hub; on the static reader, the Render doorway is the
+correct path to start a live session.
 
 Presenter control still works without a hub: Previous/Next walk the canon locally from the
 bundled data, crossing book and chapter boundaries exactly like the server does.
@@ -328,7 +359,7 @@ paired phone plus any vMix input that is mid-service.
 
 ## Version
 
-KINGDOM BIBLE v1.2.1 — `package.json`, `server.js` and the service-worker cache version are
+KINGDOM BIBLE v1.2.2 — `package.json`, `server.js` and the service-worker cache version are
 kept in sync, and a smoke test fails the build if they drift.
 
 ## Duplicate-folder cleanup (one-time, on the ministry PC)

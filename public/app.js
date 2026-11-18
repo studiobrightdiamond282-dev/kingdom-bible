@@ -1,4 +1,4 @@
-﻿/* KINGDOM BIBLE “ Local-first application shell */
+/* KINGDOM BIBLE “ Local-first application shell */
 'use strict';
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const esc=s=>String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
@@ -281,7 +281,7 @@ async function renderHome(){
   $('#main').innerHTML=`<div class="page">
     <div class="welcome-row"><div><div class="eyebrow">${esc(fmtDate())}</div><h1 class="hero-title">Good ${new Date().getHours()<12?'morning':new Date().getHours()<18?'afternoon':'evening'}, ${esc(displayName())}.</h1><p class="lead">Make space for the Word today.</p></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="secondary-btn" id="resumeTop">▤ Continue reading</button><button class="primary-btn" id="homeUpgrade">✦ Try Pro free</button></div></div>
     <div class="home-membership card"><div><div class="eyebrow">KINGDOM BIBLE PRO</div><strong>30 days to build a deeper rhythm</strong><p>Unlock ministry tools, guided study, AI Bible questions, and referral rewards. Read the <a href="/privacy" target="_blank">privacy</a> and <a href="/refund" target="_blank">refund</a> policy before subscribing.</p></div><button class="secondary-btn small-btn" id="homeWhatsApp">WhatsApp support</button></div>
-    <div class="daily-grid"><article class="card verse-card"><div class="eyebrow">VERSE OF THE DAY · ${TR[dv.translation]}</div><blockquote>"${esc(dv.text)}"</blockquote><cite>“ ${esc(dv.ref)}</cite><div class="card-actions"><button class="secondary-btn small-btn" id="dailySave">♡ Save</button><button class="secondary-btn small-btn" id="dailyShare">↗ Share</button><button class="secondary-btn small-btn" id="dailyOpen">Read chapter</button></div></article>
+    <div class="daily-grid"><article class="card verse-card"><div class="eyebrow">VERSE OF THE DAY · ${TR[dv.translation]}</div><blockquote>"${esc(dv.text)}"</blockquote><cite>— ${esc(dv.ref)}</cite><div class="card-actions"><button class="secondary-btn small-btn" id="dailySave">♡ Save</button><button class="secondary-btn small-btn" id="dailyShare">↗ Share</button><button class="secondary-btn small-btn" id="dailyOpen">Read chapter</button></div></article>
     <div class="today-stack"><article class="card continue-card"><span class="book-mark">${esc(books[last.book].name[0])}</span><div class="eyebrow">CONTINUE READING</div><h3>${esc(books[last.book].name)} ${last.chapter}</h3><p>Resume where you last stopped.</p><button class="text-btn" id="resumeReading">Continue →</button></article><article class="card devotional-card"><div class="eyebrow">TODAY'S DEVOTIONAL · ${esc((state.profile.devotionalTrack||'adult')==='youth'?'YOUTH':'ADULT')}</div><h3>${DEVOTIONAL.title}</h3><p>${DEVOTIONAL.scripture} · 5 min read</p><button class="text-btn" data-route="devotional">Read devotional →</button></article></div></div>
     <div class="section-head"><div><h2>Today with God</h2><p>Personal activity only “ never a measure of spiritual worth.</p></div></div>
     <div class="home-stats"><div class="card stat-card"><span class="stat-icon">♨</span><div><strong>${streak()}</strong><small>day reading streak</small></div></div><div class="card stat-card"><span class="stat-icon">▤</span><div><strong>${state.chaptersRead.length}</strong><small>chapters read</small></div></div><div class="card stat-card"><span class="stat-icon">♡</span><div><strong>${Object.keys(state.bookmarks).length}</strong><small>verses saved</small></div></div><div class="card stat-card"><span class="stat-icon">♧</span><div><strong>${state.prayers.length}</strong><small>prayer entries</small></div></div></div>
@@ -508,7 +508,7 @@ async function sendPresentation(v){const payload={...v,theme:state.ministry.them
    - Render cloud: https://kingdom-bible.onrender.com
    Never localhost on the phone — that means the phone itself.
    */
-let sessionCode=null,netInfo=null,hubState='checking';
+let sessionCode=null,netInfo=null,hubState='checking',sessionError='';
 const HUB_PORT=4173;
 /* If hub-probe.js ever fails to load, fail closed: never claim a live session, and
    still tell the presenter exactly what to do rather than rendering an empty card. */
@@ -527,44 +527,61 @@ async function loadHub(){
   return hubState;
 }
 async function loadNet(){try{netInfo=await(await fetch('/api/network',{cache:'no-store'})).json()}catch{netInfo=null}}
-/* Returns the origin the phone remote should use:
-   - On localhost: the LAN address from /api/network (so phone on same Wi-Fi reaches the PC hub)
-   - On Render/Vercel (static): the Render cloud hub (https://kingdom-bible.onrender.com)
-   Never returns localhost — that would mean the phone itself. */
+/* Pairing links stay on the hub that minted the code. A loopback page needs a
+   discovered LAN address for a phone; a public hub uses its own public origin. */
+function currentHost(){return String(location.hostname||'').toLowerCase().replace(/^\[|\]$/g,'')}
+function isLoopbackHost(){const host=currentHost();return host==='localhost'||host==='127.0.0.1'||host==='::1'}
+function isPrivateIPv4Host(){
+  const parts=currentHost().split('.').map(Number);
+  if(parts.length!==4||parts.some(n=>!Number.isInteger(n)||n<0||n>255))return false;
+  return parts[0]===10||(parts[0]===192&&parts[1]===168)||(parts[0]===172&&parts[1]>=16&&parts[1]<=31);
+}
+function isLocalHubHost(){return isLoopbackHost()||isPrivateIPv4Host()}
+function phoneOrigin(){
+  if(!isLoopbackHost())return location.origin;
+  const a=netInfo&&Array.isArray(netInfo.addresses)&&netInfo.addresses[0];
+  return a?`http://${a}:${(netInfo&&netInfo.port)||HUB_PORT}`:null;
+}
 function hubOrigin(){
-  if(location.hostname==='localhost'||location.hostname==='127.0.0.1'||location.hostname==='::1'){
-    const a=netInfo&&netInfo.addresses&&netInfo.addresses[0];
+  if(isLoopbackHost()){
+    const a=netInfo&&Array.isArray(netInfo.addresses)&&netInfo.addresses[0];
     return a?`http://${a}:${(netInfo&&netInfo.port)||HUB_PORT}`:location.origin;
   }
-  // On any public host (Vercel, Render, etc.), the phone remote talks to Render cloud hub
-  return 'https://kingdom-bible.onrender.com';
+  return location.origin;
 }
-function remoteUrl(){return hubOrigin()+'/remote'+(sessionCode?'?code='+encodeURIComponent(sessionCode):'')}
+function remoteUrl(){const origin=phoneOrigin();return origin&&sessionCode?origin+'/remote?code='+encodeURIComponent(sessionCode):''}
 function displayUrl(){return hubOrigin()+'/present'+(sessionCode?'?code='+encodeURIComponent(sessionCode):'')}
 async function ensureSession(){
   if(sessionCode)return sessionCode;
-  /* only a proven live hub can mint or validate a code */
-  if(!hub().isLive(hubState))return null;
-  /* reuse the code already in storage: rotating it would drop every paired phone
-     and any vMix input that is mid-service. Only mint a new one when it is invalid. */
+  if(!hub().isLive(hubState)){
+    sessionError='The ministry hub is not available on this site.';
+    return null;
+  }
+  /* Keep the current code across transient transport/server failures. Retire it
+     only when the hub explicitly rejects it with 401, or paired phones disconnect. */
   const known=localStorage.getItem('kingdomCode');
   if(known){
-    /* A transport failure is NOT proof the code is stale. Only an explicit
-       rejection may retire it “ otherwise a brief Wi-Fi blip would orphan every
-       paired phone and a vMix input that is mid-service. */
     let rejected=false;
     try{
-      const r=await fetch('/api/session/status',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code:known})});
-      if(r.status===401)rejected=true;
-      else{const d=await r.json();if(d.ok){sessionCode=known;return sessionCode}}
-    }catch{}
-    if(!rejected)return known;
+      const response=await fetch('/api/session/status',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code:known})});
+      if(response.status===401)rejected=true;
+      else{
+        const data=await response.json();
+        if(response.ok&&data.ok){sessionCode=known;sessionError='';return sessionCode}
+        sessionError=data.error||'Could not verify the saved service code.';
+      }
+    }catch{sessionError='Could not check the saved service code; it has been kept.'}
+    if(!rejected){sessionCode=known;return known}
     localStorage.removeItem('kingdomCode');
   }
   try{
-    const r=await(await fetch('/api/session/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({})})).json();
-    if(r.ok){sessionCode=r.code;localStorage.setItem('kingdomCode',r.code);return r.code}
-  }catch{}
+    const response=await fetch('/api/session/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({})});
+    const data=await response.json();
+    if(response.ok&&data.ok&&/^[A-Z0-9]{4,6}$/.test(data.code||'')){
+      sessionCode=data.code;localStorage.setItem('kingdomCode',data.code);sessionError='';return data.code;
+    }
+    sessionError=data.error||'The live hub did not return a service code.';
+  }catch{sessionError='Could not reach the live hub to start a service. Check the connection and try again.'}
   return null;
 }
 async function sessionAction(action){
@@ -590,14 +607,9 @@ function drawQR(text,canvas){
   return true;
 }
 
-/* LIVE ministry hub doorway (the one-tap Livestreaming button).
-   Vercel (kingdom-bible-wine.vercel.app) is the REAL always-online site, but it has
-   no phone-remote/QR/SSE hub “ QR, phone remote, vMix and OBS only work on the
-   live stage (Render cloud hub or the local PC on LAN Wi-Fi). Tapping the button carries
-   the reader to the live stage: liveHubLink() (same ?source=, #ministry).
-   Resolution order: server config -> probe constant -> hardcoded fallback.
-   If the stage is offline the reader is notified and stays on this site “
-   never a white screen. Direct <a> href is kept as the no-JS fallback. */
+/* Render is the live ministry hub. Static-reader deployments link to it for
+   pairing and presentation; local Node runs remain a separate same-Wi-Fi option.
+   Resolve its URL from server config, then the hub probe, then this fallback. */
 function liveHubUrl(){
   try{
     const fromCfg=window.KingdomPremium?.config?.()?.liveHubUrl;
@@ -618,32 +630,28 @@ function liveHubLink(){
   return liveHubUrl()+q+'#ministry';
 }
 function openLiveHub(ev){
-  /* Carry first, notify second. A cross-origin fetch probe from the Vercel
-     site to the Tailscale stage is blocked by the browser (no CORS preflight
-     on the hub), so a probe-first design always reports "offline" even when
-     the stage is up. Instead: open the stage in a new tab immediately (the
-     plain <a> href already does this with no JS), then tell the reader on
-     THIS page how to recognise an offline stage “ they stay here, never on
-     a white screen. */
+  /* Open Render directly instead of guessing whether the sleeping service is
+     online. The plain anchor also works without JavaScript; the reader stays
+     on this page while the hub starts in a separate tab. */
   const url=liveHubLink();
   try{if(ev&&ev.preventDefault)ev.preventDefault()}catch{}
   window.open(url,'_blank','noopener');
-  toast('Opening the live stage in a new tab “ if it stays blank or white, the ministry PC is off. Everything here still works.');
+  toast('Opening the Render ministry hub in a new tab. If it is waking up, wait briefly and reload.');
 }
 function liveHubCardHtml(){
   const url=liveHubLink();
   return `<section class="card connect-card live-hub-card">
   <div class="section-head" style="margin:0 0 14px">
-    <div><h2>Live Ministry Hub</h2><p>Bible presentation with phone remote + live sync, from the ministry PC</p></div>
-    <span class="pill premium-pill"><span class="status-dot"></span> Livestreaming</span>
+    <div><h2>Live Ministry Hub</h2><p>Render service for phone pairing and live Bible presentation</p></div>
+    <span class="pill">Render hub</span>
   </div>
   <div class="connect-body"><div class="connect-info" style="width:100%">
-    <p class="hub-lead">This main site stays online for reading, study and local presenting. When it is time to minister “ projector, vMix, phone remote, QR code “ open the live stage. Those only work on the live stage, never here.</p>
+    <p class="hub-lead">This static reader cannot create a service code. Open the Render hub before starting the presentation, then use the QR and display URL from that same hub.</p>
     <div class="hub-actions">
       <a class="primary-btn small-btn" href="${esc(url)}" target="_blank" rel="noopener" id="openLiveHub">Open Live Ministry Hub</a>
       <button class="secondary-btn small-btn" id="copyLiveHub">Copy live link</button>
     </div>
-    <p class="hint">If the live stage is offline you will be notified and stay here — everything here still works.</p>
+    <p class="hint">If Render is waking up, wait briefly and reload the new tab; this reader remains available.</p>
   </div></div></section>`;
 }
 /* presenter-facing connection card: code + QR + LAN address
@@ -655,18 +663,13 @@ function connectCardHtml(){
   const live=hub().isLive(hubState);
   if(!live){
     const d=hub().describe(hubState)||{};
-    /* Live-stage carry button sits in the SAME hub-actions row as "Check again"
-       and "Open the local hub" (owner screenshot 2026-10-16): on the main Vercel
-       site the QR / phone remote / vMix / OBS only work on the live hub
-       stage, so one tap carries the reader there (same ?source=, #ministry).
-       Offline stage = notify + stay, never a white screen. */
     const liveUrl=liveHubLink();
     const offlineCard=`<section class="card connect-card hub-offline-card">
   <div class="section-head" style="margin:0 0 14px">
-    <div><h2>${esc(d.title||'Connect the ministry hub')}</h2><p>Or present locally on this site “ no hub needed</p></div>
+    <div><h2>${esc(d.title||'Connect the ministry hub')}</h2><p>Or present locally on this site — no hub needed</p></div>
     <span class="pill hub-pill-off"><span class="status-dot off"></span> This site only</span>
   </div>
-  <div class="connect-body">
+  <div class="connect-body no-qr">
     <div class="connect-info" style="width:100%">
       <p class="hub-lead">${esc(d.body||'')}</p>
       <ol class="hub-steps">${(d.steps||[]).map(s=>`<li>${esc(s).replace(/`([^`]+)`/g,'<code>$1</code>')}</li>`).join('')}</ol>
@@ -675,39 +678,34 @@ function connectCardHtml(){
         <a class="secondary-btn small-btn" href="${esc(d.launchUrl||'http://localhost:'+HUB_PORT)}" id="hubLaunch">Open the local hub</a>
         <a class="primary-btn small-btn" href="${esc(liveUrl)}" target="_blank" rel="noopener" id="openLiveHub">Open Live Ministry Hub</a>
       </div>
-      <p class="hint" id="netHint">${esc(d.hint||'')} The QR code, phone remote, vMix and OBS only work on the live stage “ that button carries you there.</p>
+      <p class="hint" id="netHint">${esc(d.hint||'')} The QR code, phone remote, vMix and OBS use the live hub that starts the session.</p>
     </div>
   </div></section>`;
-    /* Live stage first on the main site: the doorway must be seen before the
-       local-only instructions. Live hub IS the ministry PC online. */
     return `${liveHubCardHtml()}${offlineCard}`;
   }
-/* QR code and phone link point at Render cloud hub so phone can connect
-     from any network (cellular or Wi-Fi). For same-Wi-Fi LAN mode, the
-     phone can manually type the PC's LAN address: http://<lan-ip>:4173 */
-  const lanOrigin=`https://kingdom-bible.onrender.com`;
-  const code=sessionCode||'------';
-  /* QR + direct link use the LAN address; the phone must reach the same PC hub     *
-     that created the session code, otherwise pairing and remote control fail.     */
-  const url=lanOrigin+'/remote?code='+encodeURIComponent(sessionCode||'');
-  const ready=!!sessionCode;
+  const port=(netInfo&&netInfo.port)||HUB_PORT;
+  const origin=phoneOrigin();
+  const phoneUrl=sessionCode&&origin?remoteUrl():'';
+  const ready=!!phoneUrl;
+  const status=!sessionCode?'No service code':!origin?'Needs Wi-Fi':'Phone ready';
+  const title=!sessionCode?'Service code not available':!origin?'Phone connection needs Wi-Fi':'Connect a phone remote';
+  const phoneHint=ready
+    ? (isLocalHubHost()?`Both devices must use this PC's Wi-Fi. If the phone cannot connect, allow Node.js through the firewall on port ${port} and avoid guest Wi-Fi isolation.`:'The presenter and phone are using this live hub. Scan the QR or open the full phone link; the code is included.')
+    : !sessionCode
+      ? (sessionError||'The live hub did not create a service code. Choose Retry pairing, or open the live hub.')
+      : 'No phone-reachable LAN address was found. Connect this computer to Wi-Fi and choose Check again; the QR is hidden rather than pointing at localhost.';
   return `<section class="card connect-card ${ready?'':'hub-offline-card'}">
   <div class="section-head" style="margin:0 0 14px">
-    <div><h2>${ready?'Connect a phone remote':'Phone remote needs a LAN address'}</h2><p>${ready?'Use the QR, the direct link, or enter the address and code manually.':'The service is running, but this computer has not exposed a phone-reachable Wi-Fi address yet.'}</p></div>
-    <span class="pill ${ready?'premium-pill':'hub-pill-off'}"><span class="status-dot${ready?'':' off'}"></span> ${ready?'Live':'Needs Wi-Fi'}</span>
+    <div><h2>${title}</h2><p>${ready?'Scan the QR or use the direct phone link — it includes the service code.':'The app will not show a fake code or a QR that cannot connect.'}</p></div>
+    <span class="pill ${ready?'premium-pill':'hub-pill-off'}"><span class="status-dot${ready?'':' off'}"></span> ${status}</span>
   </div>
-  <div class="connect-body">
-    ${ready?'<div class="qr-wrap"><canvas id="sessionQr" width="160" height="160" aria-label="QR code to open the phone remote"></canvas><span class="qr-cap">Scan to open</span></div>':''}
-    <div class="connect-info" style="width:100%">
-      <div class="code-row">
-        <div class="code-box"><label>Service code</label><strong id="sessionCode">${esc(code)}</strong></div>
-        <button class="secondary-btn small-btn" id="copyCode">Copy code</button>
-      </div>
-      <div class="field" style="margin-top:12px"><label>Direct phone link</label>
-        <div class="url-row"><input id="sessionUrl" readonly value="${esc(url||'No LAN address detected')}"><button class="secondary-btn small-btn" id="copyUrl" ${ready?'':'disabled'}>Copy link</button></div>
-      </div>
-      ${ready?'<div class="connect-actions"><button class="primary-btn small-btn" id="openPhoneRemote">Open phone remote</button><span class="hint">If scanning fails, copy the full link above. It already contains the service code.</span></div>':`<ol class="hub-steps"><li>Connect the ministry computer to the same Wi-Fi as the phone.</li><li>Open the app from the computer's LAN address, not localhost.</li><li>If no address appears, allow Node.js through the firewall and choose "Check again".</li></ol>`}
-      <p class="hint" id="netHint">${ready?'Both devices must be on the same Wi-Fi. If the phone cannot connect, allow Node.js through the firewall on port '+port+' and avoid guest Wi-Fi isolation.':'The QR is intentionally hidden until a real LAN link is available, so the phone is never sent to localhost.'}</p>
+  <div class="connect-body ${ready?'':'no-qr'}">
+    ${ready?'<div class="qr-wrap"><canvas id="sessionQr" width="160" height="160" aria-label="QR code to open the paired phone remote"></canvas><span class="qr-cap">Scan to open</span></div>':''}
+    <div class="connect-info" ${ready?'':'style="width:100%"'}>
+      ${sessionCode?`<div class="code-row"><div class="code-box"><label>Service code</label><strong id="sessionCode">${esc(sessionCode)}</strong></div><button class="secondary-btn small-btn" id="copyCode">Copy code</button></div>`:`<p class="hub-lead">${esc(sessionError||'No service code is available yet.')}</p>`}
+      ${ready?`<div class="field" style="margin-top:12px"><label>Direct phone link · code included</label><div class="url-row"><input id="sessionUrl" readonly value="${esc(phoneUrl)}" aria-label="Full phone remote link including service code"><button class="secondary-btn small-btn" id="copyUrl">Copy link</button></div><div class="hub-actions" style="margin-top:9px"><a class="secondary-btn small-btn" href="${esc(phoneUrl)}" target="_blank" rel="noopener" id="openPhoneRemote">Open phone remote</a></div></div>`:''}
+      ${!ready?`<div class="hub-actions" style="margin-top:12px"><button class="primary-btn small-btn" id="hubRetry">${sessionCode?'Check again':'Retry pairing'}</button><a class="secondary-btn small-btn" href="${esc(liveHubLink())}" target="_blank" rel="noopener">Open Live Ministry Hub</a></div>`:''}
+      <p class="hint" id="netHint">${esc(phoneHint)}</p>
     </div>
   </div></section>`;
 }
@@ -715,18 +713,23 @@ function bindConnectCard(){
   const goLive=$('#openLiveHub');
   if(goLive)goLive.onclick=openLiveHub;
   const liveBtn=$('#copyLiveHub');
-  if(liveBtn)liveBtn.onclick=()=>copyText(liveHubLink(),'Live ministry link copied “ open it when the ministry PC is online');
+  if(liveBtn)liveBtn.onclick=()=>copyText(liveHubLink(),'Live ministry link copied');
   const retry=$('#hubRetry');
-  if(retry)retry.onclick=async()=>{retry.disabled=true;retry.textContent='Checking"¦';await loadHub();if(hub().isLive(hubState))await ensureSession();renderMinistry();toast(hub().isLive(hubState)?'Ministry hub connected':'The ministry hub is still not running',hub().isLive(hubState)?'success':'error')};
+  if(retry)retry.onclick=async()=>{
+    retry.disabled=true;retry.textContent='Checking…';
+    await loadHub();
+    if(hub().isLive(hubState))await ensureSession();
+    renderMinistry();
+    const ready=hub().isLive(hubState)&&!!sessionCode&&!!phoneOrigin();
+    toast(ready?'Phone pairing is ready':'The hub or phone connection is still unavailable',ready?'success':'error');
+  };
   const urlEl=$('#sessionUrl');
   const full=urlEl&&/^https?:\/\//.test(urlEl.value)?urlEl.value:'';
-  /* The QR and the old copy-link flow now use exactly the same direct URL. The
-     code is embedded once, so scanning never lands on a code-less remote page. */
-  if(full&&sessionCode)drawQR(full,$('#sessionQr'));
-  else $('.qr-wrap')?.remove();
-  const cc=$('#copyCode');if(cc)cc.onclick=()=>copyText(sessionCode,'Service code copied');
-  const cu=$('#copyUrl');if(cu)cu.onclick=()=>copyText(full,'Phone link copied');
-  const op=$('#openPhoneRemote');if(op)op.onclick=()=>window.open(full,'kingdomRemote','width=420,height=820');
+  if(full&&sessionCode){
+    if(!drawQR(full,$('#sessionQr'))){$('.qr-wrap')?.remove();$('.connect-body')?.classList.add('no-qr')}
+  }else $('.qr-wrap')?.remove();
+  const cc=$('#copyCode');if(cc)cc.onclick=()=>sessionCode&&copyText(sessionCode,'Service code copied');
+  const cu=$('#copyUrl');if(cu)cu.onclick=()=>full&&copyText(full,'Full phone link copied');
 }
 function bindTimer(){let sec=0,id=null;const out=$('#serviceTimer'),draw=()=>out.textContent=new Date(sec*1000).toISOString().slice(11,19);$('#timerStart').onclick=e=>{if(id){clearInterval(id);id=null;e.target.textContent='Start timer'}else{id=setInterval(()=>{sec++;draw()},1000);e.target.textContent='Pause'}};$('#timerReset').onclick=()=>{sec=0;draw()}}
 function openGuide(type){const vm=type==='vMix';modal(`<div class="modal-head"><div><h2>Use KINGDOM BIBLE with ${type}</h2><p>Browser-source quick start</p></div><button class="close-btn" data-close>×</button></div><div class="guide-steps">${(vm?['Create or open the Ministry Mode session.','Copy the browser-source URL.','Open vMix and choose Add Input → Web Browser.','Paste the URL and set 1920 × 1080.','Open the audience display or presenter control.','Search Scripture and send verses live.']:['Create or open the Ministry Mode session.','Copy the browser-source URL.','In OBS, add a Browser Source.','Paste the URL and set 1920 × 1080.','For transparency, choose the Transparent theme.','Use Presenter Control to send verses live.']).map(x=>`<div class="guide-step">${x}</div>`).join('')}</div><div class="notice" style="margin-top:15px">The presentation route contains no controls and is suitable for capture. Keep this control page private.</div>`)}
@@ -906,9 +909,9 @@ function openManual(){modal(`<div class="modal-head"><div><div class="eyebrow">K
   <section><h3>Navigation</h3><p>Use the sidebar on desktop or the bottom navigation on a phone. Home gives you today’s activity; Bible opens the reader; Study, Prayer, Devotional, Plans, Ministry, and Profile keep those tools one tap away. The top search button opens the command palette.</p><p><strong>Keyboard:</strong> press <kbd>Ctrl</kbd> + <kbd>K</kbd> (or <kbd>⌘ K</kbd> on Mac) for navigation, recent searches, and this manual. The quick-action <strong>+</strong> button is available on smaller screens.</p></section>
   <section><h3>Reading the Bible</h3><p>Open <strong>Bible</strong>, choose a book and chapter, then choose KJV, ASV, or WEB. Use the chapter arrows to move through the canon. Reader settings control font, size, line spacing, and theme.</p><p>Select a verse to bookmark it, highlight it, add a note, share it, or use it to start a prayer. Your reading activity and personal notes stay in this browser.</p></section>
   <section><h3>Search and Scripture references</h3><p>Search by words or phrases in <strong>Search</strong>. You can also type references such as <strong>John 3:16</strong>, <strong>Jn 3 16</strong>, <strong>1 John 2:5</strong>, a range, or a whole chapter. Select a result to open it in the reader. Recent searches are available from the <kbd>Ctrl</kbd> + <kbd>K</kbd> palette.</p></section>
-  <section><h3>Ministry setup</h3><p>Open <strong>Ministry</strong> to set the church name, translation, display theme, and live service. Choose <strong>Change Scripture</strong> to send a verse, range, or chapter to the audience display. <strong>Open audience display</strong> opens a clean capture surface; <strong>Copy browser-source URL</strong> copies the coded display address.</p><p>For phone control and live sync, run <code>npm start</code> on the ministry computer and open the local app at <code>http://localhost:4173</code>. For microphone use, the page must be <code>https://</code> or localhost.</p></section>
+  <section><h3>Ministry setup</h3><p>Open <strong>Ministry</strong> to set the church name, translation, display theme, and live service. Choose <strong>Change Scripture</strong> to send a verse, range, or chapter to the audience display. <strong>Open audience display</strong> opens a clean capture surface; <strong>Copy browser-source URL</strong> copies the coded display address.</p><p>For online phone control, open the Render ministry hub and start Ministry Mode there. For a same-Wi-Fi/offline service, run <code>npm start</code> on the ministry computer and open its LAN address. For microphone use, the page must be <code>https://</code> or localhost.</p></section>
   <section><h3>Voice Preacher Mode</h3><p>On the Ministry page, open Voice Preacher Mode in Chrome or Edge, allow the microphone, and tap the mic. It scans interim speech frames: a complete book, chapter, and verse can reach the display while you keep speaking. Untick instant send if an operator should approve each reference first.</p><p><strong>Mic troubleshooting:</strong> If the wrong mic is selected, open the browser site settings and choose the intended microphone, not a webcam or a disconnected headset. In Windows/macOS sound settings, select the real input or the correct Voicemeeter output, confirm the input meter moves, and close other apps holding the mic. In Voicemeeter, check the hardware input, routing bus, mute buttons, and sample rate; then reload the page and allow the microphone again.</p><p><strong>Secure page:</strong> microphone access requires <code>https://</code> or <code>http://localhost</code>. A plain <code>http://192.168"¦</code> LAN address cannot use Voice Mode. The phone remote can still use the LAN address.</p></section>
-  <section><h3>Phone remote and QR pairing</h3><p>Start a live session in Ministry. Scan the QR code shown in <strong>Connect a phone remote</strong>, or type the phone address, then enter the six-character service code. Keep the phone and ministry computer on the same Wi-Fi. The remote can send Scripture, move to the next or previous verse, blank the display, and change the look.</p><p>If it will not connect, turn off guest-network client isolation and allow Node.js through the computer’s firewall on the displayed port. Do not use <code>localhost</code> on the phone: it means the phone itself.</p></section>
+  <section><h3>Phone remote and QR pairing</h3><p>Start a live session in Ministry. Scan the QR code shown in <strong>Connect a phone remote</strong>, or type the full phone link, then enter the 4–6 character service code. On Render, the phone can connect over Wi-Fi or mobile data; for a local hub, keep the phone and ministry computer on the same Wi-Fi. The remote can send Scripture, move to the next or previous verse, blank the display, and change the look.</p><p>If it will not connect, turn off guest-network client isolation and allow Node.js through the computer’s firewall on the displayed port. Do not use <code>localhost</code> on the phone: it means the phone itself.</p></section>
   <section><h3>Pro membership, referrals, and support</h3><p>Choose <strong>Try Pro free</strong> on Home or open Profile → <strong>View plans</strong>. Every new account starts with 30 days; the app warns you when seven days remain. Plans are monthly and payments are processed through Paystack. The referral code in your account can earn ₦100 for a verified signup and 10% of the referred user’s first successful subscription payment. Wallet withdrawals start at ₦1,000, are reviewed by the administrator, and target payment within three working days.</p><p>Use <strong>WhatsApp support</strong> for enquiries, billing, privacy, or refund questions. Holding the Kingdom Bible logo for 2.5 seconds opens the admin sign-in page; only the configured administrator credentials can enter.</p></section>
   <section><h3>vMix and OBS</h3><p>In Ministry, copy the <strong>browser-source URL</strong>. In vMix choose <strong>Add Input → Web Browser</strong>; in OBS add a <strong>Browser Source</strong>. Paste the URL, use 1920 × 1080, and keep the service code in the URL. Do not paste a localhost address into vMix or OBS when they run on another machine.</p><p>Use the Transparent theme for a keyed overlay. The presentation route has no controls and is designed for capture; keep the presenter control page private.</p></section>
 </div>`,'manual-modal')}

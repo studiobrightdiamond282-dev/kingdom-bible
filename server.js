@@ -8,7 +8,7 @@ const ROOT=path.join(__dirname,'public'),DATA=path.join(__dirname,'data');
    should set the same values in their secret manager instead. */
 (function loadDotEnv(file){try{if(!fs.existsSync(file))return;for(const line of fs.readFileSync(file,'utf8').split(/\r?\n/)){const m=line.match(/^\s*([A-Z][A-Z0-9_]*)\s*=\s*(.*)\s*$/);if(m&&!process.env[m[1]])process.env[m[1]]=m[2].replace(/^['"]|['"]$/g,'')}}catch{}})(path.join(__dirname,'.env'));
 const PORT=Number(process.env.PORT||4173),HOST='0.0.0.0';
-const APP='KINGDOM BIBLE',VERSION='1.2.1';
+const APP='KINGDOM BIBLE',VERSION='1.2.2';
 /* Support contact — defined ONCE and read by everything: the server-rendered policy
    pages, the browser bundles (via /api/premium/config) and every WhatsApp deep link.
    Previously this number was hardcoded in seven files, which is exactly how a stale

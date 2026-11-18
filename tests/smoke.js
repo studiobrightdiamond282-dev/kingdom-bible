@@ -65,12 +65,11 @@ assert(serverPremiumSrc.includes('PAYSTACK_SECRET_KEY')&&!serverPremiumSrc.inclu
    payment. Guard against that regression coming back. */
 assert(!/Number\(d\.data\.amount\)\s*===\s*tx\.amount\s*\*\s*100/.test(serverPremiumSrc),'payment verify must not require Paystack amount to equal the plan price exactly (fees are added when the customer bears them)');
 assert(/charged\s*>=\s*tx\.amount\s*\*\s*100/.test(serverPremiumSrc),'payment verify must accept any charged amount at least the plan price so Paystack fees do not break checkout');
-/* The hub is exposed to the open internet through a Tailscale Funnel. IP filtering
-   cannot protect /admin there (every tunnel request arrives from 127.0.0.1), so the
-   portal must be gated on Tailscale's unforgeable identity headers instead. */
-assert(serverPremiumSrc.includes('adminGate')&&serverPremiumSrc.includes('tailscale-user-login'),'admin routes must be gated by Tailscale identity headers, not only by password');
+/* The administrator portal is protected by an authenticated admin session.
+   Both the HTML shell and every admin API must fail closed for non-admin users. */
+assert(/function adminGate\(req\)[\s\S]*?sessionRecord\(req\)[\s\S]*?s\.role!==?'admin'/.test(serverPremiumSrc),'admin access must require a session whose role is admin');
 assert(/p==='\/admin'/.test(serverPremiumSrc)&&/adminGate\(req\)/.test(serverPremiumSrc),'the /admin page itself must be gated so outsiders cannot load the login form');
-assert(serverPremiumSrc.includes('ADMIN_TAILNET_LOGINS'),'ADMIN_TAILNET_LOGINS must be honoured so the owner can be allowlisted');
+assert(serverPremiumSrc.includes('Administrator access required'),'admin APIs must reject non-admin sessions');
 /* Account reset and deletion. Both are destructive, so both must be reachable only by
    their own explicit HTTP method — a GET that removes an account would be catastrophic
    (a prefetch, a crawler, or a link preview could wipe a paying member). */
@@ -134,7 +133,7 @@ assert(mf.name&&mf.short_name&&mf.start_url&&mf.display,'manifest is incomplete'
 const pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
 const swSrc=fs.readFileSync(path.join(pub,'sw.js'),'utf8');
 const serverSrc=fs.readFileSync(path.join(root,'server.js'),'utf8');
-assert.equal(pkg.version,'1.2.1','package.json version');
+assert.equal(pkg.version,'1.2.2','package.json version');
 assert(serverSrc.includes("VERSION='"+pkg.version+"'"),'server.js must report the same version as package.json');
 assert(swSrc.includes(`kingdom-bible-v${pkg.version}`),'sw.js cache version must match package.json so updates are picked up');
 
