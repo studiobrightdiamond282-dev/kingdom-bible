@@ -15,10 +15,11 @@ const QR=global.window.QR;
 
   console.log('\n--- ministry session flow ---');
   const net=await j('/api/network');
-  ok('network endpoint reports a LAN address',net.body.addresses&&net.body.addresses.length>0,JSON.stringify(net.body));
+  const addresses=Array.isArray(net.body.addresses)?net.body.addresses:[];
+  ok('network discovery returns a valid address list',Array.isArray(net.body.addresses),JSON.stringify(net.body));
 
   const start=await post('/api/session/start');
-  ok('session starts and returns a 6-char code',/^[A-Z0-9]{4,6}$/.test(start.body.code||''),start.body.code);
+  ok('session starts and returns a service code',/^[A-Z0-9]{4,6}$/.test(start.body.code||''),start.body.code);
   const code=start.body.code;
 
   const bad=await post('/api/session/status',{code:'WRONG1'});
@@ -26,7 +27,10 @@ const QR=global.window.QR;
 
   const good=await post('/api/session/status',{code});
   ok('correct code unlocks the session',good.status===200&&good.body.ok===true);
-  ok('remote URL points at the LAN address',typeof start.body.url==='string'&&/^http:\/\/\d+\.\d+\.\d+\.\d+:\d+$/.test(start.body.url),start.body.url);
+  const baseUrl=start.body.url||net.body.url||'';
+  ok('hub returns a valid presenter origin',/^http:\/\/(?:\d{1,3}(?:\.\d{1,3}){3}|localhost):\d+$/.test(baseUrl),baseUrl);
+  ok('phone-facing LAN URL is advertised only when a LAN address exists',
+    addresses.length?baseUrl===`http://${addresses[0]}:${net.body.port}`:baseUrl===`http://localhost:${net.body.port}`,baseUrl);
 
   // phone looks up a verse and pushes it
   const v=await j('/api/verse?ref='+encodeURIComponent('John 3:16'));
@@ -116,15 +120,21 @@ const QR=global.window.QR;
 
   console.log('\n--- presenter connect code ---');
   {
-    const addr=net.body.addresses[0];
-    const remoteUrl=`http://${addr}:${net.body.port}/remote`;
-    const qrTarget=remoteUrl+'?code='+encodeURIComponent(code);
-    const out=QR(qrTarget);
-    console.log('  QR encodes: '+qrTarget+'  ('+out.size+'x'+out.size+', version '+((out.size-17)/4)+')');
-    ok('QR target uses the LAN address, not localhost',/^http:\/\/\d+\.\d+\.\d+\.\d+:\d+\/remote/.test(qrTarget),qrTarget);
-    ok('QR target carries the live service code',qrTarget.endsWith('?code='+code));
-    const presentUrl=`http://${addr}:${net.body.port}/present?code=${code}`;
-    ok('vMix browser-source URL is well formed',/^http:\/\/\d+\.\d+\.\d+\.\d+:\d+\/present\?code=[A-Z0-9]{4,6}$/.test(presentUrl),presentUrl);
+    const addr=addresses[0];
+    let qrTarget='';
+    if(addr){
+      qrTarget=`http://${addr}:${net.body.port}/remote?code=${encodeURIComponent(code)}`;
+      const out=QR(qrTarget);
+      console.log('  QR encodes: '+qrTarget+'  ('+out.size+'x'+out.size+', version '+((out.size-17)/4)+')');
+      ok('QR target uses a discovered LAN address, not localhost',/^http:\/\/\d+\.\d+\.\d+\.\d+:\d+\/remote/.test(qrTarget),qrTarget);
+      ok('QR target carries the live service code exactly once',qrTarget.endsWith('?code='+code)&&!qrTarget.includes('?code='+code+'&code='));
+    }else{
+      const appSrc=fs.readFileSync(__dirname+'/../public/app.js','utf8');
+      ok('QR is withheld rather than encoded with localhost when LAN discovery is empty',
+        /function phoneOrigin\(\)[\s\S]*?return a\?`http:\/\//.test(appSrc)&&/return a\?[\s\S]*?:null/.test(appSrc));
+    }
+    const presentUrl=`${baseUrl}/present?code=${encodeURIComponent(code)}`;
+    ok('vMix browser-source URL is well formed',/^http:\/\/(?:\d+\.\d+\.\d+\.\d+|localhost):\d+\/present\?code=[A-Z0-9]{4,6}$/.test(presentUrl),presentUrl);
     const pres=await fetch(B+'/present?code='+code);
     const presHtml=await pres.text();
     /* /present serves the app shell, which renders the capture stage from JS */
@@ -134,7 +144,8 @@ const QR=global.window.QR;
     const rem=await fetch(B+'/remote?code='+code);
     ok('phone remote page is served',rem.status===200&&/Ministry Remote/i.test(await rem.text()));
     console.log('\n  vMix  : '+presentUrl);
-    console.log('  Phone : '+qrTarget);
+    if(qrTarget)console.log('  Phone : '+qrTarget);
+    else console.log('  Phone : no QR (no LAN IP available)');
     console.log('  Code  : '+code);
   }
 
@@ -173,8 +184,8 @@ console.log('\n--- hub hardening ---');
     /* regression: the link dot used to render into the vMix output */
     ok('status dot is opt-in via ?debug=1',/is-debug/.test(appSrc));
     /* regression: presenter buttons used a code-less, localhost-only /present */
-    ok('display URL carries the LAN origin and live code',
-      /function displayUrl\(\)\{return lanOrigin\(\)\+'\/present'\+/.test(appSrc)&&/\?code='\+encodeURIComponent\(sessionCode\)/.test(appSrc));
+    ok('display URL carries the active hub origin and live code',
+      /function displayUrl\(\)\{return hubOrigin\(\)\+'\/present'\+/.test(appSrc)&&/\?code='\+encodeURIComponent\(sessionCode\)/.test(appSrc));
     ok('presenter no longer opens a bare /present',
       !/window\.open\('\/present'/.test(appSrc)&&!/location\.origin\+'\/present'/.test(appSrc));
     /* regression: "King James Version".split(' ').slice(-1)[0] rendered "VERSION" */

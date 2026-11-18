@@ -17,13 +17,8 @@
 'use strict';
 const APP='KINGDOM BIBLE';
 const PORT=4173;
-/* LIVE ministry hub — the always-on Render cloud server.
-   The static Vercel build (kingdom-bible-wine.vercel.app) is the REAL site and is
-   always online, but it has no phone-remote/SSE/service-code hub. When the
-   presenter wants the live stage, Ministry Mode offers a one-tap doorway to this
-   URL (new tab). Only works while Render is up (free tier spins down after ~15 min
-   inactivity; first request takes ~30s to wake). That is expected until a proper
-   domain replaces it. Keep in sync with LIVE_HUB_URL. */
+/* Render is the live ministry hub; Vercel is a static reader deployment.
+   Keep this in sync with the server's LIVE_HUB_URL setting. */
 const LIVE_HUB_URL='https://kingdom-bible.onrender.com';
 
 /* GET a path and try to read it as JSON. Never throws. */
@@ -56,28 +51,29 @@ const isLive=state=>state==='online';
    status page all explain an offline hub in exactly the same words. */
 function describe(state){
   if(isLive(state))return {
-    title:'Ministry hub connected',
-    body:'Service codes, the phone remote and the live stream are running on this computer.',
-    hint:'Scan the code with any phone on the same Wi-Fi network.',
+    title:'Live ministry hub connected',
+    body:'Service codes, the phone remote and the live presentation stream are available on this hub.',
+    hint:'Scan the QR or open the full phone link. Local hubs need both devices on the same Wi-Fi.',
     steps:[],launchUrl:'http://localhost:'+PORT,dot:''
   };
   if(state==='offline')return {
-    title:'The ministry hub is not responding',
-    body:'This page is open locally, but nothing is answering on the hub port. Reading and study work offline; the phone remote and live stream need the hub running.',
-    hint:'The audience display still works on this computer.',
-    steps:['In the KINGDOM BIBLE folder, open a terminal and run `npm start`.',
-           'Open the LAN address it prints, for example `http://192.168.1.20:'+PORT+'`.',
+    title:'The local ministry hub is not responding',
+    body:'This page is open locally, but nothing is answering on the hub port. Reading and study work offline; phone control needs a running ministry hub.',
+    hint:'Use the online Render hub or start the hub on this computer. The presenter and phone must use the same hub.',
+    steps:['For online phone control, open the Live Ministry Hub and start a session in Ministry Mode.',
+           'For an offline/local service, run `npm start` in the KINGDOM BIBLE folder on the ministry computer.',
+           'Open the LAN address it prints on both the presenter and phone.',
            'Come back to Ministry Mode and choose "Check again".'],
-    launchUrl:'http://localhost:'+PORT,dot:'off'
+    launchUrl:'http://localhost:'+PORT,liveHubUrl:LIVE_HUB_URL,dot:'off'
   };
   return {
     title:'Phone remote needs the live ministry hub',
-    body:'This is the main KINGDOM BIBLE site — always online for reading, study and local presenting. The service code, phone remote and live sync run on the live ministry hub (Render cloud hub or your local PC on LAN Wi-Fi).',
-    hint:'Present from here any time. When you need phone control + live sync, open the live hub below.',
-    steps:['Tap “Open Live Ministry Hub” below — the live stage opens in a new tab.',
-           'On the live hub, go to Ministry Mode and start your session there.',
-           'This page keeps working for reading, study and local presenting.'],
-    launchUrl:'http://localhost:'+PORT,dot:'off',liveHubUrl:LIVE_HUB_URL
+    body:'This static Bible reader cannot create a service code or pair a phone. Open the live Render hub for phone control, or run the local hub on the ministry computer.',
+    hint:'The presenter and phone must open the same hub. Ministry Mode on that hub shows a QR code and full phone link.',
+    steps:['Tap "Open Live Ministry Hub" and wait briefly if the service is waking up.',
+           'On Render, open Ministry Mode, then scan its QR or use its code-bearing phone link.',
+           'For a local/offline service instead, run `npm start` on the ministry computer and open its LAN address.'],
+    launchUrl:'http://localhost:'+PORT,liveHubUrl:LIVE_HUB_URL,dot:'off'
   };
 }
 

@@ -21,7 +21,9 @@ async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/heal
   const admin=await request('/api/auth/login',{method:'POST',body:JSON.stringify({email:'stanley.okonkwo282@gmail.com',password:'test-admin-password'})});assert.equal(admin.body.user.role,'admin');
   const overview=await request('/api/admin/overview',{headers:{cookie:admin.session}});assert.equal(overview.body.users.length,2);
   const grant=await request('/api/admin/users/'+a.body.user.id+'/entitlement',{method:'POST',headers:{cookie:admin.session},body:JSON.stringify({plan:'premium',forever:true})});assert.equal(grant.body.user.status,'active');assert.equal(grant.body.user.plan,'premium');
-  for(const page of ['/admin','/privacy','/refund','/status']){const r=await fetch(base+page);assert.equal(r.status,200,page+' must be served')}
+  const adminGuest=await fetch(base+'/admin');assert.equal(adminGuest.status,403,'/admin must reject requests without an admin session');
+  const adminPage=await fetch(base+'/admin',{headers:{cookie:admin.session}});assert.equal(adminPage.status,200,'/admin must be served to an authenticated administrator');
+  for(const page of ['/privacy','/refund','/status']){const r=await fetch(base+page);assert.equal(r.status,200,page+' must be served')}
   /* Google sign-in must reject anything that is not a genuine, correctly signed,
      unexpired token for THIS app. A forged or malformed credential must never mint a session. */
   assert(cfg.body.googleClientId,'premium config must expose the public Google client id');

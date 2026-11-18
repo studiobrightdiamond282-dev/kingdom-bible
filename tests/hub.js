@@ -12,7 +12,7 @@ const ok=(name,cond,extra)=>{if(cond){pass++;console.log('  PASS',name)}else{fai
 /* Response doubles mirroring what each host actually returns. */
 const html200={status:200,json:false,body:null};                      // Vercel /health -> SPA shell
 const notFound={status:404,json:false,body:null};                     // Vercel /api/network -> 404
-const liveHub={status:200,json:true,body:{ok:true,app:'KINGDOM BIBLE',version:'1.1.0',presentation:'operational'}};
+const liveHub={status:200,json:true,body:{ok:true,app:'KINGDOM BIBLE',version:'1.2.2',presentation:'operational'}};
 const fakeOk={status:200,json:true,body:{ok:true,app:'SomethingElse'}};// JSON, but not our hub
 const htmlOnApi={status:200,json:false,body:null};
 
@@ -50,6 +50,7 @@ const htmlOnApi={status:200,json:false,body:null};
   ok('online copy is the only one marked live',H.isLive('online')===true&&H.describe('online').dot==='');
   ok('static and offline are not live',H.isLive('static')===false&&H.isLive('offline')===false);
   ok('the launch URL points at the local hub',/^https?:\/\/localhost:\d+$/.test(H.describe('static').launchUrl));
+  ok('offline guidance offers Render as well as local startup',H.describe('offline').liveHubUrl===H.LIVE_HUB_URL&&/open the Live Ministry Hub/i.test(H.describe('offline').steps.join(' ')));
 
   console.log('\n--- app wiring ---');
   const fs=require('fs');
@@ -60,31 +61,36 @@ const htmlOnApi={status:200,json:false,body:null};
   ok('the connect card branches on the hub state',/if\(!live\)/.test(app));
   /* the offline branch returns early, so the green pill is only ever reachable online */
   const offlineAt=app.indexOf('hub-pill-off');
-  const livePillAt=app.indexOf("ready?'Live':'Needs Wi-Fi'");
-  ok('the offline card is rendered before the LAN-ready card',offlineAt>0&&livePillAt>offlineAt,
-     'offline@'+offlineAt+' lan-ready@'+livePillAt);
+  const livePillAt=app.indexOf('const ready=!!phoneUrl');
+  ok('the offline card is rendered before live phone pairing',offlineAt>0&&livePillAt>offlineAt,
+     'offline@'+offlineAt+' pairing@'+livePillAt);
   ok('the offline branch renders the live doorway first, then the local-only card',
     /liveHubCardHtml\(\)/.test(app)&&/const offlineCard=`<section class="card connect-card hub-offline-card">/.test(app)
     &&/return `\$\{liveHubCardHtml\(\)\}\$\{offlineCard\}`/.test(app));
   ok('the "Live session" pill is conditional on a live hub',
     /isLive\(hubState\)\?'<span class="status-dot"><\/span> Live session':'<span class="status-dot off"><\/span> This computer only'/.test(app));
   ok('a blank QR canvas is removed rather than shown',/qr-wrap'\)\?\.remove\(\)/.test(app));
-  ok('the phone link embeds the service code exactly once',/lanOrigin\+'\/remote\?code='/.test(app)&&/drawQR\(full/.test(app));
+  ok('the phone link embeds the service code exactly once',/function remoteUrl\(\)\{const origin=phoneOrigin\(\);return origin&&sessionCode\?origin\+'\/remote\?code='/.test(app)&&/drawQR\(full/.test(app));
   ok('the old copy-link fallback is visible',/Direct phone link/.test(app)&&/Open phone remote/.test(app)&&/Copy link/.test(app));
-  ok('localhost is never placed in the phone QR',/localHost/.test(app)&&/QR is intentionally hidden until a real LAN link/.test(app));
+  ok('localhost without a discovered LAN address never gets a phone QR',/function phoneOrigin\(\)[\s\S]*?return a\?`http:\/\/\$\{a\}:[\s\S]*?:null/.test(app));
+  ok('private IPv4 hubs are identified for same-Wi-Fi guidance',/function isPrivateIPv4Host\(\)/.test(app)&&/function isLocalHubHost\(\)/.test(app));
+  ok('QR and direct phone link require a real code plus reachable origin',/const phoneUrl=sessionCode&&origin\?remoteUrl\(\):''/.test(app)&&/drawQR\(full/.test(app));
   ok('a retry control exists on the presenter card',/id="hubRetry"/.test(app)&&/id="hubRetry"/.test(app));
   ok('the phone remote can retry without reloading',/pairRetry/.test(remote));
   ok('the remote does not assume the hub is online',/let hubOnline=false/.test(remote)&&!/let hubOnline=true/.test(remote));
   ok('the remote requires a JSON body, not just a 2xx',/isJson/.test(remote));
+  ok('wrong-code JSON errors still prove the phone reached the hub',/const appError=\[400,401\]\.includes\(r\.status\)/.test(remote));
+  ok('a verse-not-found 404 is distinct from a static-host 404',/const verseMiss=.*Reference not found/.test(remote)&&/r\.status===404&&!verseMiss/.test(remote));
+  ok('remote recovery differs for hosted hubs and private-LAN hubs',/This address does not have the live ministry service/.test(remote)&&/keep the phone on the same Wi-Fi/.test(remote));
   ok('hub-probe.js is loaded before app.js',html.indexOf('/hub-probe.js')<html.indexOf('/app.js'));
 
   console.log('\n--- saved service code survives a blip ---');
   {
     /* Regression: the old ensureSession() deleted kingdomCode on ANY failure, so a
        Wi-Fi blip orphaned every paired phone and a running vMix input. */
-    ok('a stored code is retired only on an explicit 401',/r\.status===401\)rejected=true/.test(app));
-    ok('a transport failure keeps the stored code',/if\(!rejected\)return known/.test(app));
-    ok('no session is minted without a live hub',/if\(!hub\(\)\.isLive\(hubState\)\)return null/.test(app));
+    ok('a stored code is retired only on an explicit 401',/response\.status===401\)rejected=true/.test(app));
+    ok('a transport failure keeps and displays the stored code',/if\(!rejected\)\{sessionCode=known;return known\}/.test(app));
+    ok('no session is minted without a live hub',/if\(!hub\(\)\.isLive\(hubState\)\)\{\s*sessionError=[^;]*;\s*return null/.test(app));
   }
 
   console.log('\n--- presenter navigation without a hub ---');
@@ -97,19 +103,19 @@ const htmlOnApi={status:200,json:false,body:null};
   }
 
   console.log('\n--- the source must not hardcode a live claim ---');
-  ok('no dashed placeholder service code is rendered',!/sessionCode\|\|'------'/.test(app)||/sessionCode\|\|'------'/.test(app));
+  ok('no fake dashed placeholder service code is rendered',!app.includes("'------'"));
   ok('the old misleading LAN message is gone',!/No LAN address found/.test(app));
   ok('the old "sync is ready" claim is conditional',/Audience display sync is ready':'Audience display syncs on this computer only'/.test(app));
 
   console.log('\n--- live ministry hub doorway (single-site design) ---');
   {
-    /* Vercel is the REAL always-online site; Tailscale is the live stage behind
-       one tap. These pins stop the doorway URL drifting across server/probe/app. */
+    /* Render is the live ministry hub; Vercel is static. Keep the doorway in sync
+       across server, probe, and app. */
     const serverSrc=fs.readFileSync(path.join(__dirname,'../server.js'),'utf8');
     const probeSrc=fs.readFileSync(path.join(__dirname,'../public/hub-probe.js'),'utf8');
     const css=fs.readFileSync(path.join(__dirname,'../public/styles.css'),'utf8');
     ok('server exposes the live hub URL in premium config',/liveHubUrl/.test(serverSrc));
-    ok('server live hub defaults to the Render cloud hub',
+    ok('server live hub defaults to the Render ministry hub',
       serverSrc.includes('https://kingdom-bible.onrender.com'));
     ok('hub-probe exports the live hub URL',/LIVE_HUB_URL/.test(probeSrc)&&/LIVE_HUB_URL=/.test(probeSrc));
     ok('ministry renders the live doorway card with new-tab link',
@@ -118,9 +124,9 @@ const htmlOnApi={status:200,json:false,body:null};
     ok('the live button carries ?source= into #ministry on the live stage',
       /function liveHubLink/.test(app)&&/source/.test(app)&&/#ministry/.test(app)
       &&/liveHubUrl\(\)\+q\+'#ministry'/.test(app));
-    ok('the live button checks the stage first and notifies instead of a white screen',
+    ok('the live button opens Render and gives wake-up guidance instead of a white screen',
       /function openLiveHub/.test(app)&&/window\.open\(url,'_blank'/.test(app)
-      &&/ministry PC is off or Tailscale is not running/.test(app)&&/window\.open\(url,'_blank'/.test(app));
+      &&/Render ministry hub in a new tab/.test(app));
     ok('the live button is wired in the same row position (bindConnectCard)',
       /#openLiveHub/.test(app)&&/goLive\.onclick=openLiveHub/.test(app));
     ok('ministry never blanks on a failed verse fetch (white-screen guard)',
@@ -128,8 +134,8 @@ const htmlOnApi={status:200,json:false,body:null};
     ok('the doorway resolves server config first, then probe, then fallback',
       /KingdomPremium\?\.config\?/.test(app)&&/LIVE_HUB_URL/.test(app));
     ok('the doorway has premium gold styling',/\.live-hub-card/.test(css));
-    ok('handover documents the single-site design',
-      fs.readFileSync(path.join(__dirname,'../HANDOVER.md'),'utf8').includes('kingdom-bible-wine.vercel.app'));
+    ok('README documents Render as the live ministry hub',
+      fs.readFileSync(path.join(__dirname,'../README.md'),'utf8').includes('https://kingdom-bible.onrender.com'));
   }
 
   console.log('\n--- against the real local hub and the real deployment ---');
