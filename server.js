@@ -9,9 +9,9 @@ const ROOT=path.join(__dirname,'public'),DATA=path.join(__dirname,'data');
    should set the same values in their secret manager instead. */
 (function loadDotEnv(file){try{if(!fs.existsSync(file))return;for(const line of fs.readFileSync(file,'utf8').split(/\r?\n/)){const m=line.match(/^\s*([A-Z][A-Z0-9_]*)\s*=\s*(.*)\s*$/);if(m&&!process.env[m[1]])process.env[m[1]]=m[2].replace(/^['"]|['"]$/g,'')}}catch{}})(path.join(__dirname,'.env'));
 const PORT=Number(process.env.PORT||4173),HOST='0.0.0.0';
-const APP='KINGDOM BIBLE',VERSION='1.2.6';
+const APP='KINGDOM BIBLE',VERSION='1.2.7';
 /* Static and server-rendered contact data comes from config/site.js. */
-const MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.png':'image/png','.svg':'image/svg+xml','.txt':'text/plain; charset=utf-8','.xml':'application/xml; charset=utf-8'};
+const MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.mp4':'video/mp4','.webm':'video/webm','.svg':'image/svg+xml','.txt':'text/plain; charset=utf-8','.xml':'application/xml; charset=utf-8'};
 /* Absolute origin used for the link-preview urls (og:image and friends).
  * Every social crawler resolves a RELATIVE og:image against the url it was handed,
  * so index.html shipping "/assets/logo-hero.png" meant a shared hub link rendered
@@ -71,6 +71,21 @@ function body(req,limit=20000){
       if(s.length>limit){over=true;s='';reject(Object.assign(Error('Payload too large'),{statusCode:413}))}
     });
     req.on('end',()=>{if(over)return;try{resolve(JSON.parse(s||'{}'))}catch{reject(Object.assign(Error('Invalid JSON'),{statusCode:400}))}});
+    req.on('error',reject);
+  });
+}
+/* Paystack webhook signatures cover the exact bytes sent, so keep this reader
+   separate from body(), which parses JSON and would lose the signed byte sequence. */
+function rawBody(req,limit=256*1024){
+  return new Promise((resolve,reject)=>{
+    const chunks=[];let length=0,over=false;
+    req.on('data',chunk=>{
+      if(over)return;
+      length+=chunk.length;
+      if(length>limit){over=true;chunks.length=0;reject(Object.assign(Error('Payload too large'),{statusCode:413}));return}
+      chunks.push(chunk);
+    });
+    req.on('end',()=>{if(!over)resolve(Buffer.concat(chunks,length))});
     req.on('error',reject);
   });
 }
@@ -222,8 +237,11 @@ const PREMIUM_PLANS={
 const PREMIUM_CONFIG={
   adminEmail:String(process.env.ADMIN_EMAIL||'stanley.okonkwo282@gmail.com').trim().toLowerCase(),
   adminPassword:String(process.env.ADMIN_PASSWORD||''),
-  paystackPublicKey:String(process.env.PAYSTACK_PUBLIC_KEY||''),
-  paystackSecretKey:String(process.env.PAYSTACK_SECRET_KEY||''),
+  paystackPublicKey:String(process.env.PAYSTACK_PUBLIC_KEY||'').trim(),
+  paystackSecretKey:String(process.env.PAYSTACK_SECRET_KEY||'').trim(),
+  emailApiKey:String(process.env.EMAIL_API_KEY||process.env.EMAIL_KEY||'').trim(),
+  emailFrom:String(process.env.EMAIL_FROM||'').trim(),
+  emailApiUrl:String(process.env.EMAIL_API_URL||'https://api.resend.com/emails').trim(),
   aiApiKey:String(process.env.AI_API_KEY||''),
   aiApiUrl:String(process.env.AI_API_URL||'https://api.openai.com/v1/chat/completions'),
   aiModel:String(process.env.AI_MODEL||'gpt-4o-mini'),
@@ -366,9 +384,10 @@ function referralStats(u){
    reading the store file does not hand an attacker anybody's password reset. */
 function issueCode(u){
   if(!premiumStore.passwordResets)premiumStore.passwordResets=[];
-  premiumStore.passwordResets=premiumStore.passwordResets.filter(r=>r.userId!==u.id||!r.usedAt);
+  /* Only one live code is valid per account; a resend invalidates every prior code. */
+  premiumStore.passwordResets=premiumStore.passwordResets.filter(r=>r.userId!==u.id);
   const code=String(crypto.randomInt(100000,1000000));
-  const r={id:uid('rst'),userId:u.id,email:u.email,codeHash:passwordHash(code),createdAt:new Date().toISOString(),expiresAt:Date.now()+30*60*1000,usedAt:null};
+  const r={id:uid('rst'),userId:u.id,email:u.email,codeHash:passwordHash(code),createdAt:new Date().toISOString(),expiresAt:Date.now()+30*60*1000,attempts:0,usedAt:null};
   premiumStore.passwordResets.unshift(r);
   premiumStore.passwordResets=premiumStore.passwordResets.slice(0,200);
   savePremiumStore();
@@ -380,7 +399,51 @@ function currentPlanFor(u){const e=entitlementOf(u);return e.plan==='trial'?null
 function businessDaysFrom(date,n){const d=new Date(date);let left=n;while(left){d.setDate(d.getDate()+1);if(![0,6].includes(d.getDay()))left--}return d.toISOString()}
 function monthKey(){const d=new Date();return d.getUTCFullYear()+'-'+String(d.getUTCMonth()+1).padStart(2,'0')}
 function aiAllowance(u){const e=entitlementOf(u);if(e.status==='admin')return 100000;if(e.status==='expired')return 0;if(e.status==='trial')return 25;return currentPlanFor(u)?.aiMonthly||0}
-async function paystack(pathname,options={}){if(!PREMIUM_CONFIG.paystackSecretKey)throw new Error('PAYSTACK_SECRET_KEY is not configured');const r=await fetch('https://api.paystack.co'+pathname,{...options,headers:{Authorization:'Bearer '+PREMIUM_CONFIG.paystackSecretKey,'Content-Type':'application/json',...(options.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok||d.status===false)throw new Error(d.message||'Paystack request failed');return d}
+function paystackCredentials(){
+  const publicKey=PREMIUM_CONFIG.paystackPublicKey,secretKey=PREMIUM_CONFIG.paystackSecretKey;
+  const publicMode=(publicKey.match(/^pk_(test|live)_/)||[])[1]||'';
+  const secretMode=(secretKey.match(/^sk_(test|live)_/)||[])[1]||'';
+  const usable=(key,prefix)=>new RegExp('^'+prefix+'_(test|live)_[A-Za-z0-9_-]{8,}$').test(key)&&!/(replace|placeholder|example|your_key)/i.test(key);
+  const publicValid=usable(publicKey,'pk'),secretValid=usable(secretKey,'sk');
+  const testModeAllowed=String(process.env.PAYSTACK_ALLOW_TEST_MODE||'').toLowerCase()==='true';
+  const modeAllowed=publicMode==='live'||testModeAllowed;
+  const ready=publicValid&&secretValid&&publicMode===secretMode&&modeAllowed;
+  const reason=!publicKey||!secretKey?'Paystack checkout needs both a public key and a server-side secret key':publicMode&&secretMode&&publicMode!==secretMode?'Paystack public and secret keys must use the same test/live mode':publicMode==='test'&&!testModeAllowed?'Paystack test mode is disabled; enable it only in a non-live test environment':'Paystack keys are missing, invalid, or still placeholders';
+  return{ready,mode:ready?publicMode:'unavailable',reason};
+}
+function loopbackTestUrl(url){return process.env.NODE_ENV==='test'&&['127.0.0.1','localhost','::1'].includes(url.hostname)}
+function secureProviderUrl(value){try{const url=new URL(value);return url.protocol==='https:'||loopbackTestUrl(url)}catch{return false}}
+function passwordResetEmailEnabled(){return!!(PREMIUM_CONFIG.emailApiKey&&PREMIUM_CONFIG.emailFrom&&secureProviderUrl(PREMIUM_CONFIG.emailApiUrl))}
+async function paystack(pathname,options={}){
+  if(!paystackCredentials().ready)throw new Error(paystackCredentials().reason);
+  const base=String(process.env.PAYSTACK_API_URL||'https://api.paystack.co').replace(/\/+$/,'');
+  const url=new URL(pathname,base);
+  if(url.protocol!=='https:'&&!loopbackTestUrl(url))throw new Error('Paystack endpoint must use HTTPS');
+  const r=await fetch(url,{...options,headers:{Authorization:'Bearer '+PREMIUM_CONFIG.paystackSecretKey,'Content-Type':'application/json',...(options.headers||{})},signal:AbortSignal.timeout(15000)});
+  const d=await r.json().catch(()=>({}));if(!r.ok||d.status===false)throw new Error(d.message||'Paystack request failed');return d;
+}
+function validPaystackTransaction(tx,data){
+  if(!tx||!data||data.status!=='success'||String(data.reference||'')!==String(tx.reference))return false;
+  const amount=Number(data.amount),metadata=data.metadata||{};
+  return Number.isFinite(amount)&&amount>=Number(tx.amount)*100&&String(data.currency||'').toUpperCase()==='NGN'
+    &&String(metadata.userId||'')===String(tx.userId)&&String(metadata.plan||'').toLowerCase()===String(tx.plan).toLowerCase();
+}
+function validPaystackSignature(raw,signature){
+  if(!PREMIUM_CONFIG.paystackSecretKey||typeof signature!=='string'||! /^[a-f0-9]{128}$/i.test(signature))return false;
+  const expected=crypto.createHmac('sha512',PREMIUM_CONFIG.paystackSecretKey).update(raw).digest();
+  const supplied=Buffer.from(signature,'hex');
+  return supplied.length===expected.length&&crypto.timingSafeEqual(expected,supplied);
+}
+async function sendPasswordResetEmail(email,code){
+  if(!passwordResetEmailEnabled())throw new Error('Password reset email is not configured');
+  let url;try{url=new URL(PREMIUM_CONFIG.emailApiUrl)}catch{throw new Error('Email provider URL is invalid')}
+  if(!secureProviderUrl(url.href))throw new Error('Email provider endpoint must use HTTPS');
+  const textBody=`Your KINGDOM BIBLE password reset code is ${code}.\n\nEnter it in the password reset form within 30 minutes. If you did not request this, you can ignore this email.`;
+  const html=`<div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;color:#13213a"><p style="font-weight:bold;letter-spacing:.08em">KINGDOM BIBLE</p><h1 style="font-size:24px">Reset your password</h1><p>Use this one-time code to choose a new password:</p><p style="font-size:32px;font-weight:bold;letter-spacing:.25em;color:#9a7411">${code}</p><p>The code expires in 30 minutes and works once. If you did not request this, ignore this message.</p></div>`;
+  const r=await fetch(url,{method:'POST',headers:{Authorization:'Bearer '+PREMIUM_CONFIG.emailApiKey,'Content-Type':'application/json'},body:JSON.stringify({from:PREMIUM_CONFIG.emailFrom,to:[email],subject:'Your KINGDOM BIBLE password reset code',text:textBody,html}),signal:AbortSignal.timeout(15000)});
+  if(!r.ok)throw new Error('Email provider returned HTTP '+r.status);
+  return true;
+}
 /* AI providers on a free tier return 429/503 whenever demand spikes. Measured in
    production use: the very same request succeeded seconds after a 503, so a single
    short retry clears almost every capacity blip instead of charging the user a
@@ -442,7 +505,7 @@ async function settlePayment(reference,verified){
   if(u.referredBy&&!u.referralRewarded){const ref=premiumStore.users.find(x=>x.referralCode===u.referredBy&&x.id!==u.id);if(ref){addWallet(ref,Math.round(tx.amount*.1),'commission','10% first-payment referral commission',{fromUser:u.id,reference});u.referralRewarded=true;}}
   savePremiumStore();audit('payment.success',u.id,{reference,plan:tx.plan,amount:tx.amount});return tx;
 }
-function premiumPublic(){return{plans:Object.values(PREMIUM_PLANS).map(({aiMonthly,...p})=>p),trialDays:30,trialWarningDays:7,referral:{signupNaira:100,firstPaymentPercent:10,pointValueNaira:1,minWithdrawal:1000,payoutSlaWorkingDays:3},paystackPublicKey:PREMIUM_CONFIG.paystackPublicKey,googleClientId:PREMIUM_CONFIG.googleClientId,googleSignInEnabled:PREMIUM_CONFIG.googleSignInOn&&!!PREMIUM_CONFIG.googleClientId,appVersion:VERSION,liveHubUrl:PREMIUM_CONFIG.liveHubUrl,whatsapp:SUPPORT_PHONE,whatsappDisplay:SUPPORT_PHONE_DISPLAY,whatsappLink:supportLink()}}
+function premiumPublic(){const payment=paystackCredentials();return{plans:Object.values(PREMIUM_PLANS).map(({aiMonthly,...p})=>p),trialDays:30,trialWarningDays:7,referral:{signupNaira:100,firstPaymentPercent:10,pointValueNaira:1,minWithdrawal:1000,payoutSlaWorkingDays:3},paystackPublicKey:payment.ready?PREMIUM_CONFIG.paystackPublicKey:'',paystackReady:payment.ready,paystackMode:payment.mode,passwordResetEmailEnabled:passwordResetEmailEnabled(),googleClientId:PREMIUM_CONFIG.googleClientId,googleSignInEnabled:PREMIUM_CONFIG.googleSignInOn&&!!PREMIUM_CONFIG.googleClientId,appVersion:VERSION,liveHubUrl:PREMIUM_CONFIG.liveHubUrl,whatsapp:SUPPORT_PHONE,whatsappDisplay:SUPPORT_PHONE_DISPLAY,whatsappLink:supportLink()}}
 
 /* ---------- HTTP server ---------- */
 const server=http.createServer(async(req,res)=>{
@@ -456,6 +519,32 @@ const server=http.createServer(async(req,res)=>{
     if(p==='/api/network')return json(res,200,{ok:true,port:PORT,addresses:sortedAddresses(),url:baseUrl(),sessionActive:!!session.code,listeners:session.listeners.size});
 
     if(p==='/api/premium/config'&&req.method==='GET')return json(res,200,{ok:true,...premiumPublic()});
+    /* Paystack's signed webhook is the reliable activation path when a customer
+       closes the checkout tab or the browser return is interrupted. The redirect
+       verifier below remains as a second confirmation route. */
+    if(p==='/api/payments/webhook'&&req.method==='POST'){
+      if(!PREMIUM_CONFIG.paystackSecretKey)return json(res,503,{ok:false,error:'Paystack webhook is not configured'});
+      const raw=await rawBody(req),signature=req.headers['x-paystack-signature'];
+      if(!validPaystackSignature(raw,signature))return json(res,401,{ok:false,error:'Invalid Paystack signature'});
+      let event;try{event=JSON.parse(raw.toString('utf8'))}catch{return json(res,400,{ok:false,error:'Invalid webhook payload'})}
+      const data=event?.data||{},reference=String(data.reference||'');
+      if(event?.event==='charge.success'&&reference){
+        const tx=premiumStore.transactions.find(x=>x.reference===reference);
+        if(!tx){audit('payment.webhook.unmatched','paystack',{reference});return json(res,200,{ok:true,processed:false})}
+        if(!validPaystackTransaction(tx,data)){
+          notifyAdmin('payment.webhook.invalid','A signed Paystack success event did not match its pending transaction',{reference,transactionId:tx.id});
+          audit('payment.webhook.invalid','paystack',{reference,transactionId:tx.id});
+          return json(res,200,{ok:true,processed:false});
+        }
+        const duplicate=tx.status==='success';await settlePayment(reference,true);
+        return json(res,200,{ok:true,processed:!duplicate});
+      }
+      if(event?.event==='charge.failed'&&reference){
+        const tx=premiumStore.transactions.find(x=>x.reference===reference);
+        if(tx&&tx.status==='pending'){tx.status='failed';tx.failedAt=new Date().toISOString();savePremiumStore();audit('payment.failed',tx.userId,{reference,plan:tx.plan})}
+      }
+      return json(res,200,{ok:true,ignored:!['charge.success','charge.failed'].includes(event?.event)});
+    }
     if(p==='/api/auth/register'&&req.method==='POST'){
       const b=await body(req),email=String(b.email||'').trim().toLowerCase(),password=String(b.password||''),name=String(b.name||'').trim().slice(0,80),ref=String(b.referralCode||'').trim().toUpperCase();
       if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||password.length<8)return json(res,400,{ok:false,error:'Use a valid email and a password of at least 8 characters'});
@@ -490,26 +579,25 @@ const server=http.createServer(async(req,res)=>{
       const s=requireAuth(req,res);if(!s)return;
       const plan=planBy((await body(req)).plan);if(!plan)return json(res,400,{ok:false,error:'Choose a valid subscription plan'});
       if(s.role==='admin')return json(res,200,{ok:true,admin:true,message:'Administrator access is free'});
+      const payment=paystackCredentials();if(!payment.ready)return json(res,503,{ok:false,error:payment.reason});
       try{
-        const d=await paystack('/transaction/initialize',{method:'POST',body:JSON.stringify({email:s.user.email,amount:plan.price*100,currency:'NGN',metadata:{userId:s.user.id,plan:plan.id},callback_url:publicOrigin(req)+'/#premium'})});
+        /* Return to the app root: startup now verifies the Paystack reference before
+           the user has to open the plan modal again. */
+        const d=await paystack('/transaction/initialize',{method:'POST',body:JSON.stringify({email:s.user.email,amount:plan.price*100,currency:'NGN',metadata:{userId:s.user.id,plan:plan.id},callback_url:publicOrigin(req)+'/'})});
         premiumStore.transactions.push({id:uid('tx'),reference:d.data.reference,userId:s.user.id,plan:plan.id,amount:plan.price,status:'pending',createdAt:new Date().toISOString()});savePremiumStore();audit('payment.initialize',s.user.id,{plan:plan.id,amount:plan.price});return json(res,200,{ok:true,authorizationUrl:d.data.authorization_url,reference:d.data.reference,accessCode:d.data.access_code});
       }catch(e){return json(res,503,{ok:false,error:e.message})}
     }
     if(p==='/api/payments/verify'&&req.method==='POST'){
       const s=requireAuth(req,res);if(!s)return;
+      const payment=paystackCredentials();if(!payment.ready)return json(res,503,{ok:false,error:payment.reason});
       const b=await body(req),reference=String(b.reference||'');if(!reference)return json(res,400,{ok:false,error:'Payment reference is required'});
       const tx=premiumStore.transactions.find(x=>x.reference===reference&&x.userId===s.user.id);if(!tx)return json(res,404,{ok:false,error:'Payment not found'});
       try{const d=await paystack('/transaction/verify/'+encodeURIComponent(reference));
-      /* Paystack's verify `amount` is the GROSS charged to the customer, not the
-         plan price. When the dashboard has "pass fees to customers" enabled that
-         gross includes the transaction fee (Nigeria: 1.5% + NGN 100, so a N2,500
-         Silver plan bills 263,960 kobo rather than 250,000). An exact
-         `=== tx.amount * 100` test therefore rejected every genuine payment.
-         Paystack only ever ADDS the fee, never subtracts it, so requiring the
-         charged amount to be AT LEAST the plan price is correct for both fee
-         modes while still refusing an underpayment. */
-      const charged=Number(d.data?.amount);
-      const ok=d.data?.status==='success'&&Number.isFinite(charged)&&charged>=tx.amount*100&&d.data.metadata?.userId===tx.userId;if(!ok)return json(res,400,{ok:false,error:'Payment could not be verified'});await settlePayment(reference,true);return json(res,200,{ok:true,user:publicUser(s.user),message:'Subscription activated'});}catch(e){return json(res,503,{ok:false,error:e.message})}
+      /* Paystack may add its processing fee to the customer-paid amount. The shared
+         validator accepts that gross amount but requires the reference, NGN currency,
+         account id and exact plan to match this pending purchase. */
+      if(!validPaystackTransaction(tx,d.data))return json(res,400,{ok:false,error:'Payment could not be verified'});
+      await settlePayment(reference,true);return json(res,200,{ok:true,user:publicUser(s.user),message:'Subscription activated'});}catch(e){return json(res,503,{ok:false,error:e.message})}
     }
     if(p==='/api/wallet/withdraw'&&req.method==='POST'){
       const s=requireAuth(req,res);if(!s||s.role==='admin')return s?json(res,400,{ok:false,error:'Administrator accounts do not need withdrawals'}):null;
@@ -717,28 +805,53 @@ const server=http.createServer(async(req,res)=>{
       return json(res,200,{ok:true,referral:referralStats(s.user),ledger:(s.user.wallet?.ledger||[]).slice(0,40),withdrawals:premiumStore.withdrawals.filter(w=>w.userId===s.user.id).slice(0,20),rules:{signupNaira:100,firstPaymentPercent:10,pointValueNaira:1,minWithdrawal:1000,payoutSlaWorkingDays:3}});
     }
     /* ---------- password recovery ----------
-       No SMTP or SMS provider is configured for this deployment, so recovery is
-       administrator-assisted: the user requests a reset, the administrator issues a
-       single-use 6-digit code, and the user exchanges it here for a new password.
-       Requests are answered identically whether or not the account exists, so this
-       endpoint cannot be used to discover which emails are registered. */
+       If a transactional email key + verified sender are configured, a short-lived
+       single-use code is emailed automatically. Otherwise the administrator-assisted
+       WhatsApp path remains available. Responses never reveal whether an email exists. */
     if(p==='/api/auth/password/forgot'&&req.method==='POST'){
-      const b=await body(req),email=String(b.email||'').trim().toLowerCase();
+      const requestStartedAt=Date.now(),b=await body(req),email=String(b.email||'').trim().toLowerCase();
       if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))return json(res,400,{ok:false,error:'Enter the email address on your account'});
-      const u=premiumStore.users.find(x=>x.email===email);
+      const u=premiumStore.users.find(x=>x.email===email),emailEnabled=passwordResetEmailEnabled();
       if(u&&u.passwordSet){
-        notifyAdmin('password.reset.request','Password reset requested for '+u.email,{userId:u.id,email:u.email});
-        audit('auth.password.forgot',u.id,{source:'self-service'});
+        const now=Date.now(),cooldown=60_000,canIssue=!Number(u.passwordResetRequestedAt)||now-Number(u.passwordResetRequestedAt)>=cooldown;
+        if(canIssue){
+          u.passwordResetRequestedAt=now;
+          notifyAdmin('password.reset.request','Password reset requested for '+u.email,{userId:u.id,email:u.email});
+          audit('auth.password.forgot',u.id,{source:'self-service',delivery:emailEnabled?'email':'admin'});
+          if(emailEnabled){
+            const{code,reset}=issueCode(u);
+            /* Do not wait for Resend here: response timing must not reveal whether the
+               address belongs to an account. The generic acknowledgment is returned
+               on a fixed minimum schedule while delivery completes in the background. */
+            void sendPasswordResetEmail(u.email,code).then(()=>{
+              try{audit('auth.password.email_sent',u.id,{resetId:reset.id})}catch{}
+            },e=>{
+              try{
+                premiumStore.passwordResets=(premiumStore.passwordResets||[]).filter(r=>r.id!==reset.id);
+                savePremiumStore();notifyAdmin('password.reset.email.failed','Password reset email could not be delivered',{userId:u.id,reason:String(e.message||e).slice(0,120)});
+              }catch{}
+            });
+          }
+        }
       }
-      return json(res,202,{ok:true,message:'If that account exists, an administrator will send you a one-time reset code. Contact support on WhatsApp if you need it sooner.'});
+      const message=emailEnabled
+        ?'If that account exists, a one-time code will be sent to its email. Check spam, or contact support if it does not arrive.'
+        :'If that account exists, an administrator will send you a one-time reset code. Contact support on WhatsApp if you need it sooner.';
+      const wait=Math.max(0,250-(Date.now()-requestStartedAt));
+      if(wait)await new Promise(resolve=>setTimeout(resolve,wait));
+      return json(res,202,{ok:true,message,passwordResetEmailEnabled:emailEnabled});
     }
     if(p==='/api/auth/password/reset'&&req.method==='POST'){
       const b=await body(req),email=String(b.email||'').trim().toLowerCase(),code=String(b.code||'').replace(/\D/g,''),password=String(b.newPassword||'');
       if(password.length<8)return json(res,400,{ok:false,error:'Choose a password of at least 8 characters'});
-      if(!/^\d{6}$/.test(code))return json(res,400,{ok:false,error:'Enter the 6-digit code from the administrator'});
+      if(!/^\d{6}$/.test(code))return json(res,400,{ok:false,error:'Enter the 6-digit code from your email or support'});
       const u=premiumStore.users.find(x=>x.email===email);
       const r=(premiumStore.passwordResets||[]).find(x=>u&&x.userId===u.id&&!x.usedAt&&x.expiresAt>Date.now());
-      if(!u||!r||!passwordOk(code,r.codeHash))return json(res,400,{ok:false,error:'That code is not valid or has expired'});
+      if(!u||!r||Number(r.attempts||0)>=5)return json(res,400,{ok:false,error:'That code is not valid or has expired'});
+      if(!passwordOk(code,r.codeHash)){
+        r.attempts=(Number(r.attempts)||0)+1;if(r.attempts>=5)r.usedAt=new Date().toISOString();savePremiumStore();
+        return json(res,400,{ok:false,error:'That code is not valid or has expired'});
+      }
       u.passwordHash=passwordHash(password);u.passwordSet=true;r.usedAt=new Date().toISOString();
       /* Every existing session is dropped so a stolen device cannot keep using the
          account after the real owner recovers it. */
@@ -822,6 +935,23 @@ const server=http.createServer(async(req,res)=>{
         headers(res,MIME[ext]||'application/octet-stream',live);
         res.setHeader('Cache-Control',noStore?'no-store, must-revalidate':'public, max-age=60');
         res.setHeader('ETag','"'+st.size+'-'+st.mtimeMs+'"');
+        if(ext==='.mp4'){
+          res.setHeader('Accept-Ranges','bytes');
+          const range=req.headers.range;
+          if(range){
+            const m=String(range).match(/^bytes=(\d*)-(\d*)$/);
+            let start=m&&m[1]?Number(m[1]):0,end=m&&m[2]?Number(m[2]):st.size-1;
+            if(m&&!m[1]&&m[2]){start=Math.max(0,st.size-Number(m[2]));end=st.size-1}
+            if(!m||!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||start<0||end<start||start>=st.size){
+              res.statusCode=416;res.setHeader('Content-Range',`bytes */${st.size}`);res.setHeader('Content-Length','0');return res.end();
+            }
+            end=Math.min(end,st.size-1);res.statusCode=206;
+            res.setHeader('Content-Range',`bytes ${start}-${end}/${st.size}`);
+            res.setHeader('Content-Length',String(end-start+1));
+            return fs.createReadStream(f,{start,end}).pipe(res);
+          }
+          res.setHeader('Content-Length',String(st.size));
+        }
         /* The support number is injected here instead of being typed into each page.
            A wrong digit in a static policy page is invisible until a real user tries
            to use it, and there is no test that would catch a stale copy. The origin

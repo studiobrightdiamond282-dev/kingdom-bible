@@ -22,6 +22,12 @@ assert(!fs.existsSync(path.join(dist, 'admin-portal.html')) && !fs.existsSync(pa
   'the private admin shell and script are excluded from static output');
 assert(fs.existsSync(path.join(dist, 'index.html')) && fs.existsSync(path.join(dist, 'sw.js')),
   'the app shell and service worker are in the static output');
+for (const asset of ['kingdom-bible-product-preview.jpg', 'kingdom-bible-product-preview.mp4']) {
+  const built = path.join(dist, 'assets', asset);
+  assert(fs.existsSync(built), `static build includes ${asset}`);
+  assert.strictEqual(fs.statSync(built).size, fs.statSync(path.join(root, 'public', 'assets', asset)).size,
+    `static build preserves the complete ${asset} asset`);
+}
 
 const vercel = JSON.parse(fs.readFileSync(path.join(root, 'vercel.json'), 'utf8'));
 assert.strictEqual(vercel.buildCommand, 'node scripts/build-static.js');

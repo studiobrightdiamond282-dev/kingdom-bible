@@ -51,6 +51,9 @@ ctx.renderHome().then(()=>{
   ok('quick actions grid',h.includes('Quick actions')&&(h.match(/quick-card/g)||[]).length>=3);
   ok('next step / memory verse',h.includes('Your next step')&&h.includes('Memory verse'));
   ok('membership upsell present',h.includes('home-membership')&&h.includes('KINGDOM BIBLE PRO'));
+  ok('Home video preview has native controls and an illustrative-screens disclaimer',h.includes('<video class="home-demo-video" controls preload="none" playsinline')&&h.includes('Illustrative sample screens · no personal account data shown'));
+  ok('interactive guided demo remains beside video',h.includes('Explore the interactive demo')&&h.includes('1-minute guided tour'));
+  ok('video has a readable transcript for assistive technology',h.includes('Read the video transcript')&&h.includes('Plans and prayer.'));
   ok('privacy + refund links',h.includes('href="/privacy"')&&h.includes('href="/refund"'));
   ok('WhatsApp support wired',h.includes('WhatsApp support'));
   // Every id the template creates must be the id the binding code reaches for.
@@ -58,7 +61,7 @@ ctx.renderHome().then(()=>{
   const dup=ids.filter((v,i)=>ids.indexOf(v)!==i);
   ok('no duplicate ids',dup.length===0,dup.join(','));
   // `bound` stores full selectors ("#resumeTop"), so compare with the hash.
-  for(const need of ['resumeTop','resumeReading','homeUpgrade','homeWhatsApp','dailySave','dailyShare','dailyOpen','memoryStart'])
+  for(const need of ['resumeTop','resumeReading','homeUpgrade','homeWhatsApp','dailySave','dailyShare','dailyOpen','playDemo','memoryStart'])
     ok(`#${need} rendered AND bound`,ids.includes(need)&&bound.includes('#'+need),`rendered=${ids.includes(need)} bound=${bound.includes('#'+need)}`);
   const openD=(h.match(/<div/g)||[]).length-(h.match(/<\/div>/g)||[]).length;
   ok('div tags balanced',openD===0,openD);

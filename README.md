@@ -4,6 +4,13 @@
 
 A premium, local-first Progressive Web App for Bible reading, Scripture study, prayer journaling, reading plans, memorization, and professional church Scripture presentation.
 
+## New in v1.2.7
+
+- **Home product preview.** A silent 34-second, 720p H.264 video shows clearly labeled illustrative sample screens with animated arrows and feature explanations. It is explicitly not a capture of the production app and contains no personal account data. The accessible player does not autoplay; its poster is available offline, while video playback remains network-only. The existing one-minute interactive tour is still available alongside it.
+- **More dependable Paystack activation.** Checkout now returns to the app root for automatic reference verification and adds a signature-verified `charge.success` webhook fallback. The server checks transaction reference, account, plan, NGN currency, and the gross amount (including customer-paid fees), and marks repeated webhook delivery idempotently. Checkout is explicitly disabled when public/secret keys are missing, invalid, placeholder values, or from different modes.
+- **Self-service password recovery.** Configure a Resend API key and verified sender to email a single-use, 30-minute code. The code is hashed at rest, limited to five guesses, and resend requests are throttled. If email is not configured, the administrator-assisted WhatsApp recovery remains available. Responses do not reveal whether an account exists.
+- **Signup and recovery remain on the live account service.** The Vercel reader is static; use its account-service handoff to the Node service for email/password signup, login, Paystack, and recovery.
+
 ## New in v1.2.6
 
 - Home includes a one-minute guided tour with animated arrows, target spotlights, captions, seven feature steps, and direct links into the live tools. The preview respects reduced-motion settings, works offline from the PWA shell, and never touches personal reading data.
@@ -261,17 +268,28 @@ instead of showing a fake service code, blank QR, or raw `HTTP 404`.
 ## Premium deployment configuration
 
 The premium account foundation is server-side and must not be deployed as a static-only site.
-Copy `.env.example` into deployment secrets and set a new admin password. The supplied
-Paystack `pk_live` value is a publishable key, but it should still be injected through
-`PAYSTACK_PUBLIC_KEY`; the matching `PAYSTACK_SECRET_KEY` must remain server-only. Never
-commit either key or an admin password.
+Copy `.env.example` into deployment secrets and set a new admin password. Set matching
+`PAYSTACK_PUBLIC_KEY` and server-only `PAYSTACK_SECRET_KEY` values from the same Paystack
+(test or live) environment. Never commit either key or an admin password. The public config
+reports whether checkout is correctly configured; it does not prove the keys are valid with
+Paystack or that a live charge has succeeded.
 
-The included `server.js` provides account sessions, a 30-day trial, the seven-day warning,
-Paystack initialize/verify boundaries, referral wallet entries, withdrawal requests, admin
-free-access grants, and an in-app audit log. The JSON store is suitable for local testing only;
-production should move it to PostgreSQL or another durable database before taking payments.
-The AI assistant is optional and requires `AI_API_KEY`; its “Unlimited” plan is fair-use capped
-so provider costs cannot grow without control.
+In the Paystack dashboard, register `https://kingdom-bible.onrender.com/api/payments/webhook`
+for `charge.success` and `charge.failed`. The server validates `x-paystack-signature` using
+`PAYSTACK_SECRET_KEY`, then matches the paid reference, account, plan, NGN currency and amount
+to the stored pending transaction. The browser return also calls the authenticated verification
+endpoint, so a lost redirect does not depend on that browser to activate a successful payment.
+Test this end-to-end in an isolated staging deployment with `PAYSTACK_ALLOW_TEST_MODE=true`, then switch the dashboard and both keys to live and leave that flag off in production. Production will not start checkout with test keys by default.
+
+The included `server.js` provides email/password signup and login, a 30-day trial, the seven-day
+warning, Paystack initialize/verify/webhook routes, referral wallet entries, withdrawal requests,
+admin free-access grants, and an in-app audit log. The JSON store is suitable for local testing
+only; production should move it to PostgreSQL or another durable database before taking payments.
+Optional self-service password recovery uses Resend: set `EMAIL_API_KEY`, a verified `EMAIL_FROM`,
+and `EMAIL_API_URL` (default `https://api.resend.com/emails`). With no sender configured, the
+administrator-assisted one-time WhatsApp code flow remains enabled. The AI assistant is optional
+and requires `AI_API_KEY`; its “Unlimited” plan is fair-use capped so provider costs cannot grow
+without control.
 
 The administrator portal is at `/admin`. Holding the Kingdom Bible logo for 2.5 seconds only
 opens that route; actual access still requires `ADMIN_EMAIL` and `ADMIN_PASSWORD`. The admin
@@ -335,7 +353,7 @@ Never place provider secrets in browser code. Use the names in `.env.example` on
 `GET /health` returns service status without secrets or stack traces:
 
 ```json
-{"ok":true,"app":"KINGDOM BIBLE","version":"1.2.5","presentation":"operational",
+{"ok":true,"app":"KINGDOM BIBLE","version":"1.2.7","presentation":"operational",
  "sessionActive":true,"listeners":1,"uptime":412,"serverTime":1757404800000}
 ```
 
@@ -386,7 +404,7 @@ paired phone plus any vMix input that is mid-service.
 
 ## Version
 
-KINGDOM BIBLE v1.2.5 — `package.json`, `server.js` and the service-worker cache version are
+KINGDOM BIBLE v1.2.7 — `package.json`, `server.js` and the service-worker cache version are
 kept in sync, and a smoke test fails the build if they drift.
 
 ## Duplicate-folder cleanup (one-time, on the ministry PC)

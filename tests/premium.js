@@ -5,7 +5,7 @@
    or AI call is made in this test. */
 const assert=require('assert'),{spawn}=require('child_process'),fs=require('fs'),os=require('os'),path=require('path');
 const port=4199,store=path.join(os.tmpdir(),'kingdom-bible-premium-'+process.pid+'.json');
-const child=spawn(process.execPath,['server.js'],{cwd:path.join(__dirname,'..'),env:{...process.env,PORT:String(port),ADMIN_PASSWORD:'test-admin-password',PREMIUM_STORE_PATH:store,PAYSTACK_SECRET_KEY:'',AI_API_KEY:''},stdio:['ignore','pipe','pipe']});
+const child=spawn(process.execPath,['server.js'],{cwd:path.join(__dirname,'..'),env:{...process.env,PORT:String(port),NODE_ENV:'test',ADMIN_PASSWORD:'test-admin-password',PREMIUM_STORE_PATH:store,PAYSTACK_PUBLIC_KEY:'',PAYSTACK_SECRET_KEY:'',EMAIL_API_KEY:'',EMAIL_KEY:'',EMAIL_FROM:'',AI_API_KEY:''},stdio:['ignore','pipe','pipe']});
 const base='http://127.0.0.1:'+port;
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 /* The full Set-Cookie header is kept, not just the first `;` segment: the "keep me signed
@@ -14,8 +14,9 @@ async function request(p,o={}){const r=await fetch(base+p,{...o,headers:{'conten
 async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/health');if(x.ok)return}catch{}await wait(50)}throw Error('premium test server did not start')}
 (async()=>{try{
   await ready();
-  const cfg=await request('/api/premium/config');assert.equal(cfg.body.trialDays,30);assert(cfg.body.plans.some(p=>p.id==='premium'&&p.price===10000));assert.equal(cfg.body.referral.signupNaira,100);
+  const cfg=await request('/api/premium/config');assert.equal(cfg.body.trialDays,30);assert(cfg.body.plans.some(p=>p.id==='premium'&&p.price===10000));assert.equal(cfg.body.referral.signupNaira,100);assert.equal(cfg.body.paystackReady,false,'checkout must report missing Paystack keys instead of appearing live');assert.equal(cfg.body.paystackPublicKey,'','an unpaired public key is not exposed');assert.equal(cfg.body.passwordResetEmailEnabled,false,'email recovery is disabled until a verified sender is configured');
   const a=await request('/api/auth/register',{method:'POST',body:JSON.stringify({email:'a@example.com',password:'password-a',name:'A'})});assert.equal(a.r.status,201);assert(a.body.user.trialEndsAt);assert(a.cookie);
+  const checkoutOff=await request('/api/payments/initialize',{method:'POST',headers:{cookie:a.session},body:JSON.stringify({plan:'silver'})});assert.equal(checkoutOff.r.status,503,'checkout without real Paystack keys must fail closed');assert.match(checkoutOff.body.error,/Paystack checkout needs both a public key and a server-side secret key/);
   const b=await request('/api/auth/register',{method:'POST',body:JSON.stringify({email:'b@example.com',password:'password-b',name:'B',referralCode:a.body.user.referralCode})});assert.equal(b.r.status,201);
   const aMe=await request('/api/auth/me',{headers:{cookie:a.session}});assert.equal(aMe.body.user.walletBalance,100);
   const admin=await request('/api/auth/login',{method:'POST',body:JSON.stringify({email:'stanley.okonkwo282@gmail.com',password:'test-admin-password'})});assert.equal(admin.body.user.role,'admin');
@@ -94,6 +95,13 @@ async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/heal
   const cardBuf=Buffer.from(await card.arrayBuffer());
   assert.equal(cardBuf.readUInt32BE(16),1200,'share card width must match og:image:width');
   assert.equal(cardBuf.readUInt32BE(20),630,'share card height must match og:image:height');
+  const poster=await fetch(base+'/assets/kingdom-bible-product-preview.jpg?v=1.2.7');
+  assert.equal(poster.headers.get('content-type'),'image/jpeg','the Render hub must serve the demo poster with its image MIME type');
+  const media=await fetch(base+'/assets/kingdom-bible-product-preview.mp4?v=1.2.7',{headers:{range:'bytes=0-63'}});
+  assert.equal(media.status,206,'the Render hub must support byte-range video playback');
+  assert.equal(media.headers.get('content-type'),'video/mp4');
+  assert.equal(media.headers.get('content-range').split('/')[0],'bytes 0-63');
+  assert.equal((await media.arrayBuffer()).byteLength,64,'a media seek must return only the requested range');
   /* {{ORIGIN}} is gone from index.html, but the injection path must stay safe for
      any page that still uses it — a hostile header must never inject markup.
      index.html legitimately boots the theme with a bare inline <script>, so the
@@ -150,13 +158,19 @@ async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/heal
   const issue=await request('/api/admin/users/'+a.body.user.id+'/password-code',{method:'POST',headers:{cookie:admin.session},body:'{}'});
   assert.equal(issue.r.status,200);
   assert(/^\d{6}$/.test(issue.body.code),'the reset code must be 6 digits');
-  assert.equal((await request('/api/auth/password/reset',{method:'POST',body:JSON.stringify({email:'a@example.com',code:issue.body.code,newPassword:'short'})})).r.status,400,'a too-short new password must be refused');
-  const done=await request('/api/auth/password/reset',{method:'POST',body:JSON.stringify({email:'a@example.com',code:issue.body.code,newPassword:'brand-new-pass'})});
-  assert.equal(done.r.status,200,'the issued code must work');
+  const wrongCode=String((Number(issue.body.code)+1)%1000000).padStart(6,'0');
+  for(let attempt=0;attempt<5;attempt++)assert.equal((await request('/api/auth/password/reset',{method:'POST',body:JSON.stringify({email:'a@example.com',code:wrongCode,newPassword:'brand-new-pass'})})).r.status,400,'a wrong reset code must be refused');
+  assert.equal((await request('/api/auth/password/reset',{method:'POST',body:JSON.stringify({email:'a@example.com',code:issue.body.code,newPassword:'brand-new-pass'})})).r.status,400,'five guesses must invalidate the one-time code');
+  const reissue=await request('/api/admin/users/'+a.body.user.id+'/password-code',{method:'POST',headers:{cookie:admin.session},body:'{}'});
+  assert.equal(reissue.r.status,200,'an administrator can replace an exhausted code');
+  assert.equal((await request('/api/auth/password/reset',{method:'POST',body:JSON.stringify({email:'a@example.com',code:issue.body.code,newPassword:'brand-new-pass'})})).r.status,400,'issuing a replacement must invalidate every older code');
+  assert.equal((await request('/api/auth/password/reset',{method:'POST',body:JSON.stringify({email:'a@example.com',code:reissue.body.code,newPassword:'short'})})).r.status,400,'a too-short new password must be refused');
+  const done=await request('/api/auth/password/reset',{method:'POST',body:JSON.stringify({email:'a@example.com',code:reissue.body.code,newPassword:'brand-new-pass'})});
+  assert.equal(done.r.status,200,'the current issued code must work');
   assert.equal((await request('/api/auth/login',{method:'POST',body:JSON.stringify({email:'a@example.com',password:'password-a'})})).r.status,401,'the old password must stop working');
   assert.equal((await request('/api/auth/login',{method:'POST',body:JSON.stringify({email:'a@example.com',password:'brand-new-pass'})})).r.status,200,'the new password must work');
-  assert.equal((await request('/api/auth/password/reset',{method:'POST',body:JSON.stringify({email:'a@example.com',code:issue.body.code,newPassword:'another-pass-x'})})).r.status,400,'a reset code must be single-use');
-  assert(!JSON.stringify(JSON.parse(fs.readFileSync(store,'utf8'))).includes(issue.body.code),'the plaintext reset code must not be written to disk');
+  assert.equal((await request('/api/auth/password/reset',{method:'POST',body:JSON.stringify({email:'a@example.com',code:reissue.body.code,newPassword:'another-pass-x'})})).r.status,400,'a reset code must be single-use');
+  assert(!JSON.stringify(JSON.parse(fs.readFileSync(store,'utf8'))).includes(reissue.body.code),'the plaintext reset code must not be written to disk');
 
   /* ---- withdrawal is gated on the real balance and reports progress honestly ---- */
   const loginA=await request('/api/auth/login',{method:'POST',body:JSON.stringify({email:'a@example.com',password:'brand-new-pass'})});
@@ -177,6 +191,10 @@ async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/heal
   const premiumjsText=await (await fetch(base+'/premium.js')).text();
   assert(!/23481344338808/.test(appjs+premiumjsText),'no bundle may hardcode the old wrong number');
   assert(premiumjsText.includes('forgotLink')||premiumjsText.includes('function forgot'),'the sign-in screen must offer password recovery');
+  assert(appjs.includes("onPasswordReset=msg=>{toast(msg||'Password updated")&&appjs.includes("openAuth('login')"),'successful recovery must take the user back to sign-in with the remembered email');
+  assert(premiumjsText.includes('passwordResetEmailEnabled')&&premiumjsText.includes('check your inbox'),'self-service recovery must show email instructions when a provider is configured');
+  assert(premiumjsText.includes('paystackReady')&&premiumjsText.includes('Checkout unavailable'),'subscription buttons must fail closed when Paystack is not configured');
+  assert(premiumjsText.includes("return host+'/?upgrade=1'")&&premiumjsText.includes('Open account service'),'the static reader must direct signup/recovery to the live account service');
 
   /* ---- the icons must be derived from the real logo, not a stand-in mark ---- */
   for(const icon of ['/favicon.svg','/icons/icon-192.png','/icons/maskable-512.png','/favicon.png']){

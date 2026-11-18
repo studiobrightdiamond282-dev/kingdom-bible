@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "KINGDOM BIBLE Local API",
-    "version": "1.2.2",
+    "version": "1.2.7",
     "description": "Ministry hub for hosted or local Bible presentation: LAN discovery, service-code pairing, server-side Scripture resolution and live streaming. Session codes stay in memory and protected actions require a valid code."
   },
   "paths": {
@@ -71,7 +71,30 @@
     "/api/premium/config": {
       "get": {
         "summary": "Plans, trial rules, referral rates and the support contact number",
-        "responses": { "200": { "description": "Public premium configuration (no secrets)" } }
+        "responses": { "200": { "description": "Public premium configuration and payment/email readiness flags (no secrets)" } }
+      }
+    },
+    "/api/payments/initialize": {
+      "post": {
+        "summary": "Create an authenticated Paystack checkout for a subscription plan",
+        "description": "Requires matching Paystack test/live public and secret keys. The returned redirect points back to the app root with the transaction reference.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["plan"], "properties": { "plan": { "type": "string", "enum": ["silver", "gold", "premium", "unlimited"] } } } } } },
+        "responses": { "200": { "description": "Authorization URL created" }, "401": { "description": "Please sign in" }, "503": { "description": "Paystack is not configured or unavailable" } }
+      }
+    },
+    "/api/payments/verify": {
+      "post": {
+        "summary": "Verify the signed-in customer's Paystack reference and activate the plan",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["reference"], "properties": { "reference": { "type": "string" } } } } } } ,
+        "responses": { "200": { "description": "Payment verified and subscription activated" }, "400": { "description": "Payment could not be verified" }, "404": { "description": "Transaction does not belong to this account" } }
+      }
+    },
+    "/api/payments/webhook": {
+      "post": {
+        "summary": "Paystack signed webhook for charge.success and charge.failed",
+        "description": "Set Paystack's x-paystack-signature header. The signature is verified with PAYSTACK_SECRET_KEY; no user session is required. Configure the dashboard webhook at this URL.",
+        "parameters": [{ "in": "header", "name": "x-paystack-signature", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Event handled or safely ignored" }, "401": { "description": "Invalid signature" }, "503": { "description": "Webhook secret is not configured" } }
       }
     },
     "/api/auth/login": {
@@ -91,7 +114,7 @@
     "/api/auth/password/forgot": {
       "post": {
         "summary": "Request a password reset code",
-        "description": "Always returns the same message so the endpoint cannot be used to discover which email addresses are registered. No mail provider is configured, so an administrator issues the code from the portal.",
+        "description": "Always returns the same message to prevent account enumeration. When EMAIL_API_KEY and EMAIL_FROM are configured, sends a single-use code through the configured Resend-compatible API; otherwise an administrator issues it from the portal.",
         "requestBody": {
           "required": true,
           "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EmailOnly" } } }
