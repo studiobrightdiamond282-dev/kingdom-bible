@@ -22,7 +22,16 @@ async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/heal
   const overview=await request('/api/admin/overview',{headers:{cookie:admin.session}});assert.equal(overview.body.users.length,2);
   const grant=await request('/api/admin/users/'+a.body.user.id+'/entitlement',{method:'POST',headers:{cookie:admin.session},body:JSON.stringify({plan:'premium',forever:true})});assert.equal(grant.body.user.status,'active');assert.equal(grant.body.user.plan,'premium');
   const adminGuest=await fetch(base+'/admin');assert.equal(adminGuest.status,403,'/admin must reject requests without an admin session');
+  const userAdminPage=await fetch(base+'/admin',{headers:{cookie:a.session}});assert.equal(userAdminPage.status,403,'a normal signed-in user must still be denied the admin portal');
+  const adminAliasGuest=await fetch(base+'/admin-portal.html');assert.equal(adminAliasGuest.status,403,'the direct private portal-shell path must also require an admin session');
+  const adminJsGuest=await fetch(base+'/admin.js');assert.equal(adminJsGuest.status,403,'the private admin script must also require an admin session');
+  const staticAdmin=await (await fetch(base+'/admin.html')).text();
+  assert(staticAdmin.includes('https://kingdom-bible.onrender.com/?admin=1'),'the public static admin page must hand off to the live service');
+  assert(!/<form\b|admin\.js/.test(staticAdmin),'the static admin page must not advertise a broken login form');
   const adminPage=await fetch(base+'/admin',{headers:{cookie:admin.session}});assert.equal(adminPage.status,200,'/admin must be served to an authenticated administrator');
+  const adminHtml=await adminPage.text();assert(adminHtml.includes('id=\"adminLogin\"')&&adminHtml.includes('/admin.js'),'only the authenticated Node route may serve the actual admin portal shell');
+  const adminAlias=await fetch(base+'/admin-portal.html',{headers:{cookie:admin.session}});assert.equal(adminAlias.status,200,'an admin session may load the direct portal-shell alias');
+  const adminJs=await fetch(base+'/admin.js',{headers:{cookie:admin.session}});assert.equal(adminJs.status,200,'an admin session may load the portal script');
   for(const page of ['/privacy','/refund','/status']){const r=await fetch(base+page);assert.equal(r.status,200,page+' must be served')}
   /* Google sign-in must reject anything that is not a genuine, correctly signed,
      unexpired token for THIS app. A forged or malformed credential must never mint a session. */
@@ -98,7 +107,7 @@ async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/heal
   assert.equal(w.body.referral.code,a.body.user.referralCode);
   assert.equal(w.body.referral.invited,1,'the referral count must reflect the invited account');
   assert.equal(w.body.referral.balance,100);
-  assert.equal(w.body.referral.canWithdraw,false,'â‚¦100 is below the â‚¦1,000 withdrawal minimum');
+  assert.equal(w.body.referral.canWithdraw,false,'₦100 is below the ₦1,000 withdrawal minimum');
   assert.equal(w.body.referral.shortfall,900,'the shortfall to the minimum must be exact');
   assert(w.body.referral.link.includes(a.body.user.referralCode),'the referral link must carry the code');
   assert(w.body.ledger.some(x=>x.type==='signup'),'the signup reward must appear in the ledger');
@@ -177,7 +186,7 @@ async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/heal
   const icon192=await fetch(base+'/icons/icon-192.png');
   assert.equal(icon192.headers.get('content-type'),'image/png','the app icon must be a real PNG');
 
-  console.log('âœ“ premium trial, referral wallet, admin grant, legal routes, support number, profile photo, keep-me-signed-in, password recovery, update notification');
+  console.log('✓ premium trial, referral wallet, admin grant, legal routes, support number, profile photo, keep-me-signed-in, password recovery, update notification');
 /* ---- admin can reset or delete an account ---- */
   {
     /* The portal previously had no way to remove the throwaway accounts created while

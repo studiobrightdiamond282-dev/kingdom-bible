@@ -107,9 +107,14 @@ function openCollectionPicker() {
 function seedCustomPlans() {
   try {
     if (!state.customPlans) state.customPlans = [];
-    (PLANS || []).forEach(function (p) { p.custom = false; });
+    (PLANS || []).forEach(function (p) {
+      p.custom = state.customPlans.some(function (c) { return c && c.id === p.id; });
+    });
     state.customPlans.forEach(function (c) {
-      if (!PLANS.some(function (p) { return p.id === c.id; })) PLANS.push(c);
+      if (!c || !c.id) return;
+      var existing = PLANS.filter(function (p) { return p.id === c.id; })[0];
+      if (existing) { Object.assign(existing, c); existing.custom = true; }
+      else { c.custom = true; PLANS.push(c); }
     });
   } catch (e) {}
 }
@@ -177,6 +182,15 @@ function openCustomPlan() {
     var refs = (document.getElementById('kbPlanRefs').value || '').split('\n').map(function (s) { return s.trim(); }).filter(Boolean);
     if (!name) { toast('Give the plan a name', 'error'); return; }
     if (!refs.length) { toast('Add at least one passage', 'error'); return; }
+    var invalid = null;
+    refs = refs.map(function (ref) {
+      var p = window.KingdomRef && window.KingdomRef.parse(ref, books);
+      if (!p) { invalid = ref; return ref; }
+      var canonical = books[p.book].name + ' ' + p.chapter;
+      if (p.verse != null) canonical += ':' + p.verse + (p.verseEnd != null ? '-' + p.verseEnd : '');
+      return canonical;
+    });
+    if (invalid) { toast('Check this Scripture reference: ' + invalid, 'error'); return; }
     var id = 'custom-' + Date.now().toString(36);
     var plan = { id: id, icon: '◫', name: name, days: refs.length, desc: 'Custom plan · ' + refs.length + ' day' + (refs.length === 1 ? '' : 's') + '.', refs: refs, custom: true };
     try {
@@ -201,10 +215,10 @@ function openReminderPlus() {
 }
 var __kbRemKey = 'kb.reminderFired';
 function reminderFiredToday() {
-  try { return localStorage.getItem(__kbRemKey) === new Date().toISOString().slice(0, 10); } catch (e) { return true; }
+  try { return localStorage.getItem(__kbRemKey) === today(); } catch (e) { return true; }
 }
 function markReminderFired() {
-  try { localStorage.setItem(__kbRemKey, new Date().toISOString().slice(0, 10)); } catch (e) {}
+  try { localStorage.setItem(__kbRemKey, today()); } catch (e) {}
 }
 function checkPrayerReminder() {
   try {

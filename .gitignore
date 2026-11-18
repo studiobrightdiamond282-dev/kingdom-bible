@@ -47,3 +47,6 @@ HANDOVER.md
 
 # local premium store — real accounts, referral wallets, audit logs, payouts
 .data/
+
+# generated Vercel static build
+dist/

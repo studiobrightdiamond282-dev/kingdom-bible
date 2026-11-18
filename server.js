@@ -3,19 +3,14 @@
 /* KINGDOM BIBLE — local-first hub: static hosting, live Scripture presentation, phone remote control */
 const http=require('http'),fs=require('fs'),path=require('path'),crypto=require('crypto'),os=require('os');
 const REF=require('./public/bible-ref.js');
+const {SUPPORT_PHONE,SUPPORT_PHONE_DISPLAY,supportLink}=require('./config/site.js');
 const ROOT=path.join(__dirname,'public'),DATA=path.join(__dirname,'data');
 /* Dependency-free .env loader for local ministry servers. Deployment platforms
    should set the same values in their secret manager instead. */
 (function loadDotEnv(file){try{if(!fs.existsSync(file))return;for(const line of fs.readFileSync(file,'utf8').split(/\r?\n/)){const m=line.match(/^\s*([A-Z][A-Z0-9_]*)\s*=\s*(.*)\s*$/);if(m&&!process.env[m[1]])process.env[m[1]]=m[2].replace(/^['"]|['"]$/g,'')}}catch{}})(path.join(__dirname,'.env'));
 const PORT=Number(process.env.PORT||4173),HOST='0.0.0.0';
-const APP='KINGDOM BIBLE',VERSION='1.2.4';
-/* Support contact — defined ONCE and read by everything: the server-rendered policy
-   pages, the browser bundles (via /api/premium/config) and every WhatsApp deep link.
-   Previously this number was hardcoded in seven files, which is exactly how a stale
-   digit survives a release. Local format 0813 443 8808; wa.me wants no "+" or "0". */
-const SUPPORT_PHONE='2348134438808';
-const SUPPORT_PHONE_DISPLAY='+234 813 443 8808';
-const supportLink=(text='Hello KINGDOM BIBLE support')=>'https://wa.me/'+SUPPORT_PHONE+'?text='+encodeURIComponent(text);
+const APP='KINGDOM BIBLE',VERSION='1.2.5';
+/* Static and server-rendered contact data comes from config/site.js. */
 const MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.png':'image/png','.svg':'image/svg+xml','.txt':'text/plain; charset=utf-8','.xml':'application/xml; charset=utf-8'};
 /* Absolute origin used for the link-preview urls (og:image and friends).
  * Every social crawler resolves a RELATIVE og:image against the url it was handed,
@@ -800,15 +795,15 @@ const server=http.createServer(async(req,res)=>{
       if(p==='/'||p==='/index.html')f=path.join(ROOT,'index.html');
       else if(p==='/remote')f=path.join(ROOT,'remote.html');
       else if(p==='/present'||p==='/present/')f=path.join(ROOT,'index.html');
-      else if(p==='/admin'||p==='/admin/'){
-        /* The portal shell itself is gated too, so an outsider cannot even load the
-           login form and enumerate the surface. */
+      else if(p==='/admin'||p==='/admin/'||p==='/admin-portal.html'||p==='/admin.js'){
+        /* Every private portal asset requires an existing administrator session.
+           The public admin.html is only a static-host handoff page. */
         const g=adminGate(req);
         if(!g.ok){
           const html='<!doctype html><meta charset="utf-8"><title>Administrator</title><body style="font:16px system-ui;background:#07142f;color:#e8ecff;display:grid;place-items:center;height:100vh;margin:0"><div style="max-width:32rem;padding:2rem;text-align:center"><h1 style="font-size:1.25rem;margin:0 0 .75rem">Administrator portal is private</h1><p style="opacity:.75;line-height:1.6">'+escHtml(g.why||'Not available')+'</p></div>';
           res.writeHead(403,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});return res.end(html);
         }
-        f=path.join(ROOT,'admin.html');
+        f=path.join(ROOT,p==='/admin.js'?'admin.js':'admin-portal.html');
       }
       else if(p==='/privacy')f=path.join(ROOT,'privacy.html');
       else if(p==='/refund')f=path.join(ROOT,'refund.html');
