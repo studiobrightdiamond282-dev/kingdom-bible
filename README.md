@@ -4,6 +4,10 @@
 
 A premium, local-first Progressive Web App for Bible reading, Scripture study, prayer journaling, reading plans, memorization, and professional church Scripture presentation.
 
+## New in v1.2.6
+
+- Home includes a one-minute guided tour with animated arrows, target spotlights, captions, seven feature steps, and direct links into the live tools. The preview respects reduced-motion settings, works offline from the PWA shell, and never touches personal reading data.
+
 ## New in v1.2.5
 
 - **Reading-plan schedules now cover their promised books.** The annual, New Testament, Gospel, Psalms, and Proverbs plans distribute every scheduled chapter exactly once. Each day lists valid Scripture links that open in the reader; completion advances progress without repeating a day past the plan end.
