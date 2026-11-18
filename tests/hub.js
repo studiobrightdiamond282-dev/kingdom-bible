@@ -12,7 +12,7 @@ const ok=(name,cond,extra)=>{if(cond){pass++;console.log('  PASS',name)}else{fai
 /* Response doubles mirroring what each host actually returns. */
 const html200={status:200,json:false,body:null};                      // Vercel /health -> SPA shell
 const notFound={status:404,json:false,body:null};                     // Vercel /api/network -> 404
-const liveHub={status:200,json:true,body:{ok:true,app:'KINGDOM BIBLE',version:'1.2.2',presentation:'operational'}};
+const liveHub={status:200,json:true,body:{ok:true,app:'KINGDOM BIBLE',version:'1.2.3',presentation:'operational'}};
 const fakeOk={status:200,json:true,body:{ok:true,app:'SomethingElse'}};// JSON, but not our hub
 const htmlOnApi={status:200,json:false,body:null};
 
@@ -57,6 +57,11 @@ const htmlOnApi={status:200,json:false,body:null};
   const app=fs.readFileSync(path.join(__dirname,'../public/app.js'),'utf8');
   const remote=fs.readFileSync(path.join(__dirname,'../public/remote.js'),'utf8');
   const html=fs.readFileSync(path.join(__dirname,'../public/index.html'),'utf8');
+  console.log('\n--- presentation text encoding ---');
+  ok('app.js has no stray U+009D control character that renders as a square',!app.includes('\u009d'));
+  ok('presenter preview wraps verse text with real curly quotation marks',/<blockquote>“\$\{esc\(cur\.text\)\}”<\/blockquote>/.test(app));
+  ok('live presenter-preview updates keep the same quotation marks',/el\.innerHTML=`<blockquote>“\$\{esc\(v\.text\)\}”<\/blockquote>/.test(app));
+  ok('audience stage wraps verse text with real curly quotation marks',/verseBox\.innerHTML=`<blockquote>“\$\{body\}”<\/blockquote>/.test(app));
   /* the old build showed a green "Live" pill, a dashed code and a blank QR on Vercel */
   ok('the connect card branches on the hub state',/if\(!live\)/.test(app));
   /* the offline branch returns early, so the green pill is only ever reachable online */
