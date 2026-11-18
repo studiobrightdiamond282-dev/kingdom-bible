@@ -4,6 +4,11 @@
 
 A premium, local-first Progressive Web App for Bible reading, Scripture study, prayer journaling, reading plans, memorization, and professional church Scripture presentation.
 
+## New in v1.2.3
+
+- **Clean presentation quotations.** Fixed stray C1 control characters that appeared as square glyphs after Scripture quotes in the presenter preview and audience display; both now use proper curly quotation marks.
+- **Cache refresh.** Bump the app and service-worker versions so installed clients receive the corrected rendering.
+
 ## New in v1.2.2
 
 - **Phone pairing follows the live hub.** Render is the live ministry hub; the Vercel deployment is the static Bible reader. Start the presentation on Render or on a local Node hub, then use the QR/full phone link from that same hub.
@@ -308,7 +313,7 @@ Never place provider secrets in browser code. Use the names in `.env.example` on
 `GET /health` returns service status without secrets or stack traces:
 
 ```json
-{"ok":true,"app":"KINGDOM BIBLE","version":"1.2.2","presentation":"operational",
+{"ok":true,"app":"KINGDOM BIBLE","version":"1.2.3","presentation":"operational",
  "sessionActive":true,"listeners":1,"uptime":412,"serverTime":1757404800000}
 ```
 
@@ -359,7 +364,7 @@ paired phone plus any vMix input that is mid-service.
 
 ## Version
 
-KINGDOM BIBLE v1.2.2 — `package.json`, `server.js` and the service-worker cache version are
+KINGDOM BIBLE v1.2.3 — `package.json`, `server.js` and the service-worker cache version are
 kept in sync, and a smoke test fails the build if they drift.
 
 ## Duplicate-folder cleanup (one-time, on the ministry PC)
