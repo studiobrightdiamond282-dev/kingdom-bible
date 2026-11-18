@@ -4,10 +4,10 @@
 'use strict';
 const root=()=>document.querySelector('#modalRoot');
 const esc=s=>String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-let config=null,user=null,googleReady=null,configPromise=null;
+let config=null,user=null,googleReady=null,configPromise=null,apiState='unknown';
 /* Support contact is served by the server (/api/premium/config) so the number is defined
    in exactly one place. The literal below is only a fallback for the first paint, before
-   config has loaded, and must always agree with SUPPORT_PHONE in server.js. */
+   config has loaded, and must agree with the shared SUPPORT_PHONE in config/site.js. */
 const FALLBACK_WHATSAPP='2348134438808';
 const supportPhone=()=>config?.whatsapp||FALLBACK_WHATSAPP;
 const supportText=text=>'https://wa.me/'+supportPhone()+'?text='+encodeURIComponent(text||'Hello KINGDOM BIBLE support');
@@ -137,7 +137,28 @@ function googleButton(mount) {
 }
 async function apiPost(path,body){const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Request failed');return d}
 async function api(path,opts={}){const r=await fetch(path,{...opts,headers:{'content-type':'application/json',...(opts.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Request failed');return d}
-async function load(){try{const [c,m]=await Promise.all([api('/api/premium/config'),api('/api/auth/me')]);config=c;user=m.user||null;return user}catch{return undefined}}
+async function load(){
+  if(apiState==='static')return undefined;
+  try{const [c,m]=await Promise.all([api('/api/premium/config'),api('/api/auth/me')]);config=c;user=m.user||null;apiState='online';return user}
+  catch{
+    if(g.KingdomHub&&typeof g.KingdomHub.probe==='function'){
+      try{const host=await g.KingdomHub.probe();apiState=g.KingdomHub.isLive(host)?'online':host}
+      catch{apiState='unavailable'}
+    }else apiState='unavailable';
+    return undefined;
+  }
+}
+function accountServiceUrl(){
+  const host=String(g.KingdomHub?.LIVE_HUB_URL||'https://kingdom-bible.onrender.com').replace(/\/+$/,'');
+  return host+'/?upgrade=1';
+}
+function showAccountServiceNotice(){
+  const url=accountServiceUrl();
+  const copy=apiState==='static'
+    ?'This Vercel reader is a static, offline-capable Bible app. Sign-in, subscriptions, referral earnings, and account settings are hosted on the live Kingdom Bible service.'
+    :'The account service is not reachable from this page right now. Your Bible reading and local notes remain available; retry on the live Kingdom Bible service.';
+  shell(`<div class="modal-head"><div><div class="eyebrow">ACCOUNT SERVICE</div><h2>Continue on the live service</h2><p>${esc(copy)}</p></div><button class="close-btn" data-premium-close aria-label="Close">×</button></div><div class="notice">Your saved reading, notes, bookmarks, and prayers stay in this browser. Opening the live service does not move or upload them.</div><div class="modal-actions"><button class="secondary-btn" data-premium-close>Stay in the reader</button><a class="primary-btn" href="${esc(url)}" target="_blank" rel="noopener">Open account service</a></div>`);
+}
 /* After Paystack redirects back from payment, the URL contains ?reference=xxx.
    Verify the payment with the server and update the account if successful. */
 async function verifyPendingPayment(){
@@ -181,12 +202,12 @@ async function signOut(){
 }
 function shell(body,cls='premium-modal'){root().innerHTML=`<div class="modal-backdrop"><div class="modal ${cls}" role="dialog" aria-modal="true">${body}</div></div>`;root().querySelector('.modal-backdrop').onclick=e=>{if(e.target.classList.contains('modal-backdrop'))close()};root().querySelectorAll('[data-premium-close]').forEach(b=>b.onclick=close)}
 function planCards(){return(config?.plans||[]).map(p=>`<article class="premium-plan ${p.id==='premium'?'featured':''}"><div class="eyebrow">${p.name.toUpperCase()}</div><h3>₦${Number(p.price).toLocaleString()}<small>/month</small></h3><p>${esc(p.tagline)}</p><ul>${p.benefits.map(b=>`<li>${esc(b)}</li>`).join('')}</ul><button class="${p.id==='premium'?'primary-btn':'secondary-btn'}" data-buy="${p.id}">Choose ${p.name}</button></article>`).join('')}
-function open(){load().then(async()=>{await verifyPendingPayment();user?account():landing()})}
+function open(){load().then(async()=>{if(apiState!=='online'){showAccountServiceNotice();return}await verifyPendingPayment();user?account():landing()})}
 /* Open sign-in or sign-up DIRECTLY, skipping the plan screen. The welcome gate
    had two different promises ("Create free account" and "I already have an
    account") but both funnelled into open(), so both landed on the same generic
    Premium window and neither matched what the reader had clicked. */
-function openAuth(mode){load().then(()=>user?account():auth(mode==='login'?'login':'register'))}
+function openAuth(mode){load().then(()=>{if(apiState!=='online'){showAccountServiceNotice();return}user?account():auth(mode==='login'?'login':'register')})}
 function landing(){shell(`<div class="modal-head"><div><div class="eyebrow">KINGDOM BIBLE PRO</div><h2>Grow deeper. Serve better.</h2><p>Start with a 30-day free trial. We show a warning when seven days remain.</p></div><button class="close-btn" data-premium-close>×</button></div><div class="premium-notice"><strong>Fair and clear:</strong> subscriptions are charged through Paystack. AI access uses fair-use monthly allowances so you are never exposed to an unexpected bill. Read our <a href="/privacy" target="_blank">Privacy Policy</a> and <a href="/refund" target="_blank">Refund Policy</a>.</div><div class="premium-plans">${planCards()}</div><div class="premium-footer"><button class="secondary-btn" id="premiumLogin">Sign in</button><button class="primary-btn" id="premiumRegister">Start free trial</button><a href="${esc(supportText())}" target="_blank" rel="noopener">Questions? WhatsApp support</a></div>`);
   root().querySelector('#premiumLogin').onclick=()=>auth('login');root().querySelector('#premiumRegister').onclick=()=>auth('register');bindBuy();}
 function auth(mode){

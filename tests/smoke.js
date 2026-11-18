@@ -66,7 +66,7 @@ assert(app.includes('if(presenting())return;'),'back navigation must stay out of
 assert(fs.existsSync(path.join(pub,'bible-ref.js')),'Missing bible-ref.js (shared reference engine)');
 assert(fs.existsSync(path.join(pub,'voice.js')),'Missing voice.js (Voice Preacher Mode)');
 assert(fs.existsSync(path.join(pub,'premium.js')),'Missing premium.js (accounts and subscriptions)');
-assert(fs.existsSync(path.join(pub,'admin.html'))&&fs.existsSync(path.join(pub,'admin.js')),'Missing admin portal');
+assert(fs.existsSync(path.join(pub,'admin.html'))&&fs.existsSync(path.join(pub,'admin-portal.html'))&&fs.existsSync(path.join(pub,'admin.js')),'Missing static admin handoff or gated admin portal');
 assert(fs.existsSync(path.join(pub,'privacy.html'))&&fs.existsSync(path.join(pub,'refund.html')),'Missing legal policy pages');
 const serverPremiumSrc=fs.readFileSync(path.join(root,'server.js'),'utf8');
 for(const ep of ['/api/auth/register','/api/auth/login','/api/payments/initialize','/api/wallet/withdraw','/api/admin/overview','/api/ai/ask','/api/speak'])assert(serverPremiumSrc.includes(ep),`premium endpoint missing ${ep}`);
@@ -81,6 +81,9 @@ assert(/charged\s*>=\s*tx\.amount\s*\*\s*100/.test(serverPremiumSrc),'payment ve
    Both the HTML shell and every admin API must fail closed for non-admin users. */
 assert(/function adminGate\(req\)[\s\S]*?sessionRecord\(req\)[\s\S]*?s\.role!==?'admin'/.test(serverPremiumSrc),'admin access must require a session whose role is admin');
 assert(/p==='\/admin'/.test(serverPremiumSrc)&&/adminGate\(req\)/.test(serverPremiumSrc),'the /admin page itself must be gated so outsiders cannot load the login form');
+assert(/p==='\/admin-portal\.html'/.test(serverPremiumSrc),'the direct authenticated admin-shell path must be gated too');
+assert(fs.readFileSync(path.join(pub,'admin.html'),'utf8').includes('https://kingdom-bible.onrender.com/?admin=1'),'the static admin page must link to the live, gated admin route');
+assert(fs.readFileSync(path.join(pub,'admin-portal.html'),'utf8').includes('id=\"adminLogin\"'),'the Node admin route must retain its real login shell');
 assert(serverPremiumSrc.includes('Administrator access required'),'admin APIs must reject non-admin sessions');
 /* Account reset and deletion. Both are destructive, so both must be reachable only by
    their own explicit HTTP method — a GET that removes an account would be catastrophic
@@ -97,11 +100,14 @@ assert(/Continue my free trial/.test(premJsSrc),'a trial user must be able to le
 assert(html.includes('/bible-ref.js'),'index.html must load bible-ref.js');
 assert(html.includes('/devotionals.js'),'index.html must load devotionals.js (daily library)');
 assert(html.indexOf('/devotionals.js')<html.indexOf('/app.js'),'devotionals.js must load before app.js');
+assert(html.includes('/reading-plans.js')&&html.indexOf('/reading-plans.js')<html.indexOf('/app.js'),'reading-plans.js must load before app.js');
 assert(html.includes('/voice.js'),'index.html must load voice.js');
 assert(html.includes('/premium.js'),'index.html must load premium.js');
 assert(html.indexOf('/bible-ref.js')<html.indexOf('/app.js'),'bible-ref.js must load before app.js');
 assert(swSrc0.includes('/bible-ref.js')&&swSrc0.includes('/voice.js')&&swSrc0.includes('/premium.js'),'the service worker must precache the reference, voice, and premium modules');
 assert(swSrc0.includes('/devotionals.js'),'the service worker must precache the devotionals bundle');
+assert(swSrc0.includes('/reading-plans.js'),'the service worker must precache the reading-plan schedule');
+assert(!swSrc0.includes('/admin.js'),'the service worker must not precache the server-only admin UI');
 assert(app.includes('function devotionFor')&&app.includes('function todaysDevotional'),'app.js must rotate daily devotionals by track');
 assert(app.includes('devotionalTrack'),'devotional youth/adult track preference must be wired');
 assert(app.includes('id="devTrack"')&&app.includes('id="devPrev"')&&app.includes('id="devNext"'),'devotional page must keep the youth/adult switch plus Prev/Next day buttons');
@@ -122,7 +128,10 @@ const serverSrc1=fs.readFileSync(path.join(root,'server.js'),'utf8');
 assert(serverSrc1.includes("require('./public/bible-ref.js')"),'server.js must use the shared reference engine');
 /* Voice Preacher Mode needs the microphone for THIS origin only */
 assert(serverSrc1.includes('microphone=(self)'),'server.js must allow microphone for Voice Preacher Mode');
-const vercelCfg=fs.readFileSync(path.join(root,'vercel.json'),'utf8');
+const vercelConfig=JSON.parse(fs.readFileSync(path.join(root,'vercel.json'),'utf8'));
+assert.strictEqual(vercelConfig.buildCommand,'node scripts/build-static.js','Vercel must build static legal contacts and the safe admin handoff');
+assert.strictEqual(vercelConfig.outputDirectory,'dist','Vercel must serve the generated static output, not template files');
+const vercelCfg=JSON.stringify(vercelConfig);
 assert(vercelCfg.includes('microphone=(self)'),'vercel.json must allow microphone for Voice Preacher Mode');
 
 /* Play Store sensitive-permission guard: no Notification.requestPermission anywhere */
@@ -145,7 +154,7 @@ assert(mf.name&&mf.short_name&&mf.start_url&&mf.display,'manifest is incomplete'
 const pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
 const swSrc=fs.readFileSync(path.join(pub,'sw.js'),'utf8');
 const serverSrc=fs.readFileSync(path.join(root,'server.js'),'utf8');
-assert.equal(pkg.version,'1.2.4','package.json version');
+assert.equal(pkg.version,'1.2.5','package.json version');
 assert(serverSrc.includes("VERSION='"+pkg.version+"'"),'server.js must report the same version as package.json');
 assert(swSrc.includes(`kingdom-bible-v${pkg.version}`),'sw.js cache version must match package.json so updates are picked up');
 
@@ -179,7 +188,7 @@ assert(/body\.gate-open[^{]*\.quick-fab\{display:none!important\}/.test(css),'th
 /* ---- Google sign-in must actually be reachable under the CSP ---- */
 assert(/function openAuth\(mode\)/.test(premJsSrc),'premium.js must offer a direct sign-in/sign-up entry point');
 assert(/g\.KingdomPremium=\{open,openAuth/.test(premJsSrc),'openAuth must be exported on window.KingdomPremium');
-assert(/function openAuth\(mode\)\{load\(\)\.then\(\(\)=>user\?account\(\):auth\(/.test(premJsSrc),'openAuth must land on the register/login form, not the generic plan screen');
+assert(premJsSrc.includes("if(apiState!=='online'){showAccountServiceNotice();return}user?account():auth(mode==='login'?'login':'register')"),'openAuth must open login on the live service and explain the static/offline state');
 for(const [name,src] of [['server.js',serverSrc1],['vercel.json',vercelCfg]]){
   assert(/script-src[^;]*https:\/\/accounts\.google\.com/.test(src),`${name} CSP must allow the Google Identity Services script`);
   assert(/connect-src[^;]*https:\/\/accounts\.google\.com/.test(src),`${name} CSP must allow Google sign-in network calls`);

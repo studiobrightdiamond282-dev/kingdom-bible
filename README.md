@@ -4,6 +4,14 @@
 
 A premium, local-first Progressive Web App for Bible reading, Scripture study, prayer journaling, reading plans, memorization, and professional church Scripture presentation.
 
+## New in v1.2.5
+
+- **Reading-plan schedules now cover their promised books.** The annual, New Testament, Gospel, Psalms, and Proverbs plans distribute every scheduled chapter exactly once. Each day lists valid Scripture links that open in the reader; completion advances progress without repeating a day past the plan end.
+- **Static legal pages now have real support links.** Vercel builds policy pages from the shared support configuration instead of publishing `{{WHATSAPP_*}}` placeholders.
+- **Static admin route now fails honestly.** Vercel `/admin` points to an informational handoff to the live service; the actual admin shell is excluded from the static build and remains behind the Node administrator-session gate.
+- **Reminder copy and calendar keys agree with behavior.** Prayer reminders are described as local in-app cards while the app is open, do not request system notification access, and reset on the user's local calendar date.
+- **Audit fixes and PWA update.** Corrected damaged UI strings and punctuation, use the signed-in profile name, and bump the app/service-worker release to 1.2.5.
+
 ## New in v1.2.4
 
 - **Clean navigation and action icons.** Replaced remaining corrupted C1/replacement glyph sequences in reader controls, cross-reference actions, and the trial-time indicator.
@@ -55,9 +63,10 @@ A premium, local-first Progressive Web App for Bible reading, Scripture study, p
   "Update now" banner; choosing it activates the new version and reloads once. Bump
   `VERSION` in `public/sw.js` (and `VERSION` in `server.js`) on every release or users will
   never be told.
-- **Support number.** The WhatsApp number is defined once as `SUPPORT_PHONE` in `server.js`,
-  exposed through `/api/premium/config`, and injected into the policy pages as
-  `{{WHATSAPP}}` / `{{WHATSAPP_LINK}}`. Change it there, never in a page or bundle.
+- **Support number.** The WhatsApp number is defined once in `config/site.js`, exposed through
+  `/api/premium/config`, and used by the Node-rendered policies and the Vercel build. Static
+  policy placeholders are resolved by `scripts/build-static.js`; change the shared config, not
+  the generated pages.
 - **App icons** are generated from `public/assets/logo.png` by `npm run icons`. The favicon,
   PWA icons, and maskable icon therefore always match the real logo.
 - **Shared-link branding.** `public/assets/logo-social.png` (1200×630, built from
@@ -223,11 +232,14 @@ composite black behind the text.
 The app has two halves, and they deploy differently.
 
 **Static PWA (Vercel)** — reading, study, search, prayer, plans and devotional work fully at
-the edge. Deployed from `public/` via `vercel.json`, with SPA rewrites for `/present`,
-`/remote` and `/status`.
+the edge. Vercel runs `node scripts/build-static.js` and serves the generated `dist/` directory.
+The build resolves the legal-page support placeholders from `config/site.js` and deliberately
+omits the private admin login shell. `/admin` is a handoff to the live, session-gated portal;
+`/privacy` and `/refund` are complete static pages with working WhatsApp links.
 
 ```bash
-npx vercel --prod          # manual
+npm run build:static      # local preview of Vercel's static output
+npx vercel --prod         # manual deploy (uses the build and output settings in vercel.json)
 ```
 
 **Live ministry hub (Render)** — `/api/*`, service codes, phone remote, vMix SSE, and live
@@ -319,7 +331,7 @@ Never place provider secrets in browser code. Use the names in `.env.example` on
 `GET /health` returns service status without secrets or stack traces:
 
 ```json
-{"ok":true,"app":"KINGDOM BIBLE","version":"1.2.4","presentation":"operational",
+{"ok":true,"app":"KINGDOM BIBLE","version":"1.2.5","presentation":"operational",
  "sessionActive":true,"listeners":1,"uptime":412,"serverTime":1757404800000}
 ```
 
@@ -370,7 +382,7 @@ paired phone plus any vMix input that is mid-service.
 
 ## Version
 
-KINGDOM BIBLE v1.2.4 — `package.json`, `server.js` and the service-worker cache version are
+KINGDOM BIBLE v1.2.5 — `package.json`, `server.js` and the service-worker cache version are
 kept in sync, and a smoke test fails the build if they drift.
 
 ## Duplicate-folder cleanup (one-time, on the ministry PC)

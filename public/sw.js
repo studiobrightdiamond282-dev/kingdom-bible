@@ -1,7 +1,7 @@
-/* Bumped so installed clients receive text cleanup and stable remote controls. */
-const VERSION='kingdom-bible-v1.2.4-stable-remote-controls';
+/* Bumped so installed clients receive the audited UI and corrected reading schedules. */
+const VERSION='kingdom-bible-v1.2.5';
 const SHELL=[
-  '/', '/index.html','/theme-init.js','/styles.css','/app.js','/devotionals.js','/auth-fix.js','/profile-fix.js','/reader-fix.js','/study-fix.js','/audit-fix.js','/premium.js','/qr.js','/hub-probe.js','/bible-ref.js','/voice.js','/remote.js','/remote.html','/admin.html','/admin.js','/privacy.html','/refund.html','/status.html','/status.js',
+  '/', '/index.html','/theme-init.js','/styles.css','/app.js','/devotionals.js','/reading-plans.js','/auth-fix.js','/profile-fix.js','/reader-fix.js','/study-fix.js','/audit-fix.js','/premium.js','/qr.js','/hub-probe.js','/bible-ref.js','/voice.js','/remote.js','/remote.html','/admin.html','/privacy.html','/refund.html','/status.html','/status.js',
   '/search-worker.js','/offline.html','/manifest.json','/favicon.svg','/favicon.png',
   '/assets/logo.png','/assets/logo-hero.png','/assets/logo-social.png','/icons/icon-192.png','/icons/icon-512.png','/data/books.json',
   '/data/bibles/kjv/44.json','/data/bibles/kjv/42.json','/data/bibles/kjv/18.json'
