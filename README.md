@@ -12,6 +12,11 @@ The portal provides a summary dashboard; searchable, filterable and paginated ac
 
 Admin API security and payout/payment-summary behavior are covered by `tests/premium.js`, `tests/payments.js`, and `tests/analytics.js`.
 
+## New in v1.2.10
+
+- **Administrator checkout respects complimentary access.** Admin accounts now see clear free-access guidance instead of member purchase buttons, with an account-switch option; regular member plans and server-side payment verification remain unchanged.
+- **Installed clients receive the UI fix.** The app and service-worker cache versions are bumped so returning PWA users can load the updated subscription screen.
+
 ## New in v1.2.9
 
 - **Checkout recovery instead of an endless spinner.** Paystack initialization shows progress, times out after 30 seconds, explains that checkout did not open, and restores the plan buttons for a safe retry. Starting one plan temporarily disables the others to avoid duplicate checkout attempts. No payment is processed until Paystack's hosted checkout opens.
@@ -373,7 +378,7 @@ Never place provider secrets in browser code. Use the names in `.env.example` on
 `GET /health` returns service status without secrets or stack traces:
 
 ```json
-{"ok":true,"app":"KINGDOM BIBLE","version":"1.2.9","presentation":"operational",
+{"ok":true,"app":"KINGDOM BIBLE","version":"1.2.10","presentation":"operational",
  "sessionActive":true,"listeners":1,"uptime":412,"serverTime":1757404800000}
 ```
 
@@ -424,7 +429,7 @@ paired phone plus any vMix input that is mid-service.
 
 ## Version
 
-KINGDOM BIBLE v1.2.9 — `package.json`, `server.js` and the service-worker cache version are
+KINGDOM BIBLE v1.2.10 — `package.json`, `server.js` and the service-worker cache version are
 kept in sync, and a smoke test fails the build if they drift.
 
 ## Duplicate-folder cleanup (one-time, on the ministry PC)

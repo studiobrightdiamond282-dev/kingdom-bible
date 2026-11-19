@@ -157,7 +157,7 @@ assert(mf.name&&mf.short_name&&mf.start_url&&mf.display,'manifest is incomplete'
 const pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
 const swSrc=fs.readFileSync(path.join(pub,'sw.js'),'utf8');
 const serverSrc=fs.readFileSync(path.join(root,'server.js'),'utf8');
-assert.equal(pkg.version,'1.2.9','package.json version');
+assert.equal(pkg.version,'1.2.10','package.json version');
 assert(serverSrc.includes("VERSION='"+pkg.version+"'"),'server.js must report the same version as package.json');
 assert(swSrc.includes(`kingdom-bible-v${pkg.version}`),'sw.js cache version must match package.json so updates are picked up');
 

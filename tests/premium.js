@@ -14,12 +14,13 @@ async function request(p,o={}){const r=await fetch(base+p,{...o,headers:{'conten
 async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/health');if(x.ok)return}catch{}await wait(50)}throw Error('premium test server did not start')}
 (async()=>{try{
   await ready();
-  const cfg=await request('/api/premium/config');assert.equal(cfg.body.trialDays,30);assert(cfg.body.plans.some(p=>p.id==='premium'&&p.price===10000));assert.equal(cfg.body.referral.signupNaira,100);assert.equal(cfg.body.paystackReady,false,'checkout must report missing Paystack keys instead of appearing live');assert.equal(cfg.body.paystackPublicKey,'','an unpaired public key is not exposed');assert.equal(cfg.body.passwordResetEmailEnabled,false,'email recovery is disabled until a verified sender is configured');
+  const cfg=await request('/api/premium/config');assert.equal(cfg.body.trialDays,30);assert.deepStrictEqual(Object.fromEntries(cfg.body.plans.map(p=>[p.id,p.price])),{silver:2500,gold:5000,premium:10000,unlimited:20000},'monthly plan prices remain unchanged');assert(cfg.body.plans.every(p=>p.period==='month'),'all subscription tiers remain monthly');assert.equal(cfg.body.referral.signupNaira,100);assert.equal(cfg.body.paystackReady,false,'checkout must report missing Paystack keys instead of appearing live');assert.equal(cfg.body.paystackPublicKey,'','an unpaired public key is not exposed');assert.equal(cfg.body.passwordResetEmailEnabled,false,'email recovery is disabled until a verified sender is configured');
   const a=await request('/api/auth/register',{method:'POST',body:JSON.stringify({email:'a@example.com',password:'password-a',name:'A'})});assert.equal(a.r.status,201);assert(a.body.user.trialEndsAt);assert(a.cookie);
   const checkoutOff=await request('/api/payments/initialize',{method:'POST',headers:{cookie:a.session},body:JSON.stringify({plan:'silver'})});assert.equal(checkoutOff.r.status,503,'checkout without real Paystack keys must fail closed');assert.match(checkoutOff.body.error,/Paystack checkout needs both a public key and a server-side secret key/);
   const b=await request('/api/auth/register',{method:'POST',body:JSON.stringify({email:'b@example.com',password:'password-b',name:'B',referralCode:a.body.user.referralCode})});assert.equal(b.r.status,201);
   const aMe=await request('/api/auth/me',{headers:{cookie:a.session}});assert.equal(aMe.body.user.walletBalance,100);
   const admin=await request('/api/auth/login',{method:'POST',body:JSON.stringify({email:'stanley.okonkwo282@gmail.com',password:'test-admin-password'})});assert.equal(admin.body.user.role,'admin');
+  const adminCheckout=await request('/api/payments/initialize',{method:'POST',headers:{cookie:admin.session},body:JSON.stringify({plan:'silver'})});assert.equal(adminCheckout.r.status,200);assert.equal(adminCheckout.body.admin,true,'administrator subscriptions remain complimentary');assert.match(adminCheckout.body.message,/Administrator access is free/);
   const overview=await request('/api/admin/overview',{headers:{cookie:admin.session}});assert.equal(overview.body.users.length,2);
   assert.match(overview.r.headers.get('cache-control')||'',/no-store/,'private admin data must not be cached');
   assert.equal(overview.body.summary.usersTotal,2,'overview summary must cover the complete account store');
@@ -145,9 +146,9 @@ async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/heal
   const cardBuf=Buffer.from(await card.arrayBuffer());
   assert.equal(cardBuf.readUInt32BE(16),1200,'share card width must match og:image:width');
   assert.equal(cardBuf.readUInt32BE(20),630,'share card height must match og:image:height');
-  const poster=await fetch(base+'/assets/kingdom-bible-product-preview.jpg?v=1.2.9');
+  const poster=await fetch(base+'/assets/kingdom-bible-product-preview.jpg?v=1.2.10');
   assert.equal(poster.headers.get('content-type'),'image/jpeg','the Render hub must serve the demo poster with its image MIME type');
-  const media=await fetch(base+'/assets/kingdom-bible-product-preview.mp4?v=1.2.9',{headers:{range:'bytes=0-63'}});
+  const media=await fetch(base+'/assets/kingdom-bible-product-preview.mp4?v=1.2.10',{headers:{range:'bytes=0-63'}});
   assert.equal(media.status,206,'the Render hub must support byte-range video playback');
   assert.equal(media.headers.get('content-type'),'video/mp4');
   assert.equal(media.headers.get('content-range').split('/')[0],'bytes 0-63');
