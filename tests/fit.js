@@ -71,6 +71,11 @@ let pass=0,fail=0;
 const ok=(name,cond,extra)=>{if(cond){pass++;console.log('  PASS',name)}else{fail++;console.log('  FAIL',name,extra||'')}};
 
 console.log('\n--- audience display auto-fit (1920x1080 capture) ---');
+const cssSrc=fs.readFileSync(path.join(__dirname,'..','public','styles.css'),'utf8');
+ok('presentation quotes use bold, enlarged typography',cssSrc.includes('font-weight:900;font-size:clamp(64px,10vw,184px)')&&cssSrc.includes('-webkit-text-stroke:.35px currentColor'));
+ok('multi-verse passages use the larger 112px ceiling',cssSrc.includes('.presentation-verse.is-multiverse blockquote{font-size:clamp(48px,6vw,112px)}'));
+ok('single-verse auto-fit allows the enlarged 184px ceiling',src.includes('p&&p.multiverse?112:184'));
+ok('vMix guide explains full-frame zoom and centering',src.includes('Zoom, Zoom X, and Zoom Y to 1.00')&&src.includes('Pan X/Y to 0.00'));
 
 const bible=JSON.parse(fs.readFileSync(path.join(__dirname,'..','data','bible_kjv.json'),'utf8'));
 const john10Chars=bible.books[42][9].join(' ').length;
@@ -78,16 +83,16 @@ const john10Chars=bible.books[42][9].join(' ').length;
 /* Psalm 23:1 — the everyday case: should stay at the large display size. */
 {
   const text='The LORD is my shepherd; I shall not want.';
-  const{stage,box,quote,budget}=scene({height:1080,padding:97,chars:text.length,maxWidth:1600,cssFont:132});
-  const px=fitText(box,stage,132,20);
-  ok('single verse keeps a large, projector-readable size',px>=110,px+'px');
+  const{stage,box,quote,budget}=scene({height:1080,padding:65,chars:text.length,maxWidth:1600,cssFont:184});
+  const px=fitText(box,stage,184,20);
+  ok('single verse keeps a large, projector-readable size',px>=150,px+'px');
   ok('single verse is not shrunk at all',quote.scrollHeight<=budget,Math.round(quote.scrollHeight)+'px vs '+Math.round(budget)+'px');
 }
 
 /* John 10 (whole chapter) — the case that overflowed before. */
 {
-  const s=scene({height:1080,padding:97,chars:john10Chars,maxWidth:1600,cssFont:92});
-  const px=fitText(s.box,s.stage,92,20);
+  const s=scene({height:1080,padding:65,chars:john10Chars,maxWidth:1600,cssFont:112});
+  const px=fitText(s.box,s.stage,112,20);
   ok('whole chapter fits inside the frame instead of being cropped',s.box.rendered<=s.budget,
     'needs '+Math.round(s.box.rendered)+'px, budget '+Math.round(s.budget)+'px');
   ok('whole chapter still renders at a legible size',px>=20,px+'px for '+john10Chars+' chars');

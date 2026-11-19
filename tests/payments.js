@@ -110,6 +110,23 @@ let base='';
     assert.equal(failedStore.transactions.find(x=>x.reference===failedInit.body.reference).status,'failed');
     const stillTrial=await req('/api/auth/me',{headers:{cookie:failedUser.cookie}});assert.equal(stillTrial.body.user.status,'trial');
 
+    /* The private portal sees sanitized service records and referral attribution;
+       no live provider credentials or raw gateway payloads are exposed. */
+    const admin=await req('/api/auth/login',{method:'POST',body:JSON.stringify({email:'stanley.okonkwo282@gmail.com',password:'test-admin-password'})});
+    assert.equal(admin.body.user.role,'admin');
+    const adminOverview=await req('/api/admin/overview',{headers:{cookie:admin.cookie}});
+    assert.equal(adminOverview.response.status,200);
+    assert(adminOverview.body.summary.successfulPayments>=1);
+    assert(adminOverview.body.summary.failedPayments>=1);
+    assert(adminOverview.body.summary.pendingPayments>=1,'unsettled records remain visible as pending');
+    assert(adminOverview.body.transactions.some(t=>t.reference===init.body.reference&&t.status==='success'),'a verified transaction must appear in the admin payment list');
+    assert(adminOverview.body.transactions.some(t=>t.reference===failedInit.body.reference&&t.status==='failed'),'a failed transaction must appear in the admin payment list');
+    const inviterStats=adminOverview.body.referrals.find(r=>r.userId===inviter.body.user.id);
+    assert.equal(inviterStats.signups,1);assert.equal(inviterStats.paidReferrals,1);
+    assert.equal(inviterStats.signupRewardsNaira,100);assert.equal(inviterStats.commissionNaira,250);
+    assert(!JSON.stringify(adminOverview.body.transactions).includes('authorization_url'));
+    assert(!JSON.stringify(adminOverview.body.transactions).includes(SECRET_KEY),'payment credentials must never reach the admin browser');
+
     /* Production must fail closed on Paystack test keys unless an isolated staging
        environment explicitly opts in. */
     const blockedPort=await freePort(),blockedStore=path.join(os.tmpdir(),`kingdom-bible-payments-blocked-${process.pid}.json`);
