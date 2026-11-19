@@ -25,15 +25,53 @@ async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/heal
   assert.equal(overview.body.summary.usersTotal,2,'overview summary must cover the complete account store');
   assert(Array.isArray(overview.body.transactions),'admin overview must include safe payment records even when empty');
   assert(Array.isArray(overview.body.referrals),'admin overview must include referral performance');
+  assert.equal(overview.body.analytics.rangeDays,30,'the private portal receives a fixed 30-day analytics window');
+  assert.equal(overview.body.analytics.totalViews,0,'analytics start with zero aggregate page views');
+  assert.equal(overview.body.analytics.daily.length,30,'the analytics trend includes each day in its window');
   assert.equal(overview.body.referrals[0].signups,1,'referral signups must be attributed to the inviter');
   assert(!('avatar' in overview.body.users[0]),'the admin overview must not load private profile-photo data');
   assert(!('passwordHash' in overview.body.users[0])&&!('googleSub' in overview.body.users[0]),'account credentials and Google subject IDs must not be exposed');
   assert.equal((await request('/api/admin/withdrawals/missing/details')).r.status,403,'payout details must require an administrator session');
   const portalJs=fs.readFileSync(path.join(__dirname,'..','public','admin.js'),'utf8');
-  for(const section of ['overview','accounts','payments','referrals','withdrawals','notifications','activity'])assert(portalJs.includes("id:'"+section+"'"),'admin navigation must include '+section);
+  for(const section of ['overview','accounts','payments','referrals','withdrawals','notifications','activity','analytics'])assert(portalJs.includes("id:'"+section+"'"),'admin navigation must include '+section);
   assert(portalJs.includes('aria-modal="true"')&&portalJs.includes("event.key==='Escape'"),'admin action dialogs must be keyboard accessible');
   assert(!portalJs.includes('window.prompt')&&!portalJs.includes('window.confirm'),'destructive/admin actions must use accessible in-portal dialogs');
-  const grant=await request('/api/admin/users/'+a.body.user.id+'/entitlement',{method:'POST',headers:{cookie:admin.session},body:JSON.stringify({plan:'premium',forever:true})});assert.equal(grant.body.user.status,'active');assert.equal(grant.body.user.plan,'premium');
+  const grant=await request('/api/admin/users/'+a.body.user.id+'/entitlement',{method:'POST',headers:{cookie:admin.session},body:JSON.stringify({plan:'premium',forever:true})});assert.equal(grant.body.user.status,'active');assert.equal(grant.body.user.plan,'premium');assert.equal(grant.body.user.adminGranted,true);assert.equal(grant.body.user.daysRemaining,null);assert.equal(grant.body.user.entitlementExpiresAt,null);
+  {
+    const testUser=await request('/api/auth/register',{method:'POST',body:JSON.stringify({email:'grant-duration@example.com',password:'password-grant'})});
+    assert.equal(testUser.r.status,201);
+    const endpoint='/api/admin/users/'+testUser.body.user.id+'/entitlement';
+    const expectedExpiry=(start,amount,unit)=>{
+      const d=new Date(start);
+      if(unit==='days')d.setUTCDate(d.getUTCDate()+amount);
+      else{const day=d.getUTCDate();d.setUTCDate(1);if(unit==='months')d.setUTCMonth(d.getUTCMonth()+amount);else d.setUTCFullYear(d.getUTCFullYear()+amount);const last=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()+1,0)).getUTCDate();d.setUTCDate(Math.min(day,last));}
+      return d.getTime();
+    };
+    for(const duration of [{durationAmount:7,durationUnit:'days'},{durationAmount:1,durationUnit:'months'},{durationAmount:1,durationUnit:'years'}]){
+      const result=await request(endpoint,{method:'POST',headers:{cookie:admin.session},body:JSON.stringify({plan:'gold',...duration})});
+      assert.equal(result.r.status,200,result.body.error);
+      const stored=JSON.parse(fs.readFileSync(store,'utf8')).users.find(user=>user.id===testUser.body.user.id).subscription;
+      assert.equal(stored.durationAmount,duration.durationAmount);assert.equal(stored.durationUnit,duration.durationUnit);
+      assert.equal(stored.expiresAt,expectedExpiry(stored.startedAt,duration.durationAmount,duration.durationUnit),'grant expiry must use the exact calendar duration');
+      assert.equal(result.body.user.entitlementExpiresAt,stored.expiresAt);
+    }
+    for(const invalid of [
+      {durationAmount:0,durationUnit:'days'},{durationAmount:1.5,durationUnit:'days'},
+      {durationAmount:101,durationUnit:'years'},{durationAmount:1,durationUnit:'weeks'},
+      {durationAmount:'2',durationUnit:'months'},{freeMonths:13},{plan:'gold'}
+    ])assert.equal((await request(endpoint,{method:'POST',headers:{cookie:admin.session},body:JSON.stringify({plan:'gold',...invalid})})).r.status,400,'invalid duration must be rejected: '+JSON.stringify(invalid));
+    assert.equal((await request(endpoint,{method:'POST',headers:{cookie:admin.session},body:JSON.stringify({plan:'gold',forever:true,durationAmount:1,durationUnit:'days'})})).r.status,400,'permanent and timed grants cannot be combined');
+    assert.equal((await request(endpoint,{method:'POST',headers:{cookie:admin.session},body:JSON.stringify({plan:'gold',forever:'true'})})).r.status,400,'permanent access requires a boolean');
+    const forever=await request(endpoint,{method:'POST',headers:{cookie:admin.session},body:JSON.stringify({plan:'gold',forever:true})});
+    assert.equal(forever.body.user.entitlementExpiresAt,null);assert.equal(forever.body.user.adminGranted,true);
+    assert.equal((await request(endpoint,{method:'DELETE',headers:{cookie:testUser.session}})).r.status,403,'members cannot revoke their own admin grant');
+    const revoked=await request(endpoint,{method:'DELETE',headers:{cookie:admin.session}});
+    assert.equal(revoked.r.status,200);assert.equal(revoked.body.user.adminGranted,false);assert.equal(revoked.body.user.status,'trial');
+    assert.equal((await request(endpoint,{method:'DELETE',headers:{cookie:admin.session}})).r.status,409,'a grant cannot be revoked twice');
+    const grantAudit=(await request('/api/admin/overview',{headers:{cookie:admin.session}})).body.audit;
+    assert(grantAudit.some(item=>item.event==='admin.grant'&&item.details.userId===testUser.body.user.id&&item.details.durationUnit==='years'&&item.details.expiresAt),'grant duration and expiry must be audited');
+    assert(grantAudit.some(item=>item.event==='admin.grant.revoke'&&item.details.userId===testUser.body.user.id),'grant revocation must be audited');
+  }
   const adminGuest=await fetch(base+'/admin');assert.equal(adminGuest.status,403,'/admin must reject requests without an admin session');
   const userAdminPage=await fetch(base+'/admin',{headers:{cookie:a.session}});assert.equal(userAdminPage.status,403,'a normal signed-in user must still be denied the admin portal');
   const adminAliasGuest=await fetch(base+'/admin-portal.html');assert.equal(adminAliasGuest.status,403,'the direct private portal-shell path must also require an admin session');
@@ -107,9 +145,9 @@ async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/heal
   const cardBuf=Buffer.from(await card.arrayBuffer());
   assert.equal(cardBuf.readUInt32BE(16),1200,'share card width must match og:image:width');
   assert.equal(cardBuf.readUInt32BE(20),630,'share card height must match og:image:height');
-  const poster=await fetch(base+'/assets/kingdom-bible-product-preview.jpg?v=1.2.7');
+  const poster=await fetch(base+'/assets/kingdom-bible-product-preview.jpg?v=1.2.8');
   assert.equal(poster.headers.get('content-type'),'image/jpeg','the Render hub must serve the demo poster with its image MIME type');
-  const media=await fetch(base+'/assets/kingdom-bible-product-preview.mp4?v=1.2.7',{headers:{range:'bytes=0-63'}});
+  const media=await fetch(base+'/assets/kingdom-bible-product-preview.mp4?v=1.2.8',{headers:{range:'bytes=0-63'}});
   assert.equal(media.status,206,'the Render hub must support byte-range video playback');
   assert.equal(media.headers.get('content-type'),'video/mp4');
   assert.equal(media.headers.get('content-range').split('/')[0],'bytes 0-63');

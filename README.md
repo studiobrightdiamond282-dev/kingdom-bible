@@ -8,9 +8,15 @@ A premium, local-first Progressive Web App for Bible reading, Scripture study, p
 
 The administrator portal is served by the Node account service at `/admin` after an administrator session is established. It is deliberately separate from the static Vercel reader: the Vercel `/admin` page is only a handoff to the account service, and the private portal/API are not deployed in the static build.
 
-The portal provides a summary dashboard; searchable, filterable and paginated account management; complimentary access grants; one-time password recovery codes; account reset/deletion; payment-record and referral-wallet visibility; payout review; notifications; and a searchable activity log. Full payout bank details are fetched only when an administrator opens them, and that access is audited. Marking a payout paid is a record-only action after an external transfer—it does not move money. Payment entries and totals describe records stored by the Node service, not a provider settlement/reconciliation report. Do not infer live payment, email, or production configuration from the portal UI.
+The portal provides a summary dashboard; searchable, filterable and paginated account management; complimentary access grants; one-time password recovery codes; account reset/deletion; payment-record and referral-wallet visibility; payout review; notifications; a searchable activity log; and anonymous public-reader analytics. Free grants accept exact whole-number durations in days, calendar months, or calendar years, as well as permanent access. Grants and revocations are audited. Full payout bank details are fetched only when an administrator opens them, and that access is audited. Marking a payout paid is a record-only action after an external transfer—it does not move money. Payment entries and totals describe records stored by the Node service, not a provider settlement/reconciliation report. Do not infer live payment, email, or production configuration from the portal UI.
 
-Admin API security and payout/payment-summary behavior are covered by `tests/premium.js` and `tests/payments.js`.
+Admin API security and payout/payment-summary behavior are covered by `tests/premium.js`, `tests/payments.js`, and `tests/analytics.js`.
+
+## New in v1.2.8
+
+- **Privacy-conscious public-reader analytics.** The Vercel reader sends a fixed app-section slug and a yes/no tab-session start flag to the Node service. Only daily section totals are saved; no account identity, IP, cookies, device IDs, fingerprints, search terms, Scripture references, query strings, referrers, or raw event history is recorded. The admin Analytics tab shows 30-day page-view and approximate tab-visit trends. Do Not Track and Global Privacy Control are respected, and the privacy page provides a local opt-out.
+- **Exact complimentary grants.** Administrators can grant whole-number durations in days, calendar months, or calendar years (with validation and sensible upper bounds), or choose permanent access. Grant expiry and duration are audited. Only administrator-granted access can be revoked through the new audited revoke action; paid subscriptions are not canceled by that control.
+- **Aggregate retention.** Daily analytics totals are kept for up to 400 days in the same server-side store as account data. For restart durability, set `PREMIUM_STORE_PATH` to a file on the Render service's mounted persistent disk; a container's ordinary filesystem is not a durable backup.
 
 ## New in v1.2.7
 
@@ -103,7 +109,8 @@ Admin API security and payout/payment-summary behavior are covered by `tests/pre
 - AI study access uses plan fair-use allowances rather than an unsafe promise of unlimited
   paid API usage. The optional provider is configured with `AI_API_KEY`, `AI_API_URL`, and
   `AI_MODEL`. Admin audit records cover security, payment, referral, and withdrawal events;
-  the app does not secretly record every page visit, location, microphone audio, or reading page.
+  public-reader analytics are limited to disclosed daily section totals, with no named visit history,
+  location, microphone audio, or private Scripture content.
 
 ## New in v1.2
 
@@ -361,7 +368,7 @@ Never place provider secrets in browser code. Use the names in `.env.example` on
 `GET /health` returns service status without secrets or stack traces:
 
 ```json
-{"ok":true,"app":"KINGDOM BIBLE","version":"1.2.7","presentation":"operational",
+{"ok":true,"app":"KINGDOM BIBLE","version":"1.2.8","presentation":"operational",
  "sessionActive":true,"listeners":1,"uptime":412,"serverTime":1757404800000}
 ```
 
@@ -412,7 +419,7 @@ paired phone plus any vMix input that is mid-service.
 
 ## Version
 
-KINGDOM BIBLE v1.2.7 — `package.json`, `server.js` and the service-worker cache version are
+KINGDOM BIBLE v1.2.8 — `package.json`, `server.js` and the service-worker cache version are
 kept in sync, and a smoke test fails the build if they drift.
 
 ## Duplicate-folder cleanup (one-time, on the ministry PC)
