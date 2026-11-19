@@ -38,10 +38,13 @@ assert(app.includes('connectCardHtml')&&app.includes('drawQR'),'presenter QR wir
 /* ---- shared reference engine + Voice Preacher Mode ---- */
 assert(fs.existsSync(path.join(pub,'bible-ref.js')),'Missing bible-ref.js (shared reference engine)');
 assert(fs.existsSync(path.join(pub,'voice.js')),'Missing voice.js (Voice Preacher Mode)');
+assert(fs.existsSync(path.join(pub,'ministry-nav.js')),'Missing ministry-nav.js (local presenter navigation)');
 assert(html.includes('/bible-ref.js'),'index.html must load bible-ref.js');
 assert(html.includes('/voice.js'),'index.html must load voice.js');
+assert(html.includes('/ministry-nav.js'),'index.html must load ministry-nav.js');
 assert(html.indexOf('/bible-ref.js')<html.indexOf('/app.js'),'bible-ref.js must load before app.js');
-assert(swSrc0.includes('/bible-ref.js')&&swSrc0.includes('/voice.js'),'the service worker must precache the reference engine and voice module');
+assert(html.indexOf('/ministry-nav.js')<html.indexOf('/app.js'),'ministry-nav.js must load before app.js');
+assert(swSrc0.includes('/bible-ref.js')&&swSrc0.includes('/voice.js')&&swSrc0.includes('/ministry-nav.js'),'the service worker must precache the reference engine, voice module and local navigator');
 assert(app.includes('KingdomRef'),'app.js must use the shared reference engine');
 assert(app.includes('bindVoice')&&app.includes('getPassage'),'Voice Mode + passage resolution wiring missing');
 const serverSrc1=fs.readFileSync(path.join(root,'server.js'),'utf8');

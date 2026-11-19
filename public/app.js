@@ -164,11 +164,11 @@ function updateMinistryPreview(v){
 /* resolve + present a parsed reference (used by Voice Preacher Mode) */
 async function presentHit(hit,tr){
   const v=await getPassage(hit,tr||state.reader.translation);
-  if(!v)return null;
+  if(!v)return{ok:false,error:'Reference is outside this chapter'};
   state.ministry.current=v;save();
-  await sendPresentation(v);
+  const sent=await sendPresentation(v);
   updateMinistryPreview(v);
-  return v;
+  return sent&&sent.ok===false?sent:v;
 }
 function bindVoice(){
   if(!window.KingdomVoice)return;
@@ -183,8 +183,8 @@ function bindVoice(){
     },
     next:()=>minStep(1,true),
     prev:()=>minStep(-1,true),
-    blank:()=>{const c=state.ministry.current;if(c)return sendPresentation({...c,blank:true})},
-    show:()=>{const c=state.ministry.current;if(c)return sendPresentation(c)},
+    blank:()=>{const c=state.ministry.current;return c?sendPresentation({...c,blank:true}):{ok:false,error:'Send a verse first'}},
+    show:()=>{const c=state.ministry.current;return c?sendPresentation({...c,blank:false}):{ok:false,error:'Send a verse first'}},
     notify:toast,
   });
 }
@@ -195,48 +195,58 @@ async function openMinistrySearch(){modal(`<div class="modal-head"><div><h2>Send
 async function minStep(d,quiet){
   if(!hub().isLive(hubState))return localStep(d,quiet);
   const out=await sessionAction({type:d>0?'next':'prev'});
-  if(out&&out.ok!==false&&out.error)return toast(out.error,'error');
-  await syncFromHub();
-  if(quiet)updateMinistryPreview(state.ministry.current);else renderMinistry();
-  return state.ministry.current;
+  if(!out||out.ok!==true){
+    const error=out&&out.error||'Could not reach the ministry hub';
+    if(!quiet)toast(error,'error');
+    return{ok:false,error};
+  }
+  const current=await syncFromHub();
+  if(!current){
+    const error='The ministry hub changed, but its presentation could not be confirmed';
+    if(!quiet)toast(error,'error');
+    return{ok:false,error};
+  }
+  if(quiet)updateMinistryPreview(current);else renderMinistry();
+  return current;
 }
 /* Local equivalent of the hub's next/prev, crossing chapter and book boundaries. */
 async function localStep(d,quiet){
-  const cur=state.ministry.current;
-  if(!cur||cur.book==null)return toast('Send a verse first','error');
-  const tr=cur.translation||state.reader.translation;
-  /* after a range, "next" continues from the END of the range */
-  let bi=cur.book,ch=cur.chapter,v=(d>0?(cur.verseEnd||cur.verse||1):(cur.verse||1))+d;
-  if(v<1){
-    if(ch===1){if(bi===0)return toast('Start of the Bible','error');bi--;ch=books[bi].chapters}
-    else ch--;
-    v=(await loadBook(tr,bi)).chapters[ch-1].length;
-  }
-  if(v>(await loadBook(tr,bi)).chapters[ch-1].length){
-    if(ch>=books[bi].chapters){if(bi>=books.length-1)return toast('End of the Bible','error');bi++;ch=1}
-    else ch++;
-    v=1;
-  }
-  const next=await getPassage({book:bi,chapter:ch,verse:v,verseEnd:null},tr);
-  if(!next||!next.text)return toast('Cannot advance','error');
+  const out=await window.KingdomNav.step(state.ministry.current,d,books,loadBook,getPassage);
+  if(!out.ok){if(!quiet)toast(out.error,'error');return out}
+  const next=out.passage;
   state.ministry.current=next;save();
-  await sendPresentation(next);
+  const sent=await sendPresentation(next);
+  if(!sent||sent.ok!==true){
+    const error=sent&&sent.error||'Could not send the verse to the display';
+    if(!quiet)toast(error,'error');
+    return{ok:false,error};
+  }
   if(quiet)updateMinistryPreview(next);else renderMinistry();
   return next;
 }
 async function syncFromHub(){
-  if(!sessionCode)return;
+  if(!sessionCode)return null;
   try{
     const d=await(await fetch('/api/session/status',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code:sessionCode})})).json();
     const p=d.presentation;
-    if(p&&p.ref){state.ministry.current=p;save();if(p.theme)state.ministry.theme=p.theme;if(p.church)state.ministry.church=p.church}
+    if(d.ok&&p&&p.ref){state.ministry.current=p;save();if(p.theme)state.ministry.theme=p.theme;if(p.church)state.ministry.church=p.church;return p}
   }catch{}
+  return null;
 }
 async function sendPresentation(v){const payload={...v,theme:state.ministry.theme,church:state.ministry.church,ts:Date.now()};
-  localStorage.setItem('kingdomPresentation',JSON.stringify(payload));
-  /* live session drives the display and every paired phone */
-  if(sessionCode)await sessionAction({type:'presentation',payload:{...payload,book:payload.book,chapter:payload.chapter,verse:payload.verse,verseEnd:payload.verseEnd}});
-  try{new BroadcastChannel('kingdom-presentation').postMessage(payload)}catch{}
+  let localDelivered=false,hubDelivered=false,hubError='';
+  try{localStorage.setItem('kingdomPresentation',JSON.stringify(payload));localDelivered=true}catch{}
+  /* A live session drives the display and every paired phone. If the hub went
+     offline, keep using the local display channels rather than a stale code. */
+  if(sessionCode&&hub().isLive(hubState)){
+    const out=await sessionAction({type:'presentation',payload:{...payload,book:payload.book,chapter:payload.chapter,verse:payload.verse,verseEnd:payload.verseEnd}});
+    if(out&&out.ok===true)hubDelivered=true;
+    else hubError=out&&out.error||'Could not reach the ministry hub';
+  }
+  try{new BroadcastChannel('kingdom-presentation').postMessage(payload);localDelivered=true}catch{}
+  if(hubError)return{ok:false,error:hubError};
+  if(!hubDelivered&&!localDelivered)return{ok:false,error:'Could not send to the display'};
+  return{ok:true,presentation:payload};
 }
 
 /* ---------- live service session (presenter side) ----------

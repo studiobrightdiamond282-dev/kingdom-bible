@@ -125,7 +125,7 @@ function spin(){
 }
 function stop(silent){
   wantListen=false;clearTimeout(restartTimer);
-  if(rec){try{rec.onend=null;rec.stop()}catch{}rec=null}
+  if(rec){try{rec.onend=null;rec.onresult=null;rec.onerror=null;rec.stop()}catch{}rec=null}
   setStatus('Ready',false);setTranscript('','');
   if(!silent)addLog('Microphone off','');
 }
@@ -200,22 +200,39 @@ function dispatch(hit,key){
 function fire(hit,key){
   const started=(g.performance&&performance.now)?performance.now():Date.now();
   const done=v=>{
-    if(v&&v.ref){
+    if(v&&v.ref&&v.ok!==false){
       lastSent={key:key||'',at:Date.now()};
       pending={key:'',n:0};
       const ms=Math.round(((g.performance&&performance.now)?performance.now():Date.now())-started);
       addLog(v.ref+' sent to the display','hit',ms,null,'▣');
-    }else addLog('Heard a reference but it is outside this chapter — nothing was sent','miss');
+    }else{
+      const detail=v&&v.error;
+      addLog(detail?'Could not send reference: '+detail:'Heard a reference but it could not be sent','miss');
+      if(detail)notify(detail,'error');
+    }
   };
-  const p=hit.ctx?hooks.gotoVerse(hit.verse,hit.verseEnd,settings.tr):hooks.present(hit,settings.tr);
-  Promise.resolve(p).then(done).catch(()=>done(null));
+  try{
+    const p=hit.ctx?hooks.gotoVerse(hit.verse,hit.verseEnd,settings.tr):hooks.present(hit,settings.tr);
+    Promise.resolve(p).then(done).catch(e=>done({ok:false,error:e&&e.message||'Presentation failed'}));
+  }catch(e){done({ok:false,error:e&&e.message||'Presentation failed'})}
 }
 function runCommand(cmd){
   if(cmd==='stop'){stop();notify('Voice listening stopped');return}
   const label={next:'Next verse',prev:'Previous verse',blank:'Screen blanked',show:'Verse restored'}[cmd];
   const fn={next:hooks.next,prev:hooks.prev,blank:hooks.blank,show:hooks.show}[cmd];
   if(!fn)return;
-  Promise.resolve(fn()).then(()=>addLog(label+' (voice command)','hit',null,null,'◆')).catch(()=>{});
+  const failed=out=>out==null||out===false||(typeof out==='object'&&out.ok===false);
+  const reportFailure=out=>{
+    const detail=out&&out.error;
+    addLog(detail?label+' failed: '+detail:label+' failed (voice command)','miss');
+    if(detail)notify(detail,'error');
+  };
+  try{
+    Promise.resolve(fn()).then(out=>{
+      if(failed(out))reportFailure(out);
+      else addLog(label+' (voice command)','hit',null,null,'◆');
+    }).catch(e=>reportFailure({error:e&&e.message||'Command failed'}));
+  }catch(e){reportFailure({error:e&&e.message||'Command failed'})}
 }
 
 /* ---------- wiring (called every time Ministry Mode renders) ---------- */
@@ -224,7 +241,7 @@ function bind(h){
   const mic=$('#voiceMic');
   if(mic)mic.onclick=()=>{wantListen?stop():start()};
   const tr=$('#voiceTr');if(tr)tr.onchange=e=>{settings.tr=e.target.value;persist()};
-  const lang=$('#voiceLang');if(lang)lang.onchange=e=>{settings.lang=e.target.value;persist();if(wantListen){/* apply the new language live */if(rec){try{rec.onend=null;rec.stop()}catch{}rec=null}spin()}};
+  const lang=$('#voiceLang');if(lang)lang.onchange=e=>{settings.lang=e.target.value;persist();if(wantListen){/* apply the new language live */if(rec){try{rec.onend=null;rec.onresult=null;rec.onerror=null;rec.stop()}catch{}rec=null}spin()}};
   const auto=$('#voiceAuto');if(auto)auto.onchange=e=>{settings.auto=!!e.target.checked;persist()};
   const logEl=$('#voiceLog');
   if(logEl)logEl.onclick=e=>{

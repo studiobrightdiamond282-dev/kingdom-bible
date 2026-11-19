@@ -51,6 +51,7 @@ const htmlOnApi={status:200,json:false,body:null};
   console.log('\n--- app wiring ---');
   const fs=require('fs');
   const app=fs.readFileSync(path.join(__dirname,'../public/app.js'),'utf8');
+  const nav=fs.readFileSync(path.join(__dirname,'../public/ministry-nav.js'),'utf8');
   const remote=fs.readFileSync(path.join(__dirname,'../public/remote.js'),'utf8');
   const html=fs.readFileSync(path.join(__dirname,'../public/index.html'),'utf8');
   /* the old build showed a green "Live" pill, a dashed code and a blank QR on Vercel */
@@ -83,10 +84,10 @@ const htmlOnApi={status:200,json:false,body:null};
   console.log('\n--- presenter navigation without a hub ---');
   {
     ok('prev/next fall back to a local canon walk',/if\(!hub\(\)\.isLive\(hubState\)\)return localStep\(d(,quiet)?\)/.test(app));
-    ok('the local walk crosses book and chapter boundaries',
-      /bi--;ch=books\[bi\]\.chapters/.test(app)&&/bi\+\+;ch=1/.test(app));
-    ok('the local walk blocks at the ends of the canon',
-      /Start of the Bible/.test(app)&&/End of the Bible/.test(app));
+    ok('the shared local walker crosses book and chapter boundaries',
+      /bi--;ch=books\[bi\]\.chapters/.test(nav)&&/bi\+\+;ch=1/.test(nav));
+    ok('the local walker blocks at both ends of the canon',
+      /Start of the Bible/.test(nav)&&/End of the Bible/.test(nav));
   }
 
   console.log('\n--- the source must not hardcode a live claim ---');

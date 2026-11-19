@@ -1,9 +1,30 @@
 /* End-to-end: presenter starts session -> phone remote connects -> verse pushed -> display stream receives. */
 const fs=require('fs'),path=require('path');
+const KingdomRef=require('../public/bible-ref.js');
+const books=require('../public/data/books.json').books;
+const {createVoiceHarness}=require('./voice-harness');
 const B='http://localhost:'+(process.env.PORT||4173);
 const j=async(p,o)=>{const r=await fetch(B+p,o);let d={};try{d=await r.json()}catch{}return{status:r.status,body:d}};
 const post=(p,b)=>j(p,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b||{})});
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const waitForPresentation=async predicate=>{
+  const deadline=Date.now()+2500;
+  while(Date.now()<deadline){
+    const p=(await j('/api/state')).body.presentation;
+    if(p&&predicate(p))return p;
+    await sleep(20);
+  }
+  return(await j('/api/state')).body.presentation||null;
+};
+const waitForVoiceLog=async(h,needle)=>{
+  const deadline=Date.now()+2500;
+  while(Date.now()<deadline){
+    const log=h.elements['#voiceLog'].innerHTML;
+    if(log.includes(needle))return log;
+    await sleep(20);
+  }
+  return h.elements['#voiceLog'].innerHTML;
+};
 /* the encoder the presenter page draws with, so the QR we assert on is the real one */
 global.window={};global.TextEncoder=require('util').TextEncoder;
 require('../public/qr.js');
@@ -15,7 +36,10 @@ const QR=global.window.QR;
 
   console.log('\n--- ministry session flow ---');
   const net=await j('/api/network');
-  ok('network endpoint reports a LAN address',net.body.addresses&&net.body.addresses.length>0,JSON.stringify(net.body));
+  const lanHost=net.body.addresses&&net.body.addresses[0]||'localhost';
+  ok('network endpoint reports a LAN address or an explicit localhost fallback',
+    net.body.addresses&&net.body.addresses.length>0?net.body.url==='http://'+lanHost+':'+net.body.port:
+      net.body.url==='http://localhost:'+net.body.port,JSON.stringify(net.body));
 
   const start=await post('/api/session/start');
   ok('session starts and returns a 6-char code',/^[A-Z0-9]{4,6}$/.test(start.body.code||''),start.body.code);
@@ -26,7 +50,8 @@ const QR=global.window.QR;
 
   const good=await post('/api/session/status',{code});
   ok('correct code unlocks the session',good.status===200&&good.body.ok===true);
-  ok('remote URL points at the LAN address',typeof start.body.url==='string'&&/^http:\/\/\d+\.\d+\.\d+\.\d+:\d+$/.test(start.body.url),start.body.url);
+  const expectedBase='http://'+lanHost+':'+net.body.port;
+  ok('remote URL uses the detected host or localhost fallback',start.body.url===expectedBase,start.body.url);
 
   // phone looks up a verse and pushes it
   const v=await j('/api/verse?ref='+encodeURIComponent('John 3:16'));
@@ -39,6 +64,72 @@ const QR=global.window.QR;
 
   const st=await j('/api/state');
   ok('display state reflects the pushed verse',st.body.presentation&&st.body.presentation.ref==='John 3:16',st.body.presentation&&st.body.presentation.ref);
+
+  console.log('\n--- Voice Preacher Mode through the live hub ---');
+  const liveAction=async action=>{
+    const result=await post('/api/remote/action',{code,action});
+    if(!result.body.ok)return{ok:false,error:result.body.error||'Hub action failed'};
+    return(await j('/api/state')).body.presentation||{ok:false,error:'No live presentation'};
+  };
+  const liveHooks={
+    books,
+    present:async hit=>{
+      const ref=KingdomRef.format(hit,books);
+      const resolved=await j('/api/verse?ref='+encodeURIComponent(ref));
+      if(resolved.status!==200)return{ok:false,error:'Reference not found'};
+      const pushed=await post('/api/remote/action',{code,action:{type:'presentation',payload:resolved.body}});
+      return pushed.body.ok?resolved.body:{ok:false,error:pushed.body.error||'Could not present reference'};
+    },
+    gotoVerse:async(verse,verseEnd)=>{
+      const state=(await j('/api/state')).body.presentation;
+      if(!state||state.book==null)return{ok:false,error:'Send a verse first'};
+      const p={book:state.book,chapter:state.chapter,verse,verseEnd};
+      const resolved=await j('/api/verse?ref='+encodeURIComponent(KingdomRef.format(p,books)));
+      if(resolved.status!==200)return{ok:false,error:'Verse not found'};
+      const pushed=await post('/api/remote/action',{code,action:{type:'presentation',payload:resolved.body}});
+      return pushed.body.ok?resolved.body:{ok:false,error:pushed.body.error||'Could not present verse'};
+    },
+    next:()=>liveAction({type:'next'}),
+    prev:()=>liveAction({type:'prev'}),
+    blank:async()=>{const p=(await j('/api/state')).body.presentation;return liveAction({type:'presentation',payload:{...p,blank:true}})},
+    show:async()=>{const p=(await j('/api/state')).body.presentation;return liveAction({type:'presentation',payload:{...p,blank:false}})},
+    notify:()=>{},
+  };
+  const liveVoice=createVoiceHarness(liveHooks);
+  const voiceSeed=await j('/api/verse?ref=John+3:15');
+  await post('/api/remote/action',{code,action:{type:'presentation',payload:voiceSeed.body}});
+  liveVoice.voice.start();
+  await liveVoice.speak('John chapter three verse sixteen');
+  let voiceState=await waitForPresentation(p=>p.ref==='John 3:16');
+  ok('spoken reference reaches the live presentation',voiceState&&voiceState.ref==='John 3:16',voiceState&&voiceState.ref);
+  await liveVoice.speak('next verse');
+  voiceState=await waitForPresentation(p=>p.ref==='John 3:17');
+  ok('spoken next verse advances the live hub',voiceState&&voiceState.ref==='John 3:17',voiceState&&voiceState.ref);
+  await liveVoice.speak('previous verse');
+  voiceState=await waitForPresentation(p=>p.ref==='John 3:16');
+  ok('spoken previous verse advances back on the live hub',voiceState&&voiceState.ref==='John 3:16',voiceState&&voiceState.ref);
+  await liveVoice.speak('blank screen');
+  voiceState=await waitForPresentation(p=>p.blank===true);
+  ok('spoken blank screen blanks the live presentation',voiceState&&voiceState.blank===true);
+  await liveVoice.speak('show the verse');
+  voiceState=await waitForPresentation(p=>p.blank===false);
+  ok('spoken show the verse restores the live presentation',voiceState&&voiceState.blank===false);
+  await liveVoice.speak('John 3 16 to 18');
+  voiceState=await waitForPresentation(p=>p.ref==='John 3:16-18');
+  ok('spoken reference range is presented live',voiceState&&voiceState.ref==='John 3:16-18',voiceState&&voiceState.ref);
+  await liveVoice.speak('next verse');
+  voiceState=await waitForPresentation(p=>p.ref==='John 3:19');
+  ok('spoken next continues after the end of a live reference range',voiceState&&voiceState.ref==='John 3:19',voiceState&&voiceState.ref);
+  await liveHooks.present({book:65,chapter:22,verse:21,verseEnd:null});
+  await liveVoice.speak('next verse');
+  const endFailure=await waitForVoiceLog(liveVoice,'Next verse failed: End of Bible');
+  ok('live end-of-Bible response is logged as a voice failure',endFailure.includes('Next verse failed: End of Bible'));
+  await liveHooks.present({book:0,chapter:1,verse:1,verseEnd:null});
+  await liveVoice.speak('previous verse');
+  const startFailure=await waitForVoiceLog(liveVoice,'Previous verse failed: Start of Bible');
+  ok('live start-of-Bible response is logged as a voice failure',startFailure.includes('Previous verse failed: Start of Bible'));
+  await liveVoice.speak('stop listening');
+  ok('spoken stop command stops the recognition module',!liveVoice.voice.listening()&&liveVoice.recognition.stopped);
 
   // display (SSE) must receive it
   const ctrl=new AbortController();
@@ -86,6 +177,31 @@ const QR=global.window.QR;
   const bl=await post('/api/remote/action',{code,action:{type:'blank',blank:true}});
   const blanked=await j('/api/state');
   ok('blank toggles the display',bl.body.ok===true&&blanked.body.presentation.blank===true);
+  const restore=await post('/api/remote/action',{code,action:{type:'blank',blank:false}});
+  const restored=await j('/api/state');
+  ok('show/restore returns the verse to the display',restore.body.ok===true&&restored.body.presentation.blank===false);
+
+  const pushLiveRef=async ref=>{
+    const passage=await j('/api/verse?ref='+encodeURIComponent(ref));
+    if(passage.status!==200)return null;
+    const result=await post('/api/remote/action',{code,action:{type:'presentation',payload:passage.body}});
+    return result.body.ok?passage.body:null;
+  };
+  await pushLiveRef('Psalms 23:6');
+  const psNext=await post('/api/remote/action',{code,action:{type:'next'}});
+  let edgeState=(await j('/api/state')).body.presentation;
+  ok('live next crosses a chapter boundary',psNext.body.ok&&edgeState.ref==='Psalms 24:1',edgeState.ref);
+  const psPrev=await post('/api/remote/action',{code,action:{type:'prev'}});
+  edgeState=(await j('/api/state')).body.presentation;
+  ok('live previous crosses a chapter boundary',psPrev.body.ok&&edgeState.ref==='Psalms 23:6',edgeState.ref);
+  await pushLiveRef('Malachi 4:6');
+  const bookNext=await post('/api/remote/action',{code,action:{type:'next'}});
+  edgeState=(await j('/api/state')).body.presentation;
+  ok('live next crosses a book boundary',bookNext.body.ok&&edgeState.ref==='Matthew 1:1',edgeState.ref);
+  const bookPrev=await post('/api/remote/action',{code,action:{type:'prev'}});
+  edgeState=(await j('/api/state')).body.presentation;
+  ok('live previous crosses a book boundary',bookPrev.body.ok&&edgeState.ref==='Malachi 4:6',edgeState.ref);
+
   const unauth=await post('/api/remote/action',{code:'BADCOD',action:{type:'blank',blank:true}});
   ok('unauthorised remote is rejected',unauth.status===401,'status '+unauth.status);
 
@@ -116,15 +232,15 @@ const QR=global.window.QR;
 
   console.log('\n--- presenter connect code ---');
   {
-    const addr=net.body.addresses[0];
+    const addr=net.body.addresses[0]||'localhost';
     const remoteUrl=`http://${addr}:${net.body.port}/remote`;
     const qrTarget=remoteUrl+'?code='+encodeURIComponent(code);
     const out=QR(qrTarget);
     console.log('  QR encodes: '+qrTarget+'  ('+out.size+'x'+out.size+', version '+((out.size-17)/4)+')');
-    ok('QR target uses the LAN address, not localhost',/^http:\/\/\d+\.\d+\.\d+\.\d+:\d+\/remote/.test(qrTarget),qrTarget);
+    ok('QR target uses the detected host or localhost fallback',/^http:\/\/(?:\d+\.\d+\.\d+\.\d+|localhost):\d+\/remote/.test(qrTarget),qrTarget);
     ok('QR target carries the live service code',qrTarget.endsWith('?code='+code));
     const presentUrl=`http://${addr}:${net.body.port}/present?code=${code}`;
-    ok('vMix browser-source URL is well formed',/^http:\/\/\d+\.\d+\.\d+\.\d+:\d+\/present\?code=[A-Z0-9]{4,6}$/.test(presentUrl),presentUrl);
+    ok('vMix browser-source URL is well formed',/^http:\/\/(?:\d+\.\d+\.\d+\.\d+|localhost):\d+\/present\?code=[A-Z0-9]{4,6}$/.test(presentUrl),presentUrl);
     const pres=await fetch(B+'/present?code='+code);
     const presHtml=await pres.text();
     /* /present serves the app shell, which renders the capture stage from JS */
