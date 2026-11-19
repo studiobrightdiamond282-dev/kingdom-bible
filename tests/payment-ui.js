@@ -7,6 +7,11 @@ const fs=require('node:fs');
 const path=require('node:path');
 const vm=require('node:vm');
 const source=fs.readFileSync(path.join(__dirname,'..','public','premium.js'),'utf8');
+const appSource=fs.readFileSync(path.join(__dirname,'..','public','app.js'),'utf8');
+const profileStart=appSource.indexOf('function profileReferralLink(');
+const profileEnd=appSource.indexOf('\nfunction renderProfile()',profileStart);
+assert(profileStart>=0&&profileEnd>profileStart,'Profile must have a role-aware referral renderer');
+const profileCode=appSource.slice(profileStart,profileEnd);
 const start=source.indexOf('const CHECKOUT_SLOW_MS=');
 const end=source.indexOf('\nfunction withdraw()',start);
 assert(start>=0&&end>start,'the actual checkout UI handler must exist');
@@ -34,6 +39,13 @@ function referralMarkup(role){
   vm.createContext(context);
   vm.runInContext(referralCode,context,{filename:'premium-referral-block.js'});
   return context.referralBlock(role);
+}
+function profileReferral(account){
+  const context={location:{origin:'https://example.org'},encodeURIComponent,esc:value=>String(value)};
+  vm.createContext(context);
+  vm.runInContext(profileCode,context,{filename:'profile-referral-ui.js'});
+  const url=context.profileReferralLink(account);
+  return{url,markup:context.profileReferralMarkup(account,url)};
 }
 
 function button(plan,label){
@@ -97,6 +109,32 @@ function harness(api){
     const memberReferral=referralMarkup('user');
     assert(memberReferral.includes('value="https://example.org/?ref=KB123ABC"'),'member referral links retain their tracking code');
     assert(memberReferral.includes('id="copyReferral"')&&memberReferral.includes('id="shareReferral"'),'member referral actions remain available');
+
+    // Profile must not pass off the homepage as a referral link for admins or guests.
+    const adminProfile=profileReferral({signedIn:true,role:'admin'});
+    assert.equal(adminProfile.url,'','admins must not receive a fabricated referral URL');
+    assert.match(adminProfile.markup,/do not have a personal referral code or wallet/);
+    assert.match(adminProfile.markup,/does not track or credit signups/);
+    assert(!adminProfile.markup.includes('id="profileReferral"')&&!adminProfile.markup.includes('id="walletPanel"'),'admin Profile hides referral and wallet controls');
+    assert(appSource.includes("acct.role==='admin'?'Administrator access is complimentary. Referral rewards and withdrawals are available to standard member accounts.'"),'admin membership copy does not promise referral rewards or a member wallet');
+    const guestProfile=profileReferral({signedIn:false,role:'user'});
+    assert.equal(guestProfile.url,'','signed-out Profile must not present a trackable-looking app URL');
+    assert.match(guestProfile.markup,/general app URL does not credit referrals/);
+    assert(!guestProfile.markup.includes('id="profileReferral"'),'signed-out Profile has no referral input');
+    const memberProfile=profileReferral({signedIn:true,role:'user',referralCode:'KB123ABC'});
+    assert.equal(memberProfile.url,'https://example.org/?ref=KB123ABC','a member link is built from that member’s referral code');
+    assert(memberProfile.markup.includes('value="https://example.org/?ref=KB123ABC"'),'member Profile keeps the unique tracked link');
+    assert(memberProfile.markup.includes('id="copyProfileReferral"')&&memberProfile.markup.includes('id="shareApp"'),'member referral actions remain available in Profile');
+    assert(memberProfile.markup.includes('id="walletPanel"'),'member wallet remains visible in Profile');
+    assert(source.includes("const pendingRef=new URLSearchParams(location.search).get('ref')||'';"),'the signup form reads the referral code from the shared URL');
+    assert(source.includes("referralCode:root().querySelector('#authReferral')?.value||pendingRef"),'email signup submits the captured referral code');
+    assert(source.includes("new URLSearchParams(location.search).get('ref') || ''"),'Google signup submits the captured referral code too');
+    const codeMissing=profileReferral({signedIn:true,role:'user'});
+    assert.equal(codeMissing.url,'','a missing member code never falls back to the generic URL');
+    assert.match(codeMissing.markup,/no personal referral code/);
+    assert(!codeMissing.markup.includes('id="profileReferral"')&&!codeMissing.markup.includes('id="walletPanel"'),'a member without a code cannot see an untracked link or empty wallet');
+    assert(appSource.includes("if(acct.signedIn&&acct.role!=='admin'&&acct.referralCode)loadWalletPanel();"),'Profile only loads a referral wallet for a coded member');
+
     const member=planMarkup('user',true);
     assert(member.includes('data-buy="silver"'),'regular members retain the plan purchase button');
     const offline=planMarkup('user',false);

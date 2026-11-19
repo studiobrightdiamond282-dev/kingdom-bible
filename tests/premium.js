@@ -19,7 +19,8 @@ async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/heal
   const checkoutOff=await request('/api/payments/initialize',{method:'POST',headers:{cookie:a.session},body:JSON.stringify({plan:'silver'})});assert.equal(checkoutOff.r.status,503,'checkout without real Paystack keys must fail closed');assert.match(checkoutOff.body.error,/Paystack checkout needs both a public key and a server-side secret key/);
   const b=await request('/api/auth/register',{method:'POST',body:JSON.stringify({email:'b@example.com',password:'password-b',name:'B',referralCode:a.body.user.referralCode})});assert.equal(b.r.status,201);
   const aMe=await request('/api/auth/me',{headers:{cookie:a.session}});assert.equal(aMe.body.user.walletBalance,100);
-  const admin=await request('/api/auth/login',{method:'POST',body:JSON.stringify({email:'stanley.okonkwo282@gmail.com',password:'test-admin-password'})});assert.equal(admin.body.user.role,'admin');
+  const admin=await request('/api/auth/login',{method:'POST',body:JSON.stringify({email:'stanley.okonkwo282@gmail.com',password:'test-admin-password'})});assert.equal(admin.body.user.role,'admin');assert(!admin.body.user.referralCode,'administrator accounts must not receive member referral codes');
+  const adminWallet=await request('/api/wallet',{headers:{cookie:admin.session}});assert.equal(adminWallet.body.admin,true);assert.equal(adminWallet.body.referral,null,'admin wallet endpoint must not invent referral stats for an account without a code');
   const adminCheckout=await request('/api/payments/initialize',{method:'POST',headers:{cookie:admin.session},body:JSON.stringify({plan:'silver'})});assert.equal(adminCheckout.r.status,200);assert.equal(adminCheckout.body.admin,true,'administrator subscriptions remain complimentary');assert.match(adminCheckout.body.message,/Administrator access is free/);
   const overview=await request('/api/admin/overview',{headers:{cookie:admin.session}});assert.equal(overview.body.users.length,2);
   assert.match(overview.r.headers.get('cache-control')||'',/no-store/,'private admin data must not be cached');
@@ -146,9 +147,9 @@ async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/heal
   const cardBuf=Buffer.from(await card.arrayBuffer());
   assert.equal(cardBuf.readUInt32BE(16),1200,'share card width must match og:image:width');
   assert.equal(cardBuf.readUInt32BE(20),630,'share card height must match og:image:height');
-  const poster=await fetch(base+'/assets/kingdom-bible-product-preview.jpg?v=1.2.11');
+  const poster=await fetch(base+'/assets/kingdom-bible-product-preview.jpg?v=1.2.12');
   assert.equal(poster.headers.get('content-type'),'image/jpeg','the Render hub must serve the demo poster with its image MIME type');
-  const media=await fetch(base+'/assets/kingdom-bible-product-preview.mp4?v=1.2.11',{headers:{range:'bytes=0-63'}});
+  const media=await fetch(base+'/assets/kingdom-bible-product-preview.mp4?v=1.2.12',{headers:{range:'bytes=0-63'}});
   assert.equal(media.status,206,'the Render hub must support byte-range video playback');
   assert.equal(media.headers.get('content-type'),'video/mp4');
   assert.equal(media.headers.get('content-range').split('/')[0],'bytes 0-63');

@@ -12,6 +12,11 @@ The portal provides a summary dashboard; searchable, filterable and paginated ac
 
 Admin API security and payout/payment-summary behavior are covered by `tests/premium.js`, `tests/payments.js`, and `tests/analytics.js`.
 
+## New in v1.2.12
+
+- **Profile referrals are role-aware.** Admin and signed-out accounts no longer see a generic app URL or empty wallet presented as referral tracking; standard members keep their unique coded links and wallets.
+- **Installed clients receive the fix.** The app and service-worker cache versions are bumped so existing PWA installs refresh.
+
 ## New in v1.2.11
 
 - **Upgrade handoffs open once.** The account modal no longer reopens on refresh after an upgrade handoff; referral and Paystack return parameters are preserved.
@@ -384,7 +389,7 @@ Never place provider secrets in browser code. Use the names in `.env.example` on
 `GET /health` returns service status without secrets or stack traces:
 
 ```json
-{"ok":true,"app":"KINGDOM BIBLE","version":"1.2.11","presentation":"operational",
+{"ok":true,"app":"KINGDOM BIBLE","version":"1.2.12","presentation":"operational",
  "sessionActive":true,"listeners":1,"uptime":412,"serverTime":1757404800000}
 ```
 
@@ -435,7 +440,7 @@ paired phone plus any vMix input that is mid-service.
 
 ## Version
 
-KINGDOM BIBLE v1.2.11 — `package.json`, `server.js` and the service-worker cache version are
+KINGDOM BIBLE v1.2.12 — `package.json`, `server.js` and the service-worker cache version are
 kept in sync, and a smoke test fails the build if they drift.
 
 ## Duplicate-folder cleanup (one-time, on the ministry PC)
