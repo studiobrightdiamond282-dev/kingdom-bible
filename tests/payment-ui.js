@@ -11,6 +11,20 @@ const start=source.indexOf('const CHECKOUT_SLOW_MS=');
 const end=source.indexOf('\nfunction withdraw()',start);
 assert(start>=0&&end>start,'the actual checkout UI handler must exist');
 const handler=source.slice(start,end);
+const planStart=source.indexOf('function planCards(){');
+const planEnd=source.indexOf('\nfunction bindAdminPlanNotice()',planStart);
+assert(planStart>=0&&planEnd>planStart,'the plan-card role guard must exist');
+const planCardCode=source.slice(planStart,planEnd);
+const switchStart=planEnd+1;
+const switchEnd=source.indexOf('\nfunction paymentNotice()',switchStart);
+const switchCode=source.slice(switchStart,switchEnd);
+
+function planMarkup(role,paystackReady){
+  const context={user:{role},config:{paystackReady,plans:[{id:'silver',name:'Silver',price:2500,tagline:'Steady Scripture rhythm',benefits:['Bible reader']}]},esc:value=>String(value)};
+  vm.createContext(context);
+  vm.runInContext(planCardCode,context,{filename:'premium-plan-cards.js'});
+  return context.planCards();
+}
 
 function button(plan,label){
   return{
@@ -54,6 +68,31 @@ function harness(api){
 }
 
 (async()=>{
+  // An administrator must not be offered purchase controls the server will reject.
+  {
+    const admin=planMarkup('admin',true);
+    assert.match(admin,/Administrator access is complimentary/);
+    assert.match(admin,/switchMemberAccount/);
+    assert.match(admin,/premium-admin-plan-notice/,'admin guidance spans the plan grid');
+    assert(!admin.includes('data-buy='),'admin accounts must not render a Paystack purchase button');
+    assert(source.includes("e.role==='admin'?'Administrator access':'Choose your plan'"),'the account screen labels the complimentary admin section clearly');
+    assert(source.includes("e.status==='admin'?'Complimentary access':'Active access'"),'the account summary identifies admin access as complimentary');
+    assert((source.match(/bindAdminPlanNotice\(\);bindBuy\(\);/g)||[]).length===2,'both the landing and signed-in account screens bind the account switch button');
+    const member=planMarkup('user',true);
+    assert(member.includes('data-buy="silver"'),'regular members retain the plan purchase button');
+    const offline=planMarkup('user',false);
+    assert.match(offline,/Checkout unavailable/,'member checkout still fails closed when Paystack is not configured');
+    let signedOut=0,landed=0;
+    const switchButton={onclick:null};
+    const context={root:()=>({querySelector:selector=>selector==='#switchMemberAccount'?switchButton:null}),signOut:async()=>{signedOut++},landing:()=>{landed++}};
+    vm.createContext(context);
+    vm.runInContext(switchCode,context,{filename:'premium-admin-plan-switch.js'});
+    context.bindAdminPlanNotice();
+    await switchButton.onclick();
+    assert.equal(signedOut,1,'switching from admin first signs out');
+    assert.equal(landed,1,'switching then opens the regular account sign-in screen');
+  }
+
   // Simulate a request that never resolves until aborted by the real 30-second deadline.
   {
     const h=harness((url,options)=>new Promise((resolve,reject)=>{
