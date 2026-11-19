@@ -1,9 +1,21 @@
 /* End-to-end: presenter starts session -> phone remote connects -> verse pushed -> display stream receives. */
 const fs=require('fs'),path=require('path');
+const KingdomRef=require('../public/bible-ref.js');
+const books=require('../public/data/books.json').books;
+const {createVoiceHarness}=require('./voice-harness');
 const B='http://localhost:'+(process.env.PORT||4173);
 const j=async(p,o)=>{const r=await fetch(B+p,o);let d={};try{d=await r.json()}catch{}return{status:r.status,body:d}};
 const post=(p,b)=>j(p,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b||{})});
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const waitForPresentation=async predicate=>{
+  const deadline=Date.now()+2500;
+  while(Date.now()<deadline){
+    const p=(await j('/api/state')).body.presentation;
+    if(p&&predicate(p))return p;
+    await sleep(20);
+  }
+  return(await j('/api/state')).body.presentation||null;
+};
 /* the encoder the presenter page draws with, so the QR we assert on is the real one */
 global.window={};global.TextEncoder=require('util').TextEncoder;
 require('../public/qr.js');
@@ -43,6 +55,63 @@ const QR=global.window.QR;
 
   const st=await j('/api/state');
   ok('display state reflects the pushed verse',st.body.presentation&&st.body.presentation.ref==='John 3:16',st.body.presentation&&st.body.presentation.ref);
+
+  console.log('\n--- Voice Preacher Mode through the live hub ---');
+  const liveAction=async action=>{
+    const result=await post('/api/remote/action',{code,action});
+    if(!result.body.ok)return{ok:false,error:result.body.error||'Hub action failed'};
+    return(await j('/api/state')).body.presentation||{ok:false,error:'No live presentation'};
+  };
+  const liveHooks={
+    books,
+    present:async hit=>{
+      const resolved=await j('/api/verse?ref='+encodeURIComponent(KingdomRef.format(hit,books)));
+      if(resolved.status!==200)return{ok:false,error:'Reference not found'};
+      const pushed=await post('/api/remote/action',{code,action:{type:'presentation',payload:resolved.body}});
+      return pushed.body.ok?resolved.body:{ok:false,error:pushed.body.error||'Could not present reference'};
+    },
+    gotoVerse:async(verse,verseEnd,translation,bookHint)=>{
+      const state=(await j('/api/state')).body.presentation;
+      if(!state||state.book==null)return{ok:false,error:'Send a verse first'};
+      const p={book:bookHint==null?state.book:bookHint,chapter:bookHint==null?state.chapter:1,verse,verseEnd};
+      const resolved=await j('/api/verse?ref='+encodeURIComponent(KingdomRef.format(p,books)));
+      if(resolved.status!==200)return{ok:false,error:'Verse not found'};
+      const pushed=await post('/api/remote/action',{code,action:{type:'presentation',payload:resolved.body}});
+      return pushed.body.ok?resolved.body:{ok:false,error:pushed.body.error||'Could not present verse'};
+    },
+    next:()=>liveAction({type:'next'}),
+    prev:()=>liveAction({type:'prev'}),
+    blank:async()=>{const p=(await j('/api/state')).body.presentation;return liveAction({type:'presentation',payload:{...p,blank:true}})},
+    show:async()=>{const p=(await j('/api/state')).body.presentation;return liveAction({type:'presentation',payload:{...p,blank:false}})},
+    notify:()=>{},
+  };
+  const liveVoice=createVoiceHarness(liveHooks);
+  const seed=await j('/api/verse?ref=John+3:15');
+  await post('/api/remote/action',{code,action:{type:'presentation',payload:seed.body}});
+  liveVoice.voice.start();
+  await liveVoice.speak('John chapter three verse sixteen');
+  let voiceState=await waitForPresentation(p=>p.ref==='John 3:16');
+  ok('spoken reference reaches the live presentation',voiceState&&voiceState.ref==='John 3:16',voiceState&&voiceState.ref);
+  await liveVoice.speak('next verse');
+  voiceState=await waitForPresentation(p=>p.ref==='John 3:17');
+  ok('spoken next verse advances exactly once on the live hub',voiceState&&voiceState.ref==='John 3:17',voiceState&&voiceState.ref);
+  await liveVoice.speak('previous verse');
+  voiceState=await waitForPresentation(p=>p.ref==='John 3:16');
+  ok('spoken previous verse returns exactly one verse on the live hub',voiceState&&voiceState.ref==='John 3:16',voiceState&&voiceState.ref);
+  await liveVoice.speak('blank screen');
+  voiceState=await waitForPresentation(p=>p.blank===true);
+  ok('spoken blank screen blanks the live presentation',voiceState&&voiceState.blank===true);
+  await liveVoice.speak('show the verse');
+  voiceState=await waitForPresentation(p=>p.blank===false);
+  ok('spoken show the verse restores the live presentation',voiceState&&voiceState.blank===false);
+  await liveVoice.speak('John 3 16 to 18');
+  voiceState=await waitForPresentation(p=>p.ref==='John 3:16-18');
+  ok('spoken reference range is presented live',voiceState&&voiceState.ref==='John 3:16-18',voiceState&&voiceState.ref);
+  await liveVoice.speak('next verse');
+  voiceState=await waitForPresentation(p=>p.ref==='John 3:19');
+  ok('spoken next continues after the live range',voiceState&&voiceState.ref==='John 3:19',voiceState&&voiceState.ref);
+  await liveVoice.speak('stop listening');
+  ok('spoken stop listening stops recognition',!liveVoice.voice.listening()&&liveVoice.recognition.stopped);
 
   // display (SSE) must receive it
   const ctrl=new AbortController();

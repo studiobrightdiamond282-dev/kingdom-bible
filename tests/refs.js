@@ -69,11 +69,20 @@ ok('contextual verse atEnd tracks trailing speech',(()=>{const a=S('now verse tw
 
 console.log('\n--- presenter voice commands ---');
 ok('"next verse"',R.command('let us go to the next verse')==='next');
+ok('"following scripture"',R.command('move to the following scripture')==='next');
 ok('"previous verse"',R.command('previous verse please')==='prev');
+ok('"preceding scripture"',R.command('go back to the preceding scripture')==='prev');
 ok('"back one verse"',R.command('take it back one verse')==='prev');
+ok('"a verse back"',R.command('a verse back')==='prev');
 ok('"blank the screen"',R.command('blank the screen')==='blank');
+ok('"clear that display"',R.command('clear that display')==='blank');
+ok('"hide the projector"',R.command('hide the projector')==='blank');
 ok('"show the verse"',R.command('show the verse')==='show');
+ok('"restore verse"',R.command('restore verse')==='show');
+ok('"bring it back"',R.command('bring it back')==='show');
 ok('"stop listening"',R.command('you can stop listening now')==='stop');
+ok('"pause voice"',R.command('pause voice')==='stop');
+ok('"end microphone"',R.command('end microphone')==='stop');
 ok('plain preaching is never a command',R.command('the next thing Jesus said was wonderful')===null);
 ok('"the last verse of the chapter" is never a command',R.command('the last verse of the chapter says')===null);
 

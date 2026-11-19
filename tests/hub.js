@@ -108,10 +108,11 @@ const htmlOnApi={status:200,json:false,body:null};
   console.log('\n--- presenter navigation without a hub ---');
   {
     ok('prev/next fall back to a local canon walk',/if\(!hub\(\)\.isLive\(hubState\)\)return localStep\(d(,quiet)?\)/.test(app));
-    ok('the local walk crosses book and chapter boundaries',
+    ok('the local walker crosses book and chapter boundaries',
       /bi--;ch=books\[bi\]\.chapters/.test(app)&&/bi\+\+;ch=1/.test(app));
-    ok('the local walk blocks at the ends of the canon',
+    ok('the local walker blocks at both ends of the canon',
       /Start of the Bible/.test(app)&&/End of the Bible/.test(app));
+    ok('live-hub failures are returned for Voice Mode to report',/if\(!out\|\|out\.ok!==true\)[\s\S]*?return\{ok:false,error\}/.test(app));
   }
 
   console.log('\n--- the source must not hardcode a live claim ---');
@@ -184,4 +185,3 @@ const htmlOnApi={status:200,json:false,body:null};
   console.log('\n'+pass+' passed, '+fail+' failed');
   if(fail)process.exitCode=1;
 })();
-

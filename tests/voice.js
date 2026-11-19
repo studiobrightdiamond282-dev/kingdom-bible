@@ -176,6 +176,49 @@ async function main(){
   assert.equal(flow.preved,1,'interim "previous" steps immediately');
   Voice.stop(true);
 
-  console.log('✓ Voice Preacher Mode interim timing, fuses, dedupe lock, restart recovery, and spoken-book preservation');
+  /* A final command must not fire again when restart-recovery scans its tail. */
+  let nextCalls=0;
+  Voice.bind({books,next:()=>{nextCalls++;return Promise.resolve({ok:true})},prev:()=>Promise.resolve({ok:true}),blank:()=>Promise.resolve({ok:true}),show:()=>Promise.resolve({ok:true}),notify:()=>{}});
+  Voice.start();
+  frame('next verse',true);
+  await wait(0);
+  assert.equal(nextCalls,1,'a final next-verse command runs once, not again from the tail scan');
+  Voice.stop(true);
+
+  /* A settled hub/local failure must not be reported as a successful spoken
+     command; blank/show still confirm successful hook results. */
+  const commandNotices=[];
+  Voice.bind({
+    books,
+    present:hit=>Promise.resolve({ref:REF.format(hit,books)}),
+    gotoVerse:()=>Promise.resolve({ref:'John 3:16'}),
+    next:()=>Promise.resolve({ok:false,error:'End of Bible'}),
+    prev:()=>Promise.reject(new Error('hub unavailable')),
+    blank:()=>Promise.resolve({ok:true}),
+    show:()=>Promise.resolve({ok:true}),
+    notify:(message,type)=>commandNotices.push({message,type}),
+  });
+  Voice.start();
+  frame('next');
+  await wait(0);
+  assert(elements.get('#voiceLog').innerHTML.includes('Next verse failed: End of Bible'),
+    'a next boundary error is logged as a failure, not success');
+  frame('previous');
+  await wait(0);
+  assert(elements.get('#voiceLog').innerHTML.includes('Previous verse failed: hub unavailable'),
+    'a rejected previous hook is surfaced as a failure');
+  frame('blank screen');
+  await wait(0);
+  assert(elements.get('#voiceLog').innerHTML.includes('Screen blanked (voice command)'),
+    'a successful blank hook is logged');
+  frame('show the verse');
+  await wait(0);
+  assert(elements.get('#voiceLog').innerHTML.includes('Verse restored (voice command)'),
+    'a successful restore hook is logged');
+  frame('stop listening');
+  assert.equal(Voice.listening(),false,'spoken stop still shuts down the recogniser');
+  assert.equal(recogniser.onresult,null,'stop clears late result callbacks');
+
+  console.log('✓ Voice Preacher Mode interim timing, fuses, dedupe, restart recovery, spoken-book preservation, and command outcomes');
 }
 main().catch(err=>{console.error(err.stack||err);process.exitCode=1});

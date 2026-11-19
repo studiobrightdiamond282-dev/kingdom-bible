@@ -396,4 +396,3 @@ async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/heal
   console.log('✓ Client account flow: home after sign-in, reachable sign-out');
   console.log('✓ Notifications reflect real account state; stale profile copy removed');
 }catch(e){console.error(e.stack||e);process.exitCode=1}finally{child.kill('SIGTERM');try{fs.unlinkSync(store)}catch{}}})();
-

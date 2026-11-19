@@ -382,7 +382,7 @@ function scan(text,books,opts){
 function command(text){
   const s=' '+String(text||'').toLowerCase().replace(/[^a-z\s]/g,' ').replace(/\s+/g,' ').trim()+' ';
   const words=s.trim().split(/\s+/).filter(Boolean);
-  const bare=(w)=>words.length<=3&&words.indexOf(w)>=0;
+  const bare=(w)=>words.length<=3&&words[0]===w;
   if(/\b(next|following) (verse|scripture|slide|one)\b/.test(s)||bare('next'))return 'next';
   if(/\b(previous|preceding) (verse|scripture|slide|one)\b/.test(s)||/\bback (one|a) verse\b/.test(s)||/\b(one|a) verse back\b/.test(s)||bare('previous')||bare('back'))return 'prev';
   if(/\b(blank|clear|hide|black) (the |that )?(screen|display|projector)\b/.test(s))return 'blank';

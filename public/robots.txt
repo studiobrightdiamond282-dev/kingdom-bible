@@ -3,4 +3,3 @@ Allow: /
 Disallow: /api/
 Disallow: /admin
 Sitemap: https://kingdom-bible-wine.vercel.app/sitemap.xml
-

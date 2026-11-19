@@ -192,7 +192,7 @@ function ensureOnDevice(){
 }
 function stop(silent){
   wantListen=false;starting=false;clearTimeout(restartTimer);clearPending();stopMeter();stopNoResultWatch();
-  if(rec){try{rec.onend=null;rec.stop()}catch{}rec=null}
+  if(rec){try{rec.onend=null;rec.onresult=null;rec.onerror=null;rec.stop()}catch{}rec=null}
   setStatus('Ready',false);setTranscript('','');
   if(!silent)addLog('Microphone off','');
 }
@@ -333,12 +333,17 @@ function onResult(e){
   /* SpeechRecognition can deliver a final result and a newer interim result
      in the same event. Scan both: interim frames are not a preview to ignore,
      they are the earliest usable Scripture signal. */
-  if(finals.trim())handleSegment(finals,true,collectAlts(e,0,true));
+  if(finals.trim()){
+    handleSegment(finals,true,collectAlts(e,0,true));
+    /* The final chunk was just processed. Mark its tail as consumed so the
+       restart-recovery scan below cannot execute the same command a second time. */
+    lastTailScan=finalTail;
+  }
   if(interim.trim()){handleSegment(interim,false,collectAlts(e,0,false));lastTailScan=finalTail}
   /* A reference can straddle a recogniser restart: "the book of" lands in the
-     last session and "John three sixteen" opens the next one. Re-scan the tail
-     only when it actually changed, so an idle frame costs nothing. */
-  else if(finalTail.trim()&&finalTail!==lastTailScan){handleSegment(finalTail,false,null);lastTailScan=finalTail}
+     last session and "John three sixteen" opens the next one. Re-scan only an
+     unconsumed tail when this event contains no new final or interim text. */
+  else if(!finals.trim()&&finalTail.trim()&&finalTail!==lastTailScan){handleSegment(finalTail,false,null);lastTailScan=finalTail}
   function collectAlts(e,from,isFinal){
     const out=[];
     for(let i=from;i<e.results.length;i++){
@@ -458,13 +463,19 @@ function fire(hit,key){
   if(key&&!dispatchKeys.has(key)){dispatchKeys.add(key);try{dispatchAt.set(key,Date.now())}catch(e){}}
   const started=(g.performance&&performance.now)?performance.now():Date.now();
   const done=v=>{
-    if(v&&v.ref){
-      const ms=Math.round(((g.performance&&performance.now)?g.performance.now():Date.now())-started);
+    if(v&&v.ref&&v.ok!==false){
+      const ms=Math.round(((g.performance&&g.performance.now)?g.performance.now():Date.now())-started);
       addLog(v.ref+' sent to the display','hit',ms,null,'▣');
-    }else addLog('Heard a reference but it is outside this chapter — nothing was sent','miss');
+    }else{
+      const detail=v&&v.error;
+      addLog(detail?'Could not send reference: '+detail:'Heard a reference but it could not be sent','miss');
+      if(detail)notify(detail,'error');
+    }
   };
-  const p=hit.ctx?hooks.gotoVerse(hit.verse,hit.verseEnd,settings.tr,hit.book==null?null:hit.book):hooks.present(hit,settings.tr);
-  Promise.resolve(p).then(done).catch(()=>done(null));
+  try{
+    const p=hit.ctx?hooks.gotoVerse(hit.verse,hit.verseEnd,settings.tr,hit.book==null?null:hit.book):hooks.present(hit,settings.tr);
+    Promise.resolve(p).then(done).catch(e=>done({ok:false,error:e&&e.message||'Presentation failed'}));
+  }catch(e){done({ok:false,error:e&&e.message||'Presentation failed'})}
 }
 
 function runCommand(cmd){
@@ -472,7 +483,18 @@ function runCommand(cmd){
   const label={next:'Next verse',prev:'Previous verse',blank:'Screen blanked',show:'Verse restored'}[cmd];
   const fn={next:hooks.next,prev:hooks.prev,blank:hooks.blank,show:hooks.show}[cmd];
   if(!fn)return;
-  Promise.resolve(fn()).then(()=>addLog('▶ '+label+' (voice command)','hit',null,null,'◆')).catch(()=>{});
+  const failed=out=>out===false||(typeof out==='object'&&out!==null&&out.ok===false);
+  const reportFailure=out=>{
+    const detail=out&&out.error;
+    addLog(detail?label+' failed: '+detail:label+' failed (voice command)','miss');
+    if(detail)notify(detail,'error');
+  };
+  try{
+    Promise.resolve(fn()).then(out=>{
+      if(failed(out))reportFailure(out);
+      else addLog('▶ '+label+' (voice command)','hit',null,null,'◆');
+    }).catch(e=>reportFailure({error:e&&e.message||'Command failed'}));
+  }catch(e){reportFailure({error:e&&e.message||'Command failed'})}
 }
 
 /* ---------- wiring (called every time Ministry Mode renders) ---------- */
