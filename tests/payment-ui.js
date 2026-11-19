@@ -16,14 +16,24 @@ const planEnd=source.indexOf('\nfunction bindAdminPlanNotice()',planStart);
 assert(planStart>=0&&planEnd>planStart,'the plan-card role guard must exist');
 const planCardCode=source.slice(planStart,planEnd);
 const switchStart=planEnd+1;
-const switchEnd=source.indexOf('\nfunction paymentNotice()',switchStart);
+const switchEnd=source.indexOf('\nfunction referralBlock(role)',switchStart);
 const switchCode=source.slice(switchStart,switchEnd);
+const referralStart=switchEnd+1;
+const referralEnd=source.indexOf('\nfunction paymentNotice()',referralStart);
+assert(referralStart>0&&referralEnd>referralStart,'the role-aware referral block must exist');
+const referralCode=source.slice(referralStart,referralEnd);
 
 function planMarkup(role,paystackReady){
   const context={user:{role},config:{paystackReady,plans:[{id:'silver',name:'Silver',price:2500,tagline:'Steady Scripture rhythm',benefits:['Bible reader']}]},esc:value=>String(value)};
   vm.createContext(context);
   vm.runInContext(planCardCode,context,{filename:'premium-plan-cards.js'});
   return context.planCards();
+}
+function referralMarkup(role){
+  const context={referralLink:()=> 'https://example.org/?ref=KB123ABC',esc:value=>String(value)};
+  vm.createContext(context);
+  vm.runInContext(referralCode,context,{filename:'premium-referral-block.js'});
+  return context.referralBlock(role);
 }
 
 function button(plan,label){
@@ -76,8 +86,17 @@ function harness(api){
     assert.match(admin,/premium-admin-plan-notice/,'admin guidance spans the plan grid');
     assert(!admin.includes('data-buy='),'admin accounts must not render a Paystack purchase button');
     assert(source.includes("e.role==='admin'?'Administrator access':'Choose your plan'"),'the account screen labels the complimentary admin section clearly');
-    assert(source.includes("e.status==='admin'?'Complimentary access':'Active access'"),'the account summary identifies admin access as complimentary');
+    assert(source.includes("e.status==='admin'?'Complimentary administrator access':'You are signed in'"),'admin accounts are told their access is complimentary');
     assert((source.match(/bindAdminPlanNotice\(\);bindBuy\(\);/g)||[]).length===2,'both the landing and signed-in account screens bind the account switch button');
+    assert(source.includes("const accountSummary=e.role==='admin'?'':"),'admin wallet and referral metrics are not rendered');
+    assert(source.includes('${accountSummary}')&&source.includes('${referralBlock(e.role)}'),'the role-specific account and referral UI is rendered');
+    const adminReferral=referralMarkup('admin');
+    assert.match(adminReferral,/no referral code/);
+    assert.match(adminReferral,/standard member account/);
+    assert(!adminReferral.includes('id="referralLink"')&&!adminReferral.includes('ref=KB123ABC'),'admins are not shown an untracked referral URL');
+    const memberReferral=referralMarkup('user');
+    assert(memberReferral.includes('value="https://example.org/?ref=KB123ABC"'),'member referral links retain their tracking code');
+    assert(memberReferral.includes('id="copyReferral"')&&memberReferral.includes('id="shareReferral"'),'member referral actions remain available');
     const member=planMarkup('user',true);
     assert(member.includes('data-buy="silver"'),'regular members retain the plan purchase button');
     const offline=planMarkup('user',false);

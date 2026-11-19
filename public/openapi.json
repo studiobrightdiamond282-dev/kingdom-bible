@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "KINGDOM BIBLE Local API",
-    "version": "1.2.10",
+    "version": "1.2.11",
     "description": "Ministry hub for hosted or local Bible presentation: LAN discovery, service-code pairing, server-side Scripture resolution and live streaming. Session codes stay in memory and protected actions require a valid code."
   },
   "paths": {
