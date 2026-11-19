@@ -86,7 +86,7 @@ assert(/function adminGate\(req\)[\s\S]*?sessionRecord\(req\)[\s\S]*?s\.role!==?
 assert(/p==='\/admin'/.test(serverPremiumSrc)&&/adminGate\(req\)/.test(serverPremiumSrc),'the /admin page itself must be gated so outsiders cannot load the login form');
 assert(/p==='\/admin-portal\.html'/.test(serverPremiumSrc),'the direct authenticated admin-shell path must be gated too');
 assert(fs.readFileSync(path.join(pub,'admin.html'),'utf8').includes('https://kingdom-bible.onrender.com/?admin=1'),'the static admin page must link to the live, gated admin route');
-assert(fs.readFileSync(path.join(pub,'admin-portal.html'),'utf8').includes('id=\"adminLogin\"'),'the Node admin route must retain its real login shell');
+assert(fs.readFileSync(path.join(pub,'admin-portal.html'),'utf8').includes('id=\"adminApp\"'),'the Node admin route must retain its private portal shell');
 assert(serverPremiumSrc.includes('Administrator access required'),'admin APIs must reject non-admin sessions');
 /* Account reset and deletion. Both are destructive, so both must be reachable only by
    their own explicit HTTP method — a GET that removes an account would be catastrophic
@@ -96,8 +96,8 @@ assert(/deleteUser&&req\.method==='DELETE'/.test(serverPremiumSrc),'account dele
 assert(serverPremiumSrc.includes('dropSessionsFor'),'reset and delete must end the account live sessions, or the change silently does nothing for a signed-in person');
 assert(serverPremiumSrc.includes('administrator account cannot be deleted'),'the administrator account must be protected from deletion');
 const adminJsSrc=fs.readFileSync(path.join(pub,'admin.js'),'utf8');
-assert(/data-deleteuser/.test(adminJsSrc)&&/data-resetuser/.test(adminJsSrc),'the portal must render reset and delete controls on each account');
-assert(/Type the email to confirm/.test(adminJsSrc),'deletion must require the operator to type the email, so a stray click cannot remove a paying member');
+assert(/data-action="reset-account"/.test(adminJsSrc)&&/data-action="delete-account"/.test(adminJsSrc),'the portal must render reset and delete controls on each account');
+assert(/Type the member’s email to confirm/.test(adminJsSrc)&&/confirmEmail/.test(adminJsSrc),'deletion must require the operator to type the email, so a stray click cannot remove a paying member');
 const premJsSrc=fs.readFileSync(path.join(pub,'premium.js'),'utf8');
 assert(/Continue my free trial/.test(premJsSrc),'a trial user must be able to leave the plan screen and keep using the app');
 assert(html.includes('/bible-ref.js'),'index.html must load bible-ref.js');

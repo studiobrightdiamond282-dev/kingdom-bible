@@ -378,6 +378,86 @@ function referralStats(u){
   const balance=u.wallet?.balance||0;
   return{code:u.referralCode,link:'/?ref='+encodeURIComponent(u.referralCode),invited:invited.length,converted:paid,balance,pendingNaira,paidNaira,totalEarned:balance+pendingNaira+paidNaira,minWithdrawal:1000,canWithdraw:balance>=1000,shortfall:Math.max(0,1000-balance)};
 }
+/* One authenticated, allow-listed snapshot for the admin portal. Sensitive payout
+   account numbers are masked here and returned only by the separately audited
+   details endpoint. Provider payloads, keys, and password-reset hashes never leave
+   the server. Summary totals are computed from the complete store, even where the
+   portal intentionally shows only the most recent rows. */
+function adminOverviewData(){
+  const storedUsers=premiumStore.users||[];
+  /* Do not send account photos, password hashes, Google subject IDs, provider
+     payloads, or complete bank numbers to a dashboard that only needs metadata. */
+  const users=storedUsers.map(u=>{
+    const{avatar,...safe}=publicUser(u);
+    return{...safe,hasPassword:!!u.passwordSet,hasGoogle:!!u.googleSub};
+  });
+  const byId=new Map(users.map(u=>[u.id,u]));
+  const storedTransactions=premiumStore.transactions||[],storedWithdrawals=premiumStore.withdrawals||[];
+  const recentTransactions=storedTransactions.slice(-250),recentWithdrawals=storedWithdrawals.slice(-200);
+  const recentTransactionSet=new Set(recentTransactions),recentWithdrawalSet=new Set(recentWithdrawals);
+  /* Never bury an outstanding item behind a recent-history cap. Totals cover the
+     full store; the portal also receives every pending payment/payout plus recent
+     settled history so a stale queue remains actionable. */
+  const transactionRows=storedTransactions.filter(x=>x.status==='pending'&&!recentTransactionSet.has(x)).concat(recentTransactions).reverse();
+  const withdrawalRows=storedWithdrawals.filter(x=>x.status==='pending'&&!recentWithdrawalSet.has(x)).concat(recentWithdrawals).reverse();
+  const amountOf=x=>Math.max(0,Number(x?.amount)||0);
+  const successful=storedTransactions.filter(x=>x.status==='success');
+  const pendingPayments=storedTransactions.filter(x=>x.status==='pending');
+  const failedPayments=storedTransactions.filter(x=>x.status==='failed');
+  const abandonedPayments=storedTransactions.filter(x=>x.status==='abandoned');
+  const pendingWithdrawals=storedWithdrawals.filter(x=>x.status==='pending');
+  const paidWithdrawals=storedWithdrawals.filter(x=>x.status==='paid');
+  const active=users.filter(u=>u.status==='active');
+  const referralUsers=new Map();
+  for(const u of storedUsers){if(u.referredBy){const a=referralUsers.get(u.referredBy)||[];a.push(u);referralUsers.set(u.referredBy,a)}}
+  const referrals=storedUsers.filter(u=>u.referralCode).map(u=>{
+    const invited=referralUsers.get(u.referralCode)||[],ledger=u.wallet?.ledger||[];
+    const reward=type=>ledger.filter(x=>x.type===type).reduce((sum,x)=>sum+Math.max(0,Number(x.amount)||0),0);
+    const signupRewardsNaira=reward('signup'),commissionNaira=reward('commission');
+    return{userId:u.id,email:u.email,name:u.name||'',referralCode:u.referralCode,signups:invited.length,
+      paidReferrals:invited.filter(x=>byId.get(x.id)?.status==='active').length,
+      signupRewardsNaira,commissionNaira,earnedNaira:signupRewardsNaira+commissionNaira,
+      walletBalance:Math.max(0,Number(u.wallet?.balance)||0)};
+  }).filter(x=>x.signups||x.earnedNaira||x.walletBalance).sort((a,b)=>b.signups-a.signups||b.earnedNaira-a.earnedNaira);
+  const storedNotifications=premiumStore.notifications||[];
+  const notifications=storedNotifications.slice(0,50).map(n=>({
+    id:n.id,type:String(n.type||'notice'),message:String(n.message||''),read:!!n.read,date:n.date||null
+  }));
+  const unreadNotifications=storedNotifications.filter(x=>!x.read).length;
+  const nairaTotal=rows=>rows.reduce((sum,x)=>sum+amountOf(x),0);
+  return{
+    ok:true,
+    summary:{
+      usersTotal:users.length,activeSubscribers:active.length,trials:users.filter(u=>u.status==='trial').length,
+      expired:users.filter(u=>u.status==='expired').length,
+      expiringSoon:active.filter(u=>u.daysRemaining!=null&&u.daysRemaining<=7).length,
+      totalPayments:storedTransactions.length,successfulPayments:successful.length,pendingPayments:pendingPayments.length,
+      failedPayments:failedPayments.length,abandonedPayments:abandonedPayments.length,
+      successfulPlanValueNaira:nairaTotal(successful),pendingPlanValueNaira:nairaTotal(pendingPayments),
+      referralSignups:storedUsers.filter(u=>!!u.referredBy).length,
+      referralSignupBonusNaira:referrals.reduce((sum,x)=>sum+x.signupRewardsNaira,0),
+      referralCommissionNaira:referrals.reduce((sum,x)=>sum+x.commissionNaira,0),
+      pendingWithdrawals:pendingWithdrawals.length,pendingWithdrawalNaira:nairaTotal(pendingWithdrawals),
+      paidWithdrawals:paidWithdrawals.length,paidWithdrawalNaira:nairaTotal(paidWithdrawals),unreadNotifications
+    },
+    notifications,
+    withdrawals:withdrawalRows.map(w=>({
+      id:w.id,userId:w.userId,amount:amountOf(w),accountName:w.accountName||'',
+      accountNumberLast4:String(w.accountNumber||'').slice(-4),
+      status:w.status||'pending',requestedAt:w.requestedAt||null,expectedBy:w.expectedBy||null,
+      paidAt:w.paidAt||null,paidBy:w.paidBy||''
+    })),
+    transactions:transactionRows.map(t=>({
+      id:t.id,reference:String(t.reference||''),userId:String(t.userId||''),email:byId.get(t.userId)?.email||'',
+      plan:String(t.plan||''),amount:amountOf(t),status:String(t.status||'unknown'),
+      createdAt:t.createdAt||null,paidAt:t.paidAt||null,failedAt:t.failedAt||null
+    })),
+    referrals,
+    users,audit:(premiumStore.audit||[]).slice(0,150),
+    plans:Object.values(PREMIUM_PLANS).map(({aiMonthly,...x})=>x),
+    passwordResets:(premiumStore.passwordResets||[]).filter(r=>!r.usedAt&&r.expiresAt>Date.now()).map(r=>({id:r.id,email:r.email,userId:r.userId,createdAt:r.createdAt,expiresAt:new Date(r.expiresAt).toISOString()}))
+  };
+}
 /* Password recovery without an email provider. The user proves ownership by asking for
    a code; an administrator issues the short-lived code from the portal and passes it
    to them (WhatsApp, phone, in person). The code is hashed at rest and single-use, so
@@ -654,7 +734,18 @@ const server=http.createServer(async(req,res)=>{
       }catch(e){return json(res,502,{ok:false,error:e.message})}
     }
     if(p==='/api/admin/overview'&&req.method==='GET'){
-      if(!requireAdmin(req,res))return;return json(res,200,{ok:true,notifications:premiumStore.notifications.slice(0,50),withdrawals:premiumStore.withdrawals.slice(0,100),users:premiumStore.users.map(publicUser),audit:premiumStore.audit.slice(0,150),plans:Object.values(PREMIUM_PLANS).map(({aiMonthly,...x})=>x),passwordResets:(premiumStore.passwordResets||[]).filter(r=>!r.usedAt&&r.expiresAt>Date.now()).map(r=>({id:r.id,email:r.email,userId:r.userId,createdAt:r.createdAt,expiresAt:new Date(r.expiresAt).toISOString()}))});
+      if(!requireAdmin(req,res))return;
+      res.setHeader('Cache-Control','no-store');
+      return json(res,200,adminOverviewData());
+    }
+    const payoutDetails=p.match(/^\/api\/admin\/withdrawals\/([^/]+)\/details$/);
+    if(payoutDetails&&req.method==='GET'){
+      const s=requireAdmin(req,res);if(!s)return;
+      const w=(premiumStore.withdrawals||[]).find(x=>x.id===payoutDetails[1]);
+      if(!w)return json(res,404,{ok:false,error:'Withdrawal not found'});
+      res.setHeader('Cache-Control','no-store');
+      audit('admin.withdrawal.details',s.email,{withdrawalId:w.id,userId:w.userId});
+      return json(res,200,{ok:true,withdrawal:{id:w.id,accountName:w.accountName||'',accountNumber:String(w.accountNumber||''),bankCode:w.bankCode||''}});
     }
     /* The portal could render notifications but had no way to clear them, so the
        unread badge could only ever grow. Marking read is also the audit signal that
@@ -746,7 +837,15 @@ const server=http.createServer(async(req,res)=>{
     }
     const payWithdrawal=p.match(/^\/api\/admin\/withdrawals\/([^/]+)\/pay$/);
     if(payWithdrawal&&req.method==='POST'){
-      const s=requireAdmin(req,res);if(!s)return;const w=premiumStore.withdrawals.find(x=>x.id===payWithdrawal[1]);if(!w)return json(res,404,{ok:false,error:'Withdrawal not found'});w.status='paid';w.paidAt=new Date().toISOString();w.paidBy=s.email;premiumStore.notifications=premiumStore.notifications.map(n=>n.details?.withdrawalId===w.id?{...n,read:true}:n);savePremiumStore();audit('admin.withdrawal.paid',s.email,{withdrawalId:w.id,amount:w.amount,userId:w.userId});return json(res,200,{ok:true,withdrawal:w});
+      const s=requireAdmin(req,res);if(!s)return;
+      const w=premiumStore.withdrawals.find(x=>x.id===payWithdrawal[1]);
+      if(!w)return json(res,404,{ok:false,error:'Withdrawal not found'});
+      if(w.status!=='pending')return json(res,409,{ok:false,error:'This withdrawal is already '+String(w.status||'settled')});
+      w.status='paid';w.paidAt=new Date().toISOString();w.paidBy=s.email;
+      premiumStore.notifications=premiumStore.notifications.map(n=>n.details?.withdrawalId===w.id?{...n,read:true}:n);
+      savePremiumStore();audit('admin.withdrawal.paid',s.email,{withdrawalId:w.id,amount:w.amount,userId:w.userId});
+      /* A confirmation needs the settlement identity, not the member's bank data. */
+      return json(res,200,{ok:true,withdrawal:{id:w.id,status:w.status,paidAt:w.paidAt,paidBy:w.paidBy}});
     }
 
     if(p==='/api/auth/google'&&req.method==='POST'){
@@ -928,7 +1027,7 @@ const server=http.createServer(async(req,res)=>{
       if(f.startsWith(ROOT)&&fs.existsSync(f)&&fs.statSync(f).isFile()){
         const ext=path.extname(f),st=fs.statSync(f);
         const live=/^\/present(\/|$)/.test(p)||/^\/remote(\/|$)/.test(p);
-        const noStore=/\.html$/i.test(ext)||live;
+        const noStore=/\.html$/i.test(ext)||live||p==='/admin.js';
         res.statusCode=200;
         /* only the capture surfaces may be framed (vMix/OBS browser inputs);
            every other page keeps the SAMEORIGIN clickjacking guard. */

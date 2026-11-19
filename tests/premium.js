@@ -21,6 +21,18 @@ async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/heal
   const aMe=await request('/api/auth/me',{headers:{cookie:a.session}});assert.equal(aMe.body.user.walletBalance,100);
   const admin=await request('/api/auth/login',{method:'POST',body:JSON.stringify({email:'stanley.okonkwo282@gmail.com',password:'test-admin-password'})});assert.equal(admin.body.user.role,'admin');
   const overview=await request('/api/admin/overview',{headers:{cookie:admin.session}});assert.equal(overview.body.users.length,2);
+  assert.match(overview.r.headers.get('cache-control')||'',/no-store/,'private admin data must not be cached');
+  assert.equal(overview.body.summary.usersTotal,2,'overview summary must cover the complete account store');
+  assert(Array.isArray(overview.body.transactions),'admin overview must include safe payment records even when empty');
+  assert(Array.isArray(overview.body.referrals),'admin overview must include referral performance');
+  assert.equal(overview.body.referrals[0].signups,1,'referral signups must be attributed to the inviter');
+  assert(!('avatar' in overview.body.users[0]),'the admin overview must not load private profile-photo data');
+  assert(!('passwordHash' in overview.body.users[0])&&!('googleSub' in overview.body.users[0]),'account credentials and Google subject IDs must not be exposed');
+  assert.equal((await request('/api/admin/withdrawals/missing/details')).r.status,403,'payout details must require an administrator session');
+  const portalJs=fs.readFileSync(path.join(__dirname,'..','public','admin.js'),'utf8');
+  for(const section of ['overview','accounts','payments','referrals','withdrawals','notifications','activity'])assert(portalJs.includes("id:'"+section+"'"),'admin navigation must include '+section);
+  assert(portalJs.includes('aria-modal="true"')&&portalJs.includes("event.key==='Escape'"),'admin action dialogs must be keyboard accessible');
+  assert(!portalJs.includes('window.prompt')&&!portalJs.includes('window.confirm'),'destructive/admin actions must use accessible in-portal dialogs');
   const grant=await request('/api/admin/users/'+a.body.user.id+'/entitlement',{method:'POST',headers:{cookie:admin.session},body:JSON.stringify({plan:'premium',forever:true})});assert.equal(grant.body.user.status,'active');assert.equal(grant.body.user.plan,'premium');
   const adminGuest=await fetch(base+'/admin');assert.equal(adminGuest.status,403,'/admin must reject requests without an admin session');
   const userAdminPage=await fetch(base+'/admin',{headers:{cookie:a.session}});assert.equal(userAdminPage.status,403,'a normal signed-in user must still be denied the admin portal');
@@ -30,9 +42,9 @@ async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/heal
   assert(staticAdmin.includes('https://kingdom-bible.onrender.com/?admin=1'),'the public static admin page must hand off to the live service');
   assert(!/<form\b|admin\.js/.test(staticAdmin),'the static admin page must not advertise a broken login form');
   const adminPage=await fetch(base+'/admin',{headers:{cookie:admin.session}});assert.equal(adminPage.status,200,'/admin must be served to an authenticated administrator');
-  const adminHtml=await adminPage.text();assert(adminHtml.includes('id=\"adminLogin\"')&&adminHtml.includes('/admin.js'),'only the authenticated Node route may serve the actual admin portal shell');
+  const adminHtml=await adminPage.text();assert(adminHtml.includes('id=\"adminApp\"')&&adminHtml.includes('/admin.js'),'only the authenticated Node route may serve the actual admin portal shell');
   const adminAlias=await fetch(base+'/admin-portal.html',{headers:{cookie:admin.session}});assert.equal(adminAlias.status,200,'an admin session may load the direct portal-shell alias');
-  const adminJs=await fetch(base+'/admin.js',{headers:{cookie:admin.session}});assert.equal(adminJs.status,200,'an admin session may load the portal script');
+  const adminJs=await fetch(base+'/admin.js',{headers:{cookie:admin.session}});assert.equal(adminJs.status,200,'an admin session may load the portal script');assert.match(adminJs.headers.get('cache-control')||'',/no-store/,'the private admin script must not enter a shared cache');
   for(const page of ['/privacy','/refund','/status']){const r=await fetch(base+page);assert.equal(r.status,200,page+' must be served')}
   /* Google sign-in must reject anything that is not a genuine, correctly signed,
      unexpired token for THIS app. A forged or malformed credential must never mint a session. */
@@ -130,6 +142,8 @@ async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/heal
   assert.equal(prof.body.user.name,'Ada Lovelace');
   assert.equal(prof.body.user.avatar,px,'the profile photo must be stored on the account');
   assert.equal((await request('/api/auth/me',{headers:{cookie:a.session}})).body.user.avatar,px,'the photo must come back on the account, not just the device');
+  const adminAfterPhoto=await request('/api/admin/overview',{headers:{cookie:admin.session}});
+  assert(!('avatar' in adminAfterPhoto.body.users.find(u=>u.id===a.body.user.id)),'admin search data must not download profile photos');
   const bad=await request('/api/account/profile',{method:'POST',headers:{cookie:a.session},body:JSON.stringify({avatar:'data:text/html;base64,PHNjcmlwdD4='})});
   assert.equal(bad.r.status,400,'a non-image data URL must be rejected');
   /* ~525 KB decoded: over the 512 KB image ceiling but inside the transport allowance,
@@ -183,6 +197,37 @@ async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/heal
   assert.equal(over.r.status,400,'a withdrawal above the balance must be refused');
   const noBank=await request('/api/wallet/withdraw',{method:'POST',headers:{cookie:loginA.session},body:JSON.stringify({amount:1,accountName:'',bankCode:'',accountNumber:''})});
   assert.equal(noBank.r.status,400,'bank details must be required');
+  /* Cross the real threshold using signup rewards, then prove payout metadata is
+     masked in the overview and exposed only by the authenticated, audited route. */
+  for(let i=0;i<9;i++){
+    const invite=await request('/api/auth/register',{method:'POST',body:JSON.stringify({email:'payout-invite-'+i+'@example.com',password:'password-invite-'+i,referralCode:a.body.user.referralCode})});
+    assert.equal(invite.r.status,201);
+  }
+  const payoutWallet=await request('/api/wallet',{headers:{cookie:loginA.session}});
+  assert.equal(payoutWallet.body.referral.balance,1000,'nine additional signup rewards must bring the inviter to the threshold');
+  const payoutRequest=await request('/api/wallet/withdraw',{method:'POST',headers:{cookie:loginA.session},body:JSON.stringify({amount:1000,accountName:'Ada Lovelace',bankCode:'058',accountNumber:'0123456789'})});
+  assert.equal(payoutRequest.r.status,201);
+  const payoutId=payoutRequest.body.withdrawal.id;
+  assert.equal((await request('/api/admin/withdrawals/'+payoutId+'/details',{headers:{cookie:loginA.session}})).r.status,403,'members cannot view protected payout details');
+  const payoutOverview=await request('/api/admin/overview',{headers:{cookie:admin.session}});
+  const listedPayout=payoutOverview.body.withdrawals.find(w=>w.id===payoutId);
+  assert.equal(listedPayout.accountNumberLast4,'6789','the overview must provide only the final four digits');
+  assert(!('accountNumber' in listedPayout),'the overview must never include the full bank number');
+  assert(!JSON.stringify(payoutOverview.body).includes('0123456789'),'full bank details must not leak through another overview field');
+  assert.equal(payoutOverview.body.summary.pendingWithdrawalNaira,1000,'pending payout totals must be computed from the complete store');
+  const protectedDetails=await request('/api/admin/withdrawals/'+payoutId+'/details',{headers:{cookie:admin.session}});
+  assert.equal(protectedDetails.r.status,200);
+  assert.match(protectedDetails.r.headers.get('cache-control')||'',/no-store/,'sensitive payout details must never be cached');
+  assert.equal(protectedDetails.body.withdrawal.accountNumber,'0123456789','a deliberate admin reveal must return the full account number');
+  const auditAfterReveal=(await request('/api/admin/overview',{headers:{cookie:admin.session}})).body.audit;
+  assert(auditAfterReveal.some(x=>x.event==='admin.withdrawal.details'&&x.details.withdrawalId===payoutId),'viewing payout details must be audited');
+  const payoutPaid=await request('/api/admin/withdrawals/'+payoutId+'/pay',{method:'POST',headers:{cookie:admin.session},body:'{}'});
+  assert.equal(payoutPaid.r.status,200);assert.equal(payoutPaid.body.withdrawal.status,'paid');
+  assert(!('accountNumber' in payoutPaid.body.withdrawal),'the payment confirmation must not echo sensitive bank details');
+  assert.equal((await request('/api/admin/withdrawals/'+payoutId+'/pay',{method:'POST',headers:{cookie:admin.session},body:'{}'})).r.status,409,'a paid withdrawal cannot be marked paid twice');
+  const settledOverview=(await request('/api/admin/overview',{headers:{cookie:admin.session}})).body;
+  assert.equal(settledOverview.summary.pendingWithdrawals,0);assert.equal(settledOverview.summary.paidWithdrawals,1);
+  assert.equal(settledOverview.withdrawals.find(w=>w.id===payoutId).status,'paid');
 
   /* ---- the client must be able to tell people an update is ready ---- */
   const appjs=await (await fetch(base+'/app.js')).text();

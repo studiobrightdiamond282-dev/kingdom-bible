@@ -4,6 +4,14 @@
 
 A premium, local-first Progressive Web App for Bible reading, Scripture study, prayer journaling, reading plans, memorization, and professional church Scripture presentation.
 
+## Private admin portal
+
+The administrator portal is served by the Node account service at `/admin` after an administrator session is established. It is deliberately separate from the static Vercel reader: the Vercel `/admin` page is only a handoff to the account service, and the private portal/API are not deployed in the static build.
+
+The portal provides a summary dashboard; searchable, filterable and paginated account management; complimentary access grants; one-time password recovery codes; account reset/deletion; payment-record and referral-wallet visibility; payout review; notifications; and a searchable activity log. Full payout bank details are fetched only when an administrator opens them, and that access is audited. Marking a payout paid is a record-only action after an external transfer—it does not move money. Payment entries and totals describe records stored by the Node service, not a provider settlement/reconciliation report. Do not infer live payment, email, or production configuration from the portal UI.
+
+Admin API security and payout/payment-summary behavior are covered by `tests/premium.js` and `tests/payments.js`.
+
 ## New in v1.2.7
 
 - **Home product preview.** A silent 34-second, 720p H.264 video shows clearly labeled illustrative sample screens with animated arrows and feature explanations. It is explicitly not a capture of the production app and contains no personal account data. The accessible player does not autoplay; its poster is available offline, while video playback remains network-only. The existing one-minute interactive tour is still available alongside it.

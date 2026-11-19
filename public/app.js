@@ -756,7 +756,7 @@ function bindConnectCard(){
   const cu=$('#copyUrl');if(cu)cu.onclick=()=>full&&copyText(full,'Full phone link copied');
 }
 function bindTimer(){let sec=0,id=null;const out=$('#serviceTimer'),draw=()=>out.textContent=new Date(sec*1000).toISOString().slice(11,19);$('#timerStart').onclick=e=>{if(id){clearInterval(id);id=null;e.target.textContent='Start timer'}else{id=setInterval(()=>{sec++;draw()},1000);e.target.textContent='Pause'}};$('#timerReset').onclick=()=>{sec=0;draw()}}
-function openGuide(type){const vm=type==='vMix';modal(`<div class="modal-head"><div><h2>Use KINGDOM BIBLE with ${type}</h2><p>Browser-source quick start</p></div><button class="close-btn" data-close>×</button></div><div class="guide-steps">${(vm?['Create or open the Ministry Mode session.','Copy the browser-source URL.','Open vMix and choose Add Input → Web Browser.','Paste the URL and set 1920 × 1080.','Open the audience display or presenter control.','Search Scripture and send verses live.']:['Create or open the Ministry Mode session.','Copy the browser-source URL.','In OBS, add a Browser Source.','Paste the URL and set 1920 × 1080.','For transparency, choose the Transparent theme.','Use Presenter Control to send verses live.']).map(x=>`<div class="guide-step">${x}</div>`).join('')}</div><div class="notice" style="margin-top:15px">The presentation route contains no controls and is suitable for capture. Keep this control page private.</div>`)}
+function openGuide(type){const vm=type==='vMix';modal(`<div class="modal-head"><div><h2>Use KINGDOM BIBLE with ${type}</h2><p>Browser-source quick start</p></div><button class="close-btn" data-close>×</button></div><div class="guide-steps">${(vm?['Create or open the Ministry Mode session.','Copy the browser-source URL.','Open vMix and choose Add Input → Web Browser.','Paste the URL and set 1920 × 1080.','Open the audience display or presenter control.','Search Scripture and send verses live.']:['Create or open the Ministry Mode session.','Copy the browser-source URL.','In OBS, add a Browser Source.','Paste the URL and set 1920 × 1080.','For transparency, choose the Transparent theme.','Use Presenter Control to send verses live.']).map(x=>`<div class="guide-step">${x}</div>`).join('')}</div><div class="notice" style="margin-top:15px">${vm?'<strong>Readability:</strong> For a full-frame Scripture slide, set Zoom, Zoom X, and Zoom Y to 1.00 and Pan X/Y to 0.00 in the Browser input’s Position tab. Lower Zoom values shrink the whole input. For picture-in-picture, keep the camera on a separate layer. ':''}The presentation route contains no controls and is suitable for capture. Keep this control page private.</div>`)}
 /* ---------- audience display (vMix / OBS capture surface) ----------
    The stage is a fixed viewport that must never scroll or crop: a verse that runs off
    the bottom is a bug on a projector. Fitting happens in two stages.
@@ -812,7 +812,7 @@ async function renderPresentation(){
     const stage=$('#stage'),verseBox=$('#stageVerse'),brand=$('#stageBrand'),hint=$('#stageHint');
     /* Short verses project HUGE; multi-verse passages get a high ceiling too but
        leave headroom so the auto-fit keeps them inside the capture frame. */
-    const fit=p=>verseBox.classList.contains('is-blank')?0:fitText(verseBox,stage,p&&p.multiverse?92:132,20);
+    const fit=p=>verseBox.classList.contains('is-blank')?0:fitText(verseBox,stage,p&&p.multiverse?112:184,20);
     const apply=p=>{
       if(!p)return;
       stage.className='presentation-stage '+(p.theme||'royal');
