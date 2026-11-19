@@ -145,9 +145,9 @@ async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/heal
   const cardBuf=Buffer.from(await card.arrayBuffer());
   assert.equal(cardBuf.readUInt32BE(16),1200,'share card width must match og:image:width');
   assert.equal(cardBuf.readUInt32BE(20),630,'share card height must match og:image:height');
-  const poster=await fetch(base+'/assets/kingdom-bible-product-preview.jpg?v=1.2.8');
+  const poster=await fetch(base+'/assets/kingdom-bible-product-preview.jpg?v=1.2.9');
   assert.equal(poster.headers.get('content-type'),'image/jpeg','the Render hub must serve the demo poster with its image MIME type');
-  const media=await fetch(base+'/assets/kingdom-bible-product-preview.mp4?v=1.2.8',{headers:{range:'bytes=0-63'}});
+  const media=await fetch(base+'/assets/kingdom-bible-product-preview.mp4?v=1.2.9',{headers:{range:'bytes=0-63'}});
   assert.equal(media.status,206,'the Render hub must support byte-range video playback');
   assert.equal(media.headers.get('content-type'),'video/mp4');
   assert.equal(media.headers.get('content-range').split('/')[0],'bytes 0-63');

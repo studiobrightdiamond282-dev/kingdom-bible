@@ -15,9 +15,9 @@ assert(/<video\b[^>]*\bcontrols\b/.test(app),'Home preview has native accessible
 assert(/<video\b[^>]*\bpreload="none"/.test(app),'video is not downloaded until a visitor chooses to play it');
 assert(/<video\b[^>]*\bplaysinline\b/.test(app),'video stays inline on mobile');
 assert(!/<video\b[^>]*\bautoplay\b/.test(app),'video never autoplays');
-assert(app.includes('poster="/assets/kingdom-bible-product-preview.jpg?v=1.2.8"'),'video points at the versioned branded poster');
-assert(app.includes('<source src="/assets/kingdom-bible-product-preview.mp4?v=1.2.8" type="video/mp4">'),'video source is a versioned same-origin MP4');
-assert(app.includes('v=1.2.8')&&sw.includes("VERSION='kingdom-bible-v1.2.8'"),'video URLs are cache-busted with the app version');
+assert(app.includes('poster="/assets/kingdom-bible-product-preview.jpg?v=1.2.9"'),'video points at the versioned branded poster');
+assert(app.includes('<source src="/assets/kingdom-bible-product-preview.mp4?v=1.2.9" type="video/mp4">'),'video source is a versioned same-origin MP4');
+assert(app.includes('v=1.2.9')&&sw.includes("VERSION='kingdom-bible-v1.2.9'"),'video URLs are cache-busted with the app version');
 assert(app.includes('Illustrative sample screens · no personal account data shown'),'the sample footage is not represented as a real user account');
 assert(app.includes('Explore the interactive demo'),'the animated guided tour remains available beside the video');
 assert(/\.home-demo-video\s*\{[^}]*aspect-ratio:\s*16\/9/s.test(style),'video player keeps a responsive 16:9 layout');
@@ -40,6 +40,6 @@ assert(video.length>100_000&&video.length<5_000_000,'MP4 preview stays lightweig
 assert(video.subarray(4,8).toString()==='ftyp','video is an MP4 container');
 assert(video.includes(Buffer.from('avc1')),'MP4 contains an H.264 video track');
 assert(video.includes(Buffer.from('moov'))&&video.includes(Buffer.from('mdat')),'MP4 has playable metadata and media data');
-assert(sw.includes("'/assets/kingdom-bible-product-preview.jpg?v=1.2.8'"),'poster is available from the offline shell cache');
+assert(sw.includes("'/assets/kingdom-bible-product-preview.jpg?v=1.2.9'"),'poster is available from the offline shell cache');
 assert(/if\(\/\\\.\(mp4\|webm\|mov\)\$\/i\.test\(u\.pathname\)\)\{e\.respondWith\(fetch\(r\)\);return\}/.test(sw),'video Range requests bypass CacheStorage and remain network-only');
 console.log(`✓ Home product preview: ${Math.round(video.length/1024)} KB H.264 MP4, ${width}×${height} poster, accessible controls, offline poster`);

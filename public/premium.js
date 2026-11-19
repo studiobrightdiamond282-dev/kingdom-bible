@@ -310,7 +310,64 @@ async function shareApp(){
   try{await navigator.clipboard.writeText(sharePayload(text))}catch{}
   account();
 }
-function bindBuy(){root().querySelectorAll('[data-buy]').forEach(b=>b.onclick=async()=>{b.disabled=true;b.textContent='Opening secure checkout…';try{const d=await api('/api/payments/initialize',{method:'POST',body:JSON.stringify({plan:b.dataset.buy})});if(d.admin){alert(d.message);return}if(d.authorizationUrl)location.href=d.authorizationUrl;else throw new Error('Checkout is not configured yet')}catch(e){b.disabled=false;b.textContent='Try again';const n=root().querySelector('.premium-form-error')||document.createElement('div');n.className='premium-form-error';n.textContent=e.message;root().querySelector('.modal')?.append(n)}})}
+const CHECKOUT_SLOW_MS=8000;
+const CHECKOUT_TIMEOUT_MS=30000;
+function bindBuy(){
+  const dialog=root();
+  if(!dialog)return;
+  const buttons=Array.from(dialog.querySelectorAll('[data-buy]'));
+  const message=(text,role='alert')=>{
+    let n=dialog.querySelector('.premium-form-error');
+    if(!n){
+      n=document.createElement('div');n.className='premium-form-error';
+      const plans=dialog.querySelector('.premium-plans');
+      if(plans?.parentNode)plans.parentNode.insertBefore(n,plans.nextSibling);
+      else(dialog.querySelector('.modal')||dialog).append(n);
+    }
+    n.setAttribute('role',role);
+    n.setAttribute('aria-live',role==='alert'?'assertive':'polite');
+    n.textContent=text;
+  };
+  buttons.forEach(b=>b.onclick=async()=>{
+    if(b.disabled)return;
+    const controller=new AbortController();
+    const originalLabel=b.textContent;
+    let timedOut=false;
+    buttons.forEach(x=>{x.disabled=true});
+    b.textContent='Opening secure checkout…';
+    b.setAttribute('aria-busy','true');
+    const slowTimer=setTimeout(()=>{
+      if(dialog.contains(b)&&b.disabled)b.textContent='Still connecting…';
+    },CHECKOUT_SLOW_MS);
+    const timeoutTimer=setTimeout(()=>{timedOut=true;controller.abort()},CHECKOUT_TIMEOUT_MS);
+    try{
+      const d=await api('/api/payments/initialize',{method:'POST',body:JSON.stringify({plan:b.dataset.buy}),signal:controller.signal});
+      if(!dialog.contains(b))return;
+      if(d.admin){
+        buttons.forEach(x=>{x.disabled=false});
+        b.textContent=originalLabel;
+        b.removeAttribute('aria-busy');
+        message(d.message||'Administrator access is complimentary.','status');
+        return;
+      }
+      if(!d.authorizationUrl)throw new Error('Checkout is not configured yet');
+      location.href=d.authorizationUrl;
+    }catch(e){
+      if(!dialog.contains(b))return;
+      buttons.forEach(x=>{x.disabled=false});
+      b.textContent='Try again';
+      b.removeAttribute('aria-busy');
+      message(timedOut
+        ?'Secure checkout timed out before Paystack opened. No payment was made. Please retry or contact support.'
+        :e.name==='AbortError'
+          ?'Secure checkout was interrupted. Please try again.'
+          :e.message||'Could not open secure checkout. Please try again.');
+    }finally{
+      clearTimeout(slowTimer);
+      clearTimeout(timeoutTimer);
+    }
+  });
+}
 function withdraw(){shell(`<div class="modal-head"><div><div class="eyebrow">REFERRAL WALLET</div><h2>Request a withdrawal</h2><p>Minimum ₦1,000. An administrator reviews requests and pays within three working days.</p></div><button class="close-btn" data-premium-close>×</button></div><form id="withdrawForm"><div class="field"><label>Amount (₦)</label><input id="withdrawAmount" type="number" min="1000" step="1" required></div><div class="field" style="margin-top:10px"><label>Account name</label><input id="withdrawName" required></div><div class="field" style="margin-top:10px"><label>Bank code</label><input id="withdrawBank" placeholder="e.g. 058" required></div><div class="field" style="margin-top:10px"><label>Account number</label><input id="withdrawAccount" inputmode="numeric" minlength="10" maxlength="10" required></div><div class="premium-form-error" id="withdrawError"></div><div class="modal-actions"><button class="secondary-btn" type="button" data-premium-close>Cancel</button><button class="primary-btn">Submit request</button></div></form>`);root().querySelector('#withdrawForm').onsubmit=async e=>{e.preventDefault();try{const d=await api('/api/wallet/withdraw',{method:'POST',body:JSON.stringify({amount:root().querySelector('#withdrawAmount').value,accountName:root().querySelector('#withdrawName').value,bankCode:root().querySelector('#withdrawBank').value,accountNumber:root().querySelector('#withdrawAccount').value})});user=d.user;account()}catch(x){root().querySelector('#withdrawError').textContent=x.message}}}
 g.KingdomPremium={open,openAuth,load,onAuth:null,onPasswordReset:null,googleButton,forgot,shareApp,signOut,supportText,referralLink,get user(){return user},status:()=>user?{signedIn:true,status:user.status,plan:user.plan,daysRemaining:user.daysRemaining,name:user.name,email:user.email,avatar:user.avatar||'',referralCode:user.referralCode,walletBalance:user.walletBalance||0}:{signedIn:false,status:'signed_out'},plans:()=>config?.plans||[],config:()=>config,async saveProfile(name,avatar){const d=await api('/api/account/profile',{method:'POST',body:JSON.stringify({name,avatar})});user=d.user;return user},async wallet(){return api('/api/wallet')},async setPassword(email,code,newPassword){return api('/api/auth/password/reset',{method:'POST',body:JSON.stringify({email,code,newPassword})})}};
 })(typeof window!=='undefined'?window:globalThis);
