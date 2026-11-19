@@ -15,7 +15,8 @@ const tabs=[
   {id:'referrals',label:'Referrals'},
   {id:'withdrawals',label:'Payouts'},
   {id:'notifications',label:'Alerts'},
-  {id:'activity',label:'Activity'}
+  {id:'activity',label:'Activity'},
+  {id:'analytics',label:'Analytics'}
 ];
 let data=null,busy=false,lastLoaded=null,loadError='',modalSubmit=null,modalGeneration=0,returnFocus=null;
 const view={tab:'overview',accountQuery:'',accountStatus:'all',accountAuth:'all',accountSort:'createdAt',accountDir:-1,
@@ -109,6 +110,7 @@ function panelContent(){
     case 'withdrawals':return withdrawalsPanel();
     case 'notifications':return notificationsPanel();
     case 'activity':return activityPanel();
+    case 'analytics':return analyticsPanel();
     default:return overviewPanel();
   }
 }
@@ -137,7 +139,37 @@ function overviewPanel(){
       '<button type="button" class="secondary-btn" data-tab="accounts">Find an account <span>'+esc(s.usersTotal||0)+'</span></button>'+
       '<button type="button" class="secondary-btn" data-tab="referrals">Referral performance <span>'+esc(s.referralSignups||0)+'</span></button>'+
       '<button type="button" class="secondary-btn" data-tab="notifications">Unread alerts <span>'+esc(s.unreadNotifications||0)+'</span></button>'+
+      '<button type="button" class="secondary-btn" data-tab="analytics">Public reader analytics <span>30 days</span></button>'+
     '</div></section></div>';
+}
+function analyticsPageLabel(page){
+  return({home:'Home',bible:'Bible reader',study:'Study',search:'Search',prayer:'Prayer',devotional:'Devotional',plans:'Plans',ministry:'Ministry',profile:'Profile',presentation:'Presentation'})[page]||'Other';
+}
+function analyticsDate(value){
+  const date=String(value||'');
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date))return'—';
+  return new Date(date+'T00:00:00Z').toLocaleDateString(undefined,{day:'numeric',month:'short',timeZone:'UTC'});
+}
+function analyticsPanel(){
+  const analytics=data.analytics||{},daily=Array.isArray(analytics.daily)?analytics.daily:[],pages=Array.isArray(analytics.pages)?analytics.pages:[];
+  const maxViews=Math.max(1,...daily.map(day=>Math.max(0,Number(day.views)||0)));
+  const maxVisits=Math.max(1,...daily.map(day=>Math.max(0,Number(day.visits)||0)));
+  const dailyRows=daily.map(day=>{
+    const views=Math.max(0,Math.floor(Number(day.views)||0)),visits=Math.max(0,Math.floor(Number(day.visits)||0));
+    const viewWidth=views?Math.max(1,Math.round(views/maxViews*100)):0,visitWidth=visits?Math.max(1,Math.round(visits/maxVisits*100)):0;
+    return '<div class="admin-analytics-row" role="row"><time role="cell">'+esc(analyticsDate(day.date))+'</time><div class="admin-analytics-bars" role="cell" aria-label="'+views+' page views and '+visits+' tab visits"><span class="admin-analytics-bar views" aria-hidden="true" style="width:'+viewWidth+'%"></span><span class="admin-analytics-bar visits" aria-hidden="true" style="width:'+visitWidth+'%"></span></div><strong role="cell">'+views.toLocaleString()+'</strong><span role="cell">'+visits.toLocaleString()+'</span></div>';
+  }).join('');
+  const pageRows=pages.filter(page=>Number(page.views)>0).map(page=>
+    '<div class="admin-analytics-page"><span>'+esc(analyticsPageLabel(page.page))+'</span><strong>'+Math.max(0,Math.floor(Number(page.views)||0)).toLocaleString()+'</strong></div>'
+  ).join('');
+  return '<div class="admin-record-summary"><div><span>Page views · '+esc(analytics.rangeDays||30)+' days</span><strong>'+Math.max(0,Number(analytics.totalViews)||0).toLocaleString()+'</strong></div><div><span>Tab-session visits</span><strong>'+Math.max(0,Number(analytics.totalVisits)||0).toLocaleString()+'</strong><small>Approximate session starts, not unique people</small></div><div><span>Sections tracked</span><strong>'+pages.length.toLocaleString()+'</strong></div><div><span>Data window</span><strong>'+esc(analyticsDate(analytics.from))+' – '+esc(analyticsDate(analytics.through))+'</strong><small>UTC daily totals</small></div></div>'+
+    '<p class="admin-context">Only allow-listed section totals are collected. No names, IPs, cookies, device IDs, fingerprints, search terms, verse references, or raw visit history are stored. Anonymous totals are retained for up to 400 days.</p>'+
+    '<section class="admin-card"><div class="admin-section-head"><div><h3>Daily trend</h3><p>Page views and browser-tab session starts</p></div></div>'+
+      '<div class="admin-analytics-legend"><span><i class="views"></i>Page views</span><span><i class="visits"></i>Tab-session visits</span></div>'+
+      '<div class="admin-analytics-chart" role="table" aria-label="Daily anonymous reader analytics"><div class="admin-analytics-row heading" role="row"><span role="columnheader">Day</span><span role="columnheader">Relative volume</span><span role="columnheader">Views</span><span role="columnheader">Visits</span></div>'+
+      (dailyRows||'')+'</div></section>'+
+    '<section class="admin-card"><div class="admin-section-head"><div><h3>Reader sections</h3><p>Page views during this 30-day window</p></div></div>'+
+      (pageRows?'<div class="admin-analytics-pages">'+pageRows+'</div>':emptyState('○','No reader analytics yet','Aggregate section totals will appear after public readers visit the Vercel app.'))+'</section>';
 }
 function accountMatches(u,q){
   return [u.email,u.name,u.id,u.referralCode,u.plan,u.status].some(x=>String(x||'').toLowerCase().includes(q));
@@ -181,16 +213,18 @@ function accountCard(u){
   const details=[u.name,u.referralCode?'Referral '+u.referralCode:'',u.id].filter(Boolean).join(' · ');
   const auth=[u.hasPassword?'Password':'',u.hasGoogle?'Google':''].filter(Boolean).join(' + ')||'No password sign-in';
   const access=u.daysRemaining==null?'No expiry':(u.daysRemaining+' day'+(u.daysRemaining===1?'':'s')+' remaining');
+  const source=u.adminGranted?'Complimentary grant'+(u.entitlementExpiresAt?' · ends '+dateTime(u.entitlementExpiresAt):' · permanent'):u.paidSubscription?'Paid subscription':'Trial / free access';
   const wallet=Number(u.walletBalance||0);
   const reset=(data.passwordResets||[]).find(item=>item.userId===u.id);
   const recovery=u.hasPassword?(reset?'Active code · expires '+dateTime(reset.expiresAt):'No active reset code'):'No password recovery required';
   return '<article class="admin-account">'+
     '<div class="admin-account-main"><div class="admin-account-identity"><h3>'+esc(u.email||'Email not set')+'</h3><p>'+esc(details||'No additional account details')+'</p></div>'+
-      '<div class="admin-account-badges">'+statusPill(u.status)+' '+statusPill(u.plan||'none')+'</div></div>'+
+      '<div class="admin-account-badges">'+statusPill(u.status)+' '+statusPill(u.plan||'none')+(u.adminGranted?' '+statusPill('admin-granted'):'')+'</div></div>'+
     '<div class="admin-account-facts"><span><small>Access</small><strong>'+esc(access)+'</strong></span><span><small>Sign-in</small><strong>'+esc(auth)+'</strong></span><span><small>Referral wallet</small><strong>'+money(wallet)+'</strong></span><span><small>Joined</small><strong>'+esc(dateTime(u.createdAt))+'</strong></span></div>'+
-    '<p class="admin-account-recovery"><span>Password recovery</span><strong>'+esc(recovery)+'</strong></p>'+
+    '<p class="admin-account-recovery"><span>Access source</span><strong>'+esc(source)+'</strong></p><p class="admin-account-recovery"><span>Password recovery</span><strong>'+esc(recovery)+'</strong></p>'+
     '<div class="admin-account-actions">'+
-      '<button type="button" class="secondary-btn small-btn" data-action="grant" data-user="'+esc(u.id)+'">Grant access</button>'+
+      '<button type="button" class="secondary-btn small-btn" data-action="grant" data-user="'+esc(u.id)+'"'+(u.paidSubscription?' disabled title="An active paid subscription cannot be replaced by a complimentary grant"':'')+'>Grant access</button>'+
+      (u.adminGranted?'<button type="button" class="danger-btn small-btn" data-action="revoke-grant" data-user="'+esc(u.id)+'">Revoke grant</button>':'')+
       '<button type="button" class="secondary-btn small-btn" data-action="reset-code" data-user="'+esc(u.id)+'"'+(!u.hasPassword?' disabled title="This account has no password sign-in"':'')+'>Issue reset code</button>'+
       '<button type="button" class="secondary-btn small-btn" data-action="reset-account" data-user="'+esc(u.id)+'">Reset account</button>'+
       '<button type="button" class="danger-btn small-btn" data-action="delete-account" data-user="'+esc(u.id)+'">Delete</button>'+
@@ -371,17 +405,34 @@ function openGrant(userId){
   showDialog('Grant member access',
     '<p class="admin-modal-intro">Grant complimentary access to <strong>'+esc(u.email)+'</strong>. This change is recorded in the activity log.</p>'+
     '<label class="admin-form-field"><span>Plan</span><select name="plan">'+options+'</select></label>'+
-    '<label class="admin-form-field"><span>Duration in months (1–12)</span><input type="number" name="months" min="1" max="12" value="1" required></label>'+
+    '<label class="admin-form-field"><span>Duration</span><span class="admin-grant-duration"><input type="number" name="durationAmount" min="1" max="1200" value="1" required><select name="durationUnit" aria-label="Duration unit"><option value="days">Days</option><option value="months" selected>Months</option><option value="years">Years</option></select></span></label>'+
     '<label class="admin-check-field"><input type="checkbox" name="forever" id="grantForever"><span>Permanent access (no expiry)</span></label>'+
-    '<p class="admin-context">This grants service access; it does not charge the member.</p>',
+    '<p class="admin-context">Choose a whole number: up to 36,500 days, 1,200 months, or 100 years. Calendar months and years are calculated exactly. This grants service access; it does not charge the member.</p>',
     {description:'Account access change',submitLabel:'Grant access',onSubmit:async form=>{
-      const months=Math.max(1,Math.min(12,Number(form.get('months'))||1));
-      const plan=String(form.get('plan')||'');
-      await api('/api/admin/users/'+encodeURIComponent(userId)+'/entitlement',{method:'POST',body:JSON.stringify({plan,freeMonths:months,forever:form.get('forever')==='on'})});
+      const forever=form.get('forever')==='on',plan=String(form.get('plan')||''),payload={plan,forever};
+      if(!forever){
+        const durationAmount=Number(form.get('durationAmount')),durationUnit=String(form.get('durationUnit')||''),limits={days:36500,months:1200,years:100};
+        if(!Object.hasOwn(limits,durationUnit)||!Number.isSafeInteger(durationAmount)||durationAmount<1||durationAmount>limits[durationUnit])throw Error('Enter a valid whole-number duration for the selected unit.');
+        payload.durationAmount=durationAmount;payload.durationUnit=durationUnit;
+      }
+      await api('/api/admin/users/'+encodeURIComponent(userId)+'/entitlement',{method:'POST',body:JSON.stringify(payload)});
       return{success:'Access granted to '+u.email+'.'};
     }});
-  const forever=$('#grantForever'),months=modalRoot.querySelector('[name="months"]');
-  if(forever&&months)forever.onchange=()=>{months.disabled=forever.checked;};
+  const forever=$('#grantForever'),amount=modalRoot.querySelector('[name="durationAmount"]'),unit=modalRoot.querySelector('[name="durationUnit"]');
+  const limits={days:36500,months:1200,years:100};
+  if(unit&&amount)unit.onchange=()=>{amount.max=String(limits[unit.value]||36500);if(Number(amount.value)>Number(amount.max))amount.value=amount.max;};
+  if(forever&&amount&&unit)forever.onchange=()=>{amount.disabled=forever.checked;unit.disabled=forever.checked;};
+}
+function openRevokeGrant(userId){
+  const u=findUser(userId);if(!u)return;
+  if(!u.adminGranted){toast('This account has no administrator-granted access to revoke.','error');return;}
+  const expiry=u.entitlementExpiresAt?dateTime(u.entitlementExpiresAt):'no expiry';
+  showDialog('Revoke complimentary access',
+    '<div class="admin-danger-notice"><strong>'+esc(u.email)+'</strong> has administrator-granted access ending '+esc(expiry)+'.</div><p class="admin-modal-intro">This removes only the complimentary grant. It does not cancel a paid subscription. The change is recorded in the activity log.</p>',
+    {description:'Access revocation',submitLabel:'Revoke grant',danger:true,onSubmit:async()=>{
+      await api('/api/admin/users/'+encodeURIComponent(userId)+'/entitlement',{method:'DELETE'});
+      return{success:'Complimentary access revoked for '+u.email+'.'};
+    }});
 }
 function openResetCode(userId){
   const u=findUser(userId);if(!u)return;
@@ -480,6 +531,7 @@ function bind(){
       const id=action.dataset.user||action.dataset.id;
       switch(action.dataset.action){
         case 'grant':openGrant(id);break;
+        case 'revoke-grant':openRevokeGrant(id);break;
         case 'reset-code':openResetCode(id);break;
         case 'reset-account':openResetAccount(id);break;
         case 'delete-account':openDeleteAccount(id);break;

@@ -9,7 +9,7 @@ const ROOT=path.join(__dirname,'public'),DATA=path.join(__dirname,'data');
    should set the same values in their secret manager instead. */
 (function loadDotEnv(file){try{if(!fs.existsSync(file))return;for(const line of fs.readFileSync(file,'utf8').split(/\r?\n/)){const m=line.match(/^\s*([A-Z][A-Z0-9_]*)\s*=\s*(.*)\s*$/);if(m&&!process.env[m[1]])process.env[m[1]]=m[2].replace(/^['"]|['"]$/g,'')}}catch{}})(path.join(__dirname,'.env'));
 const PORT=Number(process.env.PORT||4173),HOST='0.0.0.0';
-const APP='KINGDOM BIBLE',VERSION='1.2.7';
+const APP='KINGDOM BIBLE',VERSION='1.2.8';
 /* Static and server-rendered contact data comes from config/site.js. */
 const MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.mp4':'video/mp4','.webm':'video/webm','.svg':'image/svg+xml','.txt':'text/plain; charset=utf-8','.xml':'application/xml; charset=utf-8'};
 /* Absolute origin used for the link-preview urls (og:image and friends).
@@ -53,6 +53,16 @@ function rate(req,res,limit=300){
   const ip=req.socket.remoteAddress||'local',now=Date.now(),x=hits.get(ip)||{at:now,n:0};
   if(now-x.at>60000){x.at=now;x.n=0}x.n++;hits.set(ip,x);
   if(x.n>limit){json(res,429,{error:'Too many requests'});return false}
+  return true;
+}
+function publicAnalyticsCors(req,res){
+  const origin=String(req.headers.origin||'');
+  if(!origin||!ANALYTICS_ALLOWED_ORIGINS.has(origin))return false;
+  res.setHeader('Access-Control-Allow-Origin',origin);
+  res.setHeader('Access-Control-Allow-Methods','POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers','Content-Type');
+  res.setHeader('Access-Control-Max-Age','600');
+  res.setHeader('Vary','Origin');
   return true;
 }
 /* JSON body reader.
@@ -234,6 +244,12 @@ const PREMIUM_PLANS={
   premium:{id:'premium',name:'Premium',price:10000,period:'month',tagline:'The complete ministry toolkit',benefits:['Everything in Gold','2,000 AI study questions per month','400 Studio voice readings per month','Voice Preacher Mode','Ministry presentation and remote'],aiMonthly:2000,ttsMonthly:400},
   unlimited:{id:'unlimited',name:'Unlimited',price:20000,period:'month',tagline:'For churches and heavy use',benefits:['Everything in Premium','10,000 AI questions per month (fair use)','2,000 Studio voice readings per month (fair use)','Multiple ministry operators','Priority support and early access'],aiMonthly:10000,ttsMonthly:2000},
 };
+const ANALYTICS_PAGES=Object.freeze(['home','bible','study','search','prayer','devotional','plans','ministry','profile','presentation']);
+const ANALYTICS_PAGE_SET=new Set(ANALYTICS_PAGES);
+const ANALYTICS_ALLOWED_ORIGINS=new Set(String(process.env.ANALYTICS_ALLOWED_ORIGINS||'https://kingdom-bible-wine.vercel.app')
+  .split(',').map(value=>value.trim()).filter(Boolean).map(value=>{try{return new URL(value).origin}catch{return ''}}).filter(Boolean));
+const ANALYTICS_ENABLED=!/^(off|0|false|no|disabled)$/i.test(String(process.env.ANALYTICS_ENABLED||'').trim());
+const ANALYTICS_RETENTION_DAYS=400;
 const PREMIUM_CONFIG={
   adminEmail:String(process.env.ADMIN_EMAIL||'stanley.okonkwo282@gmail.com').trim().toLowerCase(),
   adminPassword:String(process.env.ADMIN_PASSWORD||''),
@@ -275,8 +291,15 @@ const PREMIUM_CONFIG={
   liveHubUrl:String(process.env.LIVE_HUB_URL||'https://kingdom-bible.onrender.com').trim().replace(/\/+$/,''),
 };
 const premiumSessions=new Map();
-function blankPremiumStore(){return{users:[],transactions:[],withdrawals:[],audit:[],notifications:[],passwordResets:[]}}
-function loadPremiumStore(){try{return Object.assign(blankPremiumStore(),JSON.parse(fs.readFileSync(PREMIUM_CONFIG.storePath,'utf8')))}catch{return blankPremiumStore()}}
+function blankPremiumStore(){return{users:[],transactions:[],withdrawals:[],audit:[],notifications:[],passwordResets:[],analytics:{daily:{}}}}
+function loadPremiumStore(){
+  try{
+    const store=Object.assign(blankPremiumStore(),JSON.parse(fs.readFileSync(PREMIUM_CONFIG.storePath,'utf8')));
+    if(!store.analytics||typeof store.analytics!=='object')store.analytics={daily:{}};
+    if(!store.analytics.daily||typeof store.analytics.daily!=='object'||Array.isArray(store.analytics.daily))store.analytics.daily={};
+    return store;
+  }catch{return blankPremiumStore()}
+}
 let premiumStore=loadPremiumStore();
 function savePremiumStore(){fs.mkdirSync(path.dirname(PREMIUM_CONFIG.storePath),{recursive:true});fs.writeFileSync(PREMIUM_CONFIG.storePath,JSON.stringify(premiumStore,null,2))}
 function uid(prefix){return prefix+'_'+crypto.randomBytes(9).toString('hex')}
@@ -330,12 +353,24 @@ async function verifyGoogleCredential(credential){
 }
 function audit(event,actor,details={}){premiumStore.audit.unshift({id:uid('audit'),event,actor:actor||'system',details,date:new Date().toISOString()});premiumStore.audit=premiumStore.audit.slice(0,1000);savePremiumStore()}
 function notifyAdmin(type,message,details={}){premiumStore.notifications.unshift({id:uid('note'),type,message,details,read:false,date:new Date().toISOString()});premiumStore.notifications=premiumStore.notifications.slice(0,200);savePremiumStore()}
-function publicUser(u){if(!u)return null;const entitlement=entitlementOf(u);return{id:u.id,email:u.email,name:u.name,avatar:u.avatar||'',role:u.role||'user',referralCode:u.referralCode,trialEndsAt:u.trialEndsAt,plan:entitlement.plan,status:entitlement.status,daysRemaining:entitlement.daysRemaining,walletBalance:u.wallet?.balance||0,authProvider:u.authProvider||'password',createdAt:u.createdAt}}
+function publicUser(u){
+  if(!u)return null;
+  const entitlement=entitlementOf(u),subscription=u.subscription;
+  const permanentGrant=subscription?.status==='active'&&Number(subscription.expiresAt)>=Number.MAX_SAFE_INTEGER;
+  const paidSubscription=subscription?.status==='active'&&subscription.expiresAt>Date.now()&&!subscription.adminGranted;
+  return{id:u.id,email:u.email,name:u.name,avatar:u.avatar||'',role:u.role||'user',referralCode:u.referralCode,trialEndsAt:u.trialEndsAt,
+    plan:entitlement.plan,status:entitlement.status,daysRemaining:entitlement.daysRemaining,
+    adminGranted:!!subscription?.adminGranted,paidSubscription:!!paidSubscription,entitlementExpiresAt:subscription?.status==='active'&&!permanentGrant?subscription.expiresAt:null,
+    walletBalance:u.wallet?.balance||0,authProvider:u.authProvider||'password',createdAt:u.createdAt};
+}
 function entitlementOf(u){
   if(!u)return{plan:'none',status:'signed_out',daysRemaining:0};
   if(u.role==='admin')return{plan:'unlimited',status:'admin',daysRemaining:null};
   const now=Date.now();
-  if(u.subscription?.status==='active'&&u.subscription.expiresAt>now)return{plan:u.subscription.plan,status:'active',daysRemaining:Math.ceil((u.subscription.expiresAt-now)/86400000)};
+  if(u.subscription?.status==='active'&&u.subscription.expiresAt>now){
+    const permanent=Number(u.subscription.expiresAt)>=Number.MAX_SAFE_INTEGER;
+    return{plan:u.subscription.plan,status:'active',daysRemaining:permanent?null:Math.ceil((u.subscription.expiresAt-now)/86400000)};
+  }
   if(u.trialEndsAt>now)return{plan:'trial',status:'trial',daysRemaining:Math.ceil((u.trialEndsAt-now)/86400000)};
   return{plan:'expired',status:'expired',daysRemaining:0};
 }
@@ -383,6 +418,41 @@ function referralStats(u){
    details endpoint. Provider payloads, keys, and password-reset hashes never leave
    the server. Summary totals are computed from the complete store, even where the
    portal intentionally shows only the most recent rows. */
+function analyticsDailyStore(){
+  if(!premiumStore.analytics||typeof premiumStore.analytics!=='object')premiumStore.analytics={daily:{}};
+  if(!premiumStore.analytics.daily||typeof premiumStore.analytics.daily!=='object'||Array.isArray(premiumStore.analytics.daily))premiumStore.analytics.daily={};
+  return premiumStore.analytics.daily;
+}
+function safeAnalyticsCount(value){
+  const count=Number(value);
+  return Number.isSafeInteger(count)&&count>=0?count:0;
+}
+function recordPublicPageView(page,visitStart){
+  const now=Date.now(),today=new Date(now).toISOString().slice(0,10),daily=analyticsDailyStore();
+  const existing=daily[today],row=existing&&typeof existing==='object'&&!Array.isArray(existing)?existing:(daily[today]={views:0,visits:0,pages:{}});
+  if(!row.pages||typeof row.pages!=='object'||Array.isArray(row.pages))row.pages={};
+  row.views=Math.min(Number.MAX_SAFE_INTEGER,safeAnalyticsCount(row.views)+1);
+  row.visits=Math.min(Number.MAX_SAFE_INTEGER,safeAnalyticsCount(row.visits)+(visitStart?1:0));
+  row.pages[page]=Math.min(Number.MAX_SAFE_INTEGER,safeAnalyticsCount(row.pages[page])+1);
+  const cutoff=new Date(now-(ANALYTICS_RETENTION_DAYS-1)*86400000).toISOString().slice(0,10);
+  for(const date of Object.keys(daily))if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||date<cutoff||date>today)delete daily[date];
+  savePremiumStore();
+}
+function visitorAnalyticsData(days=30,now=Date.now()){
+  const dailyStore=analyticsDailyStore(),daily=[],pageTotals=new Map(ANALYTICS_PAGES.map(page=>[page,0]));
+  let totalViews=0,totalVisits=0;
+  for(let offset=days-1;offset>=0;offset--){
+    const date=new Date(now-offset*86400000).toISOString().slice(0,10),stored=dailyStore[date]||{},storedPages=stored.pages&&typeof stored.pages==='object'?stored.pages:{};
+    const views=safeAnalyticsCount(stored.views),visits=safeAnalyticsCount(stored.visits),pages={};
+    for(const page of ANALYTICS_PAGES){pages[page]=safeAnalyticsCount(storedPages[page]);pageTotals.set(page,pageTotals.get(page)+pages[page]);}
+    totalViews+=views;totalVisits+=visits;daily.push({date,views,visits,pages});
+  }
+  return{
+    rangeDays:days,from:daily[0]?.date||null,through:daily[daily.length-1]?.date||null,
+    totalViews,totalVisits,daily,
+    pages:ANALYTICS_PAGES.map(page=>({page,views:pageTotals.get(page)})).sort((a,b)=>b.views-a.views||a.page.localeCompare(b.page))
+  };
+}
 function adminOverviewData(){
   const storedUsers=premiumStore.users||[];
   /* Do not send account photos, password hashes, Google subject IDs, provider
@@ -454,6 +524,7 @@ function adminOverviewData(){
     })),
     referrals,
     users,audit:(premiumStore.audit||[]).slice(0,150),
+    analytics:visitorAnalyticsData(30),
     plans:Object.values(PREMIUM_PLANS).map(({aiMonthly,...x})=>x),
     passwordResets:(premiumStore.passwordResets||[]).filter(r=>!r.usedAt&&r.expiresAt>Date.now()).map(r=>({id:r.id,email:r.email,userId:r.userId,createdAt:r.createdAt,expiresAt:new Date(r.expiresAt).toISOString()}))
   };
@@ -475,6 +546,32 @@ function issueCode(u){
 }
 function startUser(email,name,password,referredBy){const now=Date.now(),u={id:uid('usr'),email,name:name||email.split('@')[0],passwordHash:passwordHash(password),passwordSet:!!password,role:'user',referralCode:referralCode(),referredBy:referredBy||'',referralRewarded:false,trialStartedAt:now,trialEndsAt:now+30*86400000,subscription:null,wallet:{balance:0,ledger:[]},ai:{month:'',used:0},createdAt:new Date(now).toISOString()};premiumStore.users.push(u);return u}
 function planBy(id){return PREMIUM_PLANS[String(id||'').toLowerCase()]||null}
+const GRANT_DURATION_LIMITS={days:36500,months:1200,years:100};
+function addGrantDuration(startedAt,amount,unit){
+  const date=new Date(startedAt);
+  if(unit==='days')date.setUTCDate(date.getUTCDate()+amount);
+  else if(unit==='months'||unit==='years'){
+    const day=date.getUTCDate();date.setUTCDate(1);
+    if(unit==='months')date.setUTCMonth(date.getUTCMonth()+amount);
+    else date.setUTCFullYear(date.getUTCFullYear()+amount);
+    const lastDay=new Date(Date.UTC(date.getUTCFullYear(),date.getUTCMonth()+1,0)).getUTCDate();
+    date.setUTCDate(Math.min(day,lastDay));
+  }
+  return date.getTime();
+}
+function grantDuration(body){
+  let amount,unit,legacy=false;
+  if(Object.hasOwn(body,'durationAmount')||Object.hasOwn(body,'durationUnit')){
+    amount=body.durationAmount;unit=body.durationUnit;
+  }else if(Object.hasOwn(body,'freeMonths')){
+    amount=body.freeMonths;unit='months';legacy=true;
+  }else throw Object.assign(Error('Choose a duration or permanent access'),{statusCode:400});
+  const knownUnit=typeof unit==='string'&&Object.hasOwn(GRANT_DURATION_LIMITS,unit);
+  const limit=legacy?12:(knownUnit?GRANT_DURATION_LIMITS[unit]:0);
+  if(!limit||typeof amount!=='number'||!Number.isSafeInteger(amount)||amount<1||amount>limit)
+    throw Object.assign(Error('Duration must be a whole number from 1 to '+(limit||'the allowed maximum')+' '+(unit||'days')),{statusCode:400});
+  return{amount,unit};
+}
 function currentPlanFor(u){const e=entitlementOf(u);return e.plan==='trial'?null:planBy(e.plan)}
 function businessDaysFrom(date,n){const d=new Date(date);let left=n;while(left){d.setDate(d.getDate()+1);if(![0,6].includes(d.getDay()))left--}return d.toISOString()}
 function monthKey(){const d=new Date();return d.getUTCFullYear()+'-'+String(d.getUTCMonth()+1).padStart(2,'0')}
@@ -597,6 +694,24 @@ const server=http.createServer(async(req,res)=>{
     if(p==='/health')return json(res,200,{ok:true,app:APP,version:VERSION,presentation:'operational',sessionActive:!!session.code,listeners:session.listeners.size,uptime:Math.round(process.uptime()),serverTime:Date.now()});
     /* Discovery must never hand the pairing code to anyone on the LAN who asks. */
     if(p==='/api/network')return json(res,200,{ok:true,port:PORT,addresses:sortedAddresses(),url:baseUrl(),sessionActive:!!session.code,listeners:session.listeners.size});
+    if(p==='/api/analytics/pageview'){
+      const originAllowed=publicAnalyticsCors(req,res);
+      if(req.method==='OPTIONS'){
+        if(!originAllowed)return json(res,403,{ok:false,error:'Origin not allowed'});
+        res.setHeader('Content-Length','0');res.statusCode=204;return res.end();
+      }
+      if(!originAllowed)return json(res,403,{ok:false,error:'Origin not allowed'});
+      if(req.method!=='POST'){res.setHeader('Allow','POST, OPTIONS');return json(res,405,{ok:false,error:'Method not allowed'});}
+      if(!ANALYTICS_ENABLED){res.setHeader('Cache-Control','no-store');res.statusCode=204;return res.end();}
+      const contentType=String(req.headers['content-type']||'').toLowerCase();
+      if(!/^application\/json(?:\s*;|$)|^text\/plain(?:\s*;|$)/.test(contentType))return json(res,415,{ok:false,error:'Unsupported content type'});
+      const b=await body(req);
+      if(!b||typeof b!=='object'||Array.isArray(b)||!ANALYTICS_PAGE_SET.has(b.page)||typeof b.visitStart!=='boolean')
+        return json(res,400,{ok:false,error:'Invalid analytics event'});
+      recordPublicPageView(b.page,b.visitStart);
+      res.setHeader('Cache-Control','no-store');
+      return json(res,202,{ok:true});
+    }
 
     if(p==='/api/premium/config'&&req.method==='GET')return json(res,200,{ok:true,...premiumPublic()});
     /* Paystack's signed webhook is the reliable activation path when a customer
@@ -767,8 +882,32 @@ const server=http.createServer(async(req,res)=>{
     }
     const grant=p.match(/^\/api\/admin\/users\/([^/]+)\/entitlement$/);
     if(grant&&req.method==='POST'){
-      const s=requireAdmin(req,res);if(!s)return;const u=findUser(grant[1]);if(!u)return json(res,404,{ok:false,error:'User not found'});const b=await body(req),months=Math.max(1,Math.min(12,Number(b.freeMonths)||1)),plan=planBy(b.plan)||PREMIUM_PLANS.unlimited;
-      if(b.forever){u.subscription={status:'active',plan:plan.id,price:0,startedAt:Date.now(),expiresAt:Number.MAX_SAFE_INTEGER,adminGranted:true}}else u.subscription={status:'active',plan:plan.id,price:0,startedAt:Date.now(),expiresAt:Date.now()+months*31*86400000,adminGranted:true};savePremiumStore();audit('admin.grant',s.email,{userId:u.id,plan:plan.id,months,forever:!!b.forever});return json(res,200,{ok:true,user:publicUser(u)});
+      const s=requireAdmin(req,res);if(!s)return;
+      const u=findUser(grant[1]);if(!u)return json(res,404,{ok:false,error:'User not found'});
+      if(u.subscription?.status==='active'&&u.subscription.expiresAt>Date.now()&&!u.subscription.adminGranted)
+        return json(res,409,{ok:false,error:'An active paid subscription cannot be replaced by a complimentary grant'});
+      const b=await body(req);
+      if(!b||typeof b!=='object'||Array.isArray(b))return json(res,400,{ok:false,error:'Invalid grant request'});
+      if(Object.hasOwn(b,'forever')&&typeof b.forever!=='boolean')return json(res,400,{ok:false,error:'Permanent access must be selected explicitly'});
+      const forever=b.forever===true,hasDuration=Object.hasOwn(b,'durationAmount')||Object.hasOwn(b,'durationUnit')||Object.hasOwn(b,'freeMonths');
+      if(forever&&hasDuration)return json(res,400,{ok:false,error:'Choose either a duration or permanent access'});
+      const duration=forever?null:grantDuration(b),plan=planBy(b.plan)||PREMIUM_PLANS.unlimited;
+      const startedAt=Date.now(),grantId=uid('grt'),expiresAt=forever?Number.MAX_SAFE_INTEGER:addGrantDuration(startedAt,duration.amount,duration.unit);
+      u.subscription={status:'active',plan:plan.id,price:0,startedAt,expiresAt,adminGranted:true,grantId,
+        ...(duration?{durationAmount:duration.amount,durationUnit:duration.unit}:{})};
+      savePremiumStore();
+      audit('admin.grant',s.email,{userId:u.id,plan:plan.id,grantId,durationAmount:duration?.amount||null,durationUnit:duration?.unit||null,forever,expiresAt:forever?null:new Date(expiresAt).toISOString()});
+      return json(res,200,{ok:true,user:publicUser(u)});
+    }
+    if(grant&&req.method==='DELETE'){
+      const s=requireAdmin(req,res);if(!s)return;
+      const u=findUser(grant[1]);if(!u)return json(res,404,{ok:false,error:'User not found'});
+      if(u.role==='admin'||u.email===PREMIUM_CONFIG.adminEmail)return json(res,403,{ok:false,error:'The administrator account cannot be changed'});
+      if(!u.subscription?.adminGranted)return json(res,409,{ok:false,error:'This account has no administrator-granted access to revoke'});
+      const previous=u.subscription,expiresAt=Number(previous.expiresAt);
+      u.subscription=null;savePremiumStore();
+      audit('admin.grant.revoke',s.email,{userId:u.id,plan:String(previous.plan||''),grantId:previous.grantId||null,expiresAt:Number.isFinite(expiresAt)&&expiresAt<Number.MAX_SAFE_INTEGER?new Date(expiresAt).toISOString():null});
+      return json(res,200,{ok:true,user:publicUser(u),message:'Administrator-granted access was revoked'});
     }
     const issueReset=p.match(/^\/api\/admin\/users\/([^/]+)\/password-code$/);
     if(issueReset&&req.method==='POST'){

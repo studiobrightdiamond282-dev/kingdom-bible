@@ -398,6 +398,22 @@ button[disabled]{opacity:.5;cursor:not-allowed}
 .admin-account-recovery{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;padding:0;margin:0 0 11px;color:var(--muted);font-size:10px}
 .admin-account-recovery span{font-weight:800}
 .admin-account-recovery strong{color:var(--ink);font-weight:650}
+.admin-grant-duration{display:grid;grid-template-columns:minmax(80px,1fr) minmax(120px,.8fr);gap:8px}
+.admin-grant-duration input,.admin-grant-duration select{width:100%;min-height:44px;border:1px solid var(--line);border-radius:9px;background:var(--surface);padding:0 11px;color:var(--ink)}
+.admin-analytics-chart{display:grid;gap:2px;max-height:590px;overflow:auto}
+.admin-analytics-row{display:grid;grid-template-columns:70px minmax(90px,1fr) 64px 64px;gap:10px;align-items:center;padding:6px 8px;border-bottom:1px solid var(--line);font-size:10px;font-variant-numeric:tabular-nums}
+.admin-analytics-row.heading{position:sticky;top:0;z-index:1;background:var(--surface);color:var(--muted);font-size:9px;font-weight:800}
+.admin-analytics-row>strong,.admin-analytics-row>span:last-child{text-align:right}
+.admin-analytics-bars{height:14px;display:flex;flex-direction:column;justify-content:center;gap:2px;background:var(--surface2);border-radius:99px;overflow:hidden}
+.admin-analytics-bar{display:block;height:4px;min-width:0;border-radius:99px}
+.admin-analytics-bar.views,.admin-analytics-legend i.views{background:var(--gold)}
+.admin-analytics-bar.visits,.admin-analytics-legend i.visits{background:#3b82f6}
+.admin-analytics-legend{display:flex;gap:14px;flex-wrap:wrap;margin:0 0 12px;color:var(--muted);font-size:10px}
+.admin-analytics-legend span{display:inline-flex;align-items:center;gap:6px}
+.admin-analytics-legend i{width:9px;height:9px;display:inline-block;border-radius:50%}
+.admin-analytics-pages{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+.admin-analytics-page{display:flex;justify-content:space-between;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:var(--surface2);font-size:11px}
+.admin-analytics-page strong{font-variant-numeric:tabular-nums}
 .admin-account-actions .small-btn,.admin-payout-actions .small-btn{min-height:38px}
 .admin-account-actions button:disabled{opacity:.55;cursor:not-allowed}
 .admin-record-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:13px}
@@ -477,6 +493,8 @@ button[disabled]{opacity:.5;cursor:not-allowed}
   .admin-filter-field{flex:1;min-width:120px}
   .admin-count{width:100%;margin-left:0;padding:2px 0 0}
   .admin-account-actions .small-btn,.admin-payout-actions .small-btn{flex:1 1 145px}
+  .admin-analytics-row{grid-template-columns:52px minmax(50px,1fr) 45px 45px;gap:6px;padding:6px 3px;font-size:9px}
+  .admin-grant-duration{grid-template-columns:minmax(70px,1fr) minmax(105px,.9fr);gap:6px}
   .admin-record-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
   .admin-record-summary>div:nth-child(odd){border-left:0;padding-left:0}
   .admin-activity-item{grid-template-columns:1fr;gap:5px}

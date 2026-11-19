@@ -22,6 +22,8 @@ assert(!fs.existsSync(path.join(dist, 'admin-portal.html')) && !fs.existsSync(pa
   'the private admin shell and script are excluded from static output');
 assert(fs.existsSync(path.join(dist, 'index.html')) && fs.existsSync(path.join(dist, 'sw.js')),
   'the app shell and service worker are in the static output');
+assert(fs.existsSync(path.join(dist, 'analytics.js')) && fs.existsSync(path.join(dist, 'privacy-analytics.js')),
+  'anonymous analytics and the privacy opt-out are included in the Vercel static build');
 for (const asset of ['kingdom-bible-product-preview.jpg', 'kingdom-bible-product-preview.mp4']) {
   const built = path.join(dist, 'assets', asset);
   assert(fs.existsSync(built), `static build includes ${asset}`);
