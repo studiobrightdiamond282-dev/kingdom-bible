@@ -2,25 +2,56 @@
 <html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
+  <script src="/theme-init.js"></script>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="theme-color" content="#07142f" />
-  <meta name="description" content="KINGDOM BIBLE — Read, study, understand, and live the Word." />
-  <meta property="og:title" content="KINGDOM BIBLE" />
-  <meta property="og:description" content="The complete Bible reading, study, prayer and ministry platform." />
-  <meta property="og:image" content="/assets/logo-hero.png" />
-  <title>KINGDOM BIBLE</title>
+  <meta name="description" content="KINGDOM BIBLE — Read, study, understand, and live the Word. Complete Bible with study tools, prayer journal and live ministry presentation." />
+  <meta name="application-name" content="KINGDOM BIBLE" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>KINGDOM BIBLE — Read. Study. Understand. Live the Word.</title>
   <link rel="manifest" href="/manifest.json" />
-  <link rel="icon" href="/favicon.png" />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="/favicon.png" sizes="48x48" />
+  <link rel="icon" href="/icons/icon-32.png" sizes="32x32" />
+  <link rel="icon" href="/icons/icon-48.png" sizes="48x48" />
   <link rel="apple-touch-icon" href="/icons/icon-180.png" />
+  <link rel="mask-icon" href="/favicon.svg" color="#07142f" />
+  <meta name="apple-mobile-web-app-title" content="Kingdom Bible" />
+  <!-- Link preview. These urls MUST stay absolute: crawlers ignore a relative
+       og:image, so the shared link used to render as bare text with no picture.
+       They point at the public Vercel build on purpose: static hosts serve this
+       file as-is with no ORIGIN injection, so a placeholder here would reach
+       crawlers literally. Do not switch these back to a placeholder or relative
+       paths. The hub (server.js) still injects ORIGIN into any other page that
+       uses it, and leaves absolute http(s) urls alone. -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="KINGDOM BIBLE" />
+  <meta property="og:title" content="KINGDOM BIBLE" />
+  <meta property="og:description" content="Read. Study. Understand. Live the Word. The complete Bible with study tools, a prayer journal and live ministry presentation." />
+  <meta property="og:url" content="https://kingdom-bible-wine.vercel.app/" />
+  <meta property="og:image" content="https://kingdom-bible-wine.vercel.app/assets/logo-social.png" />
+  <meta property="og:image:type" content="image/png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="KINGDOM BIBLE — a gold crown above the letters KB resting on an open Bible" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="KINGDOM BIBLE" />
+  <meta name="twitter:description" content="Read. Study. Understand. Live the Word." />
+  <meta name="twitter:image" content="https://kingdom-bible-wine.vercel.app/assets/logo-social.png" />
+  <meta name="twitter:image:alt" content="KINGDOM BIBLE logo" />
+  <link rel="canonical" href="https://kingdom-bible-wine.vercel.app/" />
   <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/demo-tour.css" />
 </head>
 <body>
+  <noscript><div style="max-width:560px;margin:40px auto;padding:24px;text-align:center;font-family:system-ui;background:#0c1930;color:#eef4ff;border:1px solid #1e3352;border-radius:16px"><h1 style="font-family:Georgia,serif;color:#f5d778">KINGDOM BIBLE</h1><p>Read, study, understand and live the Word. This experience needs JavaScript to open the Bible library, search and ministry tools.</p><p>Please enable JavaScript and reload.</p></div></noscript>
   <a class="skip-link" href="#main">Skip to content</a>
   <div id="offlineBar" class="offline-bar" hidden>You’re offline. Saved Bible content and personal data remain available.</div>
   <div class="app-shell">
     <aside class="sidebar" aria-label="Primary navigation">
-      <button class="brand" data-route="home" aria-label="Kingdom Bible home">
-        <img src="/assets/logo.png" alt="" />
+      <button class="brand" data-route="home" data-admin-trigger aria-label="Kingdom Bible home">
+        <img src="/assets/logo.png" alt="" width="48" height="48" fetchpriority="high" decoding="async" />
         <span><strong>KINGDOM</strong><small>BIBLE</small></span>
       </button>
       <nav id="desktopNav" class="side-nav"></nav>
@@ -31,7 +62,8 @@
     </aside>
 
     <header class="topbar">
-      <button class="mobile-brand" data-route="home"><img src="/assets/logo.png" alt="Kingdom Bible" /></button>
+      <button class="mobile-brand" data-route="home" data-admin-trigger><img src="/assets/logo.png" alt="Kingdom Bible" /></button>
+      <button id="backBtn" class="icon-btn back-btn" aria-label="Go to previous page" title="Back (Backspace)" hidden>‹</button>
       <div class="crumb"><span id="pageEyebrow">KINGDOM BIBLE</span><strong id="pageTitle">Home</strong></div>
       <button id="commandBtn" class="command-trigger" aria-label="Open command search"><span>⌕</span><span>Search Scripture & tools</span><kbd>⌘ K</kbd></button>
       <div class="top-actions">
@@ -41,7 +73,8 @@
       </div>
     </header>
 
-    <main id="main" tabindex="-1"><div class="loading-screen"><img src="/assets/logo.png" alt=""/><span></span><p>Preparing the Word…</p></div></main>
+    <div id="trialBanner" class="trial-banner" hidden></div>
+  <main id="main" tabindex="-1"><div class="loading-screen"><img src="/assets/logo.png" alt=""/><span></span><p>Preparing the Word…</p></div></main>
 
     <nav id="mobileNav" class="mobile-nav" aria-label="Mobile navigation"></nav>
     <button id="quickBtn" class="quick-fab" aria-label="Quick actions">+</button>
@@ -50,10 +83,20 @@
   <div id="modalRoot"></div>
   <div id="toastRoot" class="toast-root" aria-live="polite"></div>
   <script src="/hub-probe.js" defer></script>
+  <script src="/analytics.js" defer></script>
   <script src="/qr.js" defer></script>
   <script src="/bible-ref.js" defer></script>
+  <script src="/devotionals.js" defer></script>
+  <script src="/reading-plans.js" defer></script>
   <script src="/voice.js" defer></script>
-  <script src="/ministry-nav.js" defer></script>
+  <script src="/premium.js" defer></script>
+  <script src="/demo-tour.js" defer></script>
   <script src="/app.js" defer></script>
+  <script src="/auth-fix.js" defer></script>
+  <script src="/profile-fix.js" defer></script>
+  <script src="/reader-fix.js" defer></script>
+  <script src="/study-fix.js" defer></script>
+  <script src="/audit-fix.js" defer></script>
+  <script src="/capacitor-bridge.js" defer></script>
 </body>
 </html>

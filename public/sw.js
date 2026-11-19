@@ -1,8 +1,9 @@
-const VERSION='kingdom-bible-v1.2.0';
+/* Cache version follows package.json so installed clients receive every shipped fix. */
+const VERSION='kingdom-bible-v1.2.12';
 const SHELL=[
-  '/', '/index.html','/styles.css','/app.js','/qr.js','/hub-probe.js','/bible-ref.js','/voice.js','/remote.js','/remote.html',
-  '/ministry-nav.js','/search-worker.js','/offline.html','/manifest.json','/favicon.png',
-  '/assets/logo.png','/assets/logo-hero.png','/icons/icon-192.png','/icons/icon-512.png','/data/books.json',
+  '/', '/index.html','/theme-init.js','/styles.css','/demo-tour.css','/demo-tour.js','/app.js','/devotionals.js','/reading-plans.js','/auth-fix.js','/profile-fix.js','/reader-fix.js','/study-fix.js','/audit-fix.js','/premium.js','/qr.js','/hub-probe.js','/analytics.js','/privacy-analytics.js','/bible-ref.js','/voice.js','/remote.js','/remote.html','/admin.html','/privacy.html','/refund.html','/status.html','/status.js',
+  '/search-worker.js','/offline.html','/manifest.json','/favicon.svg','/favicon.png',
+  '/assets/logo.png','/assets/logo-hero.png','/assets/logo-social.png','/assets/kingdom-bible-product-preview.jpg?v=1.2.12','/icons/icon-192.png','/icons/icon-512.png','/data/books.json',
   '/data/bibles/kjv/44.json','/data/bibles/kjv/42.json','/data/bibles/kjv/18.json'
 ];
 /* live routes must never be served from cache: a stale verse on a projector is worse than no verse */
@@ -29,6 +30,11 @@ self.addEventListener('fetch',e=>{
     })());
     return;
   }
+
+  /* HTML video seeks use Range requests and return partial (206) responses, which
+     CacheStorage cannot store. Keep preview media network-only; its small poster is
+     already part of the offline shell cache. */
+  if(/\.(mp4|webm|mov)$/i.test(u.pathname)){e.respondWith(fetch(r));return}
 
   const data=u.pathname.startsWith('/data/');
   e.respondWith(caches.match(r).then(cached=>cached||fetch(r).then(x=>{

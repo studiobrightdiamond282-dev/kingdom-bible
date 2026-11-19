@@ -1,0 +1,398 @@
+#!/usr/bin/env node
+'use strict';
+/* Premium foundation contract: trial, referrals, secure admin access, grants,
+   policy routes, and Paystack/AI configuration boundaries. No external payment
+   or AI call is made in this test. */
+const assert=require('assert'),{spawn}=require('child_process'),fs=require('fs'),os=require('os'),path=require('path');
+const port=4199,store=path.join(os.tmpdir(),'kingdom-bible-premium-'+process.pid+'.json');
+const child=spawn(process.execPath,['server.js'],{cwd:path.join(__dirname,'..'),env:{...process.env,PORT:String(port),NODE_ENV:'test',ADMIN_PASSWORD:'test-admin-password',PREMIUM_STORE_PATH:store,PAYSTACK_PUBLIC_KEY:'',PAYSTACK_SECRET_KEY:'',EMAIL_API_KEY:'',EMAIL_KEY:'',EMAIL_FROM:'',AI_API_KEY:''},stdio:['ignore','pipe','pipe']});
+const base='http://127.0.0.1:'+port;
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+/* The full Set-Cookie header is kept, not just the first `;` segment: the "keep me signed
+   in" behaviour lives in the Max-Age attribute, which a name=value split would discard. */
+async function request(p,o={}){const r=await fetch(base+p,{...o,headers:{'content-type':'application/json',...(o.headers||{})}});const body=await r.json().catch(()=>({}));const raw=r.headers.getSetCookie?r.headers.getSetCookie():[r.headers.get('set-cookie')];return{r,body,cookie:raw[0]||'',session:(String(raw[0]||'').match(/kb_session=[^;]+/)||[''])[0]}}
+async function ready(){for(let i=0;i<40;i++){try{const x=await fetch(base+'/health');if(x.ok)return}catch{}await wait(50)}throw Error('premium test server did not start')}
+(async()=>{try{
+  await ready();
+  const cfg=await request('/api/premium/config');assert.equal(cfg.body.trialDays,30);assert.deepStrictEqual(Object.fromEntries(cfg.body.plans.map(p=>[p.id,p.price])),{silver:2500,gold:5000,premium:10000,unlimited:20000},'monthly plan prices remain unchanged');assert(cfg.body.plans.every(p=>p.period==='month'),'all subscription tiers remain monthly');assert.equal(cfg.body.referral.signupNaira,100);assert.equal(cfg.body.paystackReady,false,'checkout must report missing Paystack keys instead of appearing live');assert.equal(cfg.body.paystackPublicKey,'','an unpaired public key is not exposed');assert.equal(cfg.body.passwordResetEmailEnabled,false,'email recovery is disabled until a verified sender is configured');
+  const a=await request('/api/auth/register',{method:'POST',body:JSON.stringify({email:'a@example.com',password:'password-a',name:'A'})});assert.equal(a.r.status,201);assert(a.body.user.trialEndsAt);assert(a.cookie);
+  const checkoutOff=await request('/api/payments/initialize',{method:'POST',headers:{cookie:a.session},body:JSON.stringify({plan:'silver'})});assert.equal(checkoutOff.r.status,503,'checkout without real Paystack keys must fail closed');assert.match(checkoutOff.body.error,/Paystack checkout needs both a public key and a server-side secret key/);
+  const b=await request('/api/auth/register',{method:'POST',body:JSON.stringify({email:'b@example.com',password:'password-b',name:'B',referralCode:a.body.user.referralCode})});assert.equal(b.r.status,201);
+  const aMe=await request('/api/auth/me',{headers:{cookie:a.session}});assert.equal(aMe.body.user.walletBalance,100);
+  const admin=await request('/api/auth/login',{method:'POST',body:JSON.stringify({email:'stanley.okonkwo282@gmail.com',password:'test-admin-password'})});assert.equal(admin.body.user.role,'admin');assert(!admin.body.user.referralCode,'administrator accounts must not receive member referral codes');
+  const adminWallet=await request('/api/wallet',{headers:{cookie:admin.session}});assert.equal(adminWallet.body.admin,true);assert.equal(adminWallet.body.referral,null,'admin wallet endpoint must not invent referral stats for an account without a code');
+  const adminCheckout=await request('/api/payments/initialize',{method:'POST',headers:{cookie:admin.session},body:JSON.stringify({plan:'silver'})});assert.equal(adminCheckout.r.status,200);assert.equal(adminCheckout.body.admin,true,'administrator subscriptions remain complimentary');assert.match(adminCheckout.body.message,/Administrator access is free/);
+  const overview=await request('/api/admin/overview',{headers:{cookie:admin.session}});assert.equal(overview.body.users.length,2);
+  assert.match(overview.r.headers.get('cache-control')||'',/no-store/,'private admin data must not be cached');
+  assert.equal(overview.body.summary.usersTotal,2,'overview summary must cover the complete account store');
+  assert(Array.isArray(overview.body.transactions),'admin overview must include safe payment records even when empty');
+  assert(Array.isArray(overview.body.referrals),'admin overview must include referral performance');
+  assert.equal(overview.body.analytics.rangeDays,30,'the private portal receives a fixed 30-day analytics window');
+  assert.equal(overview.body.analytics.totalViews,0,'analytics start with zero aggregate page views');
+  assert.equal(overview.body.analytics.daily.length,30,'the analytics trend includes each day in its window');
+  assert.equal(overview.body.referrals[0].signups,1,'referral signups must be attributed to the inviter');
+  assert(!('avatar' in overview.body.users[0]),'the admin overview must not load private profile-photo data');
+  assert(!('passwordHash' in overview.body.users[0])&&!('googleSub' in overview.body.users[0]),'account credentials and Google subject IDs must not be exposed');
+  assert.equal((await request('/api/admin/withdrawals/missing/details')).r.status,403,'payout details must require an administrator session');
+  const portalJs=fs.readFileSync(path.join(__dirname,'..','public','admin.js'),'utf8');
+  for(const section of ['overview','accounts','payments','referrals','withdrawals','notifications','activity','analytics'])assert(portalJs.includes("id:'"+section+"'"),'admin navigation must include '+section);
+  assert(portalJs.includes('aria-modal="true"')&&portalJs.includes("event.key==='Escape'"),'admin action dialogs must be keyboard accessible');
+  assert(!portalJs.includes('window.prompt')&&!portalJs.includes('window.confirm'),'destructive/admin actions must use accessible in-portal dialogs');
+  const grant=await request('/api/admin/users/'+a.body.user.id+'/entitlement',{method:'POST',headers:{cookie:admin.session},body:JSON.stringify({plan:'premium',forever:true})});assert.equal(grant.body.user.status,'active');assert.equal(grant.body.user.plan,'premium');assert.equal(grant.body.user.adminGranted,true);assert.equal(grant.body.user.daysRemaining,null);assert.equal(grant.body.user.entitlementExpiresAt,null);
+  {
+    const testUser=await request('/api/auth/register',{method:'POST',body:JSON.stringify({email:'grant-duration@example.com',password:'password-grant'})});
+    assert.equal(testUser.r.status,201);
+    const endpoint='/api/admin/users/'+testUser.body.user.id+'/entitlement';
+    const expectedExpiry=(start,amount,unit)=>{
+      const d=new Date(start);
+      if(unit==='days')d.setUTCDate(d.getUTCDate()+amount);
+      else{const day=d.getUTCDate();d.setUTCDate(1);if(unit==='months')d.setUTCMonth(d.getUTCMonth()+amount);else d.setUTCFullYear(d.getUTCFullYear()+amount);const last=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()+1,0)).getUTCDate();d.setUTCDate(Math.min(day,last));}
+      return d.getTime();
+    };
+    for(const duration of [{durationAmount:7,durationUnit:'days'},{durationAmount:1,durationUnit:'months'},{durationAmount:1,durationUnit:'years'}]){
+      const result=await request(endpoint,{method:'POST',headers:{cookie:admin.session},body:JSON.stringify({plan:'gold',...duration})});
+      assert.equal(result.r.status,200,result.body.error);
+      const stored=JSON.parse(fs.readFileSync(store,'utf8')).users.find(user=>user.id===testUser.body.user.id).subscription;
+      assert.equal(stored.durationAmount,duration.durationAmount);assert.equal(stored.durationUnit,duration.durationUnit);
+      assert.equal(stored.expiresAt,expectedExpiry(stored.startedAt,duration.durationAmount,duration.durationUnit),'grant expiry must use the exact calendar duration');
+      assert.equal(result.body.user.entitlementExpiresAt,stored.expiresAt);
+    }
+    for(const invalid of [
+      {durationAmount:0,durationUnit:'days'},{durationAmount:1.5,durationUnit:'days'},
+      {durationAmount:101,durationUnit:'years'},{durationAmount:1,durationUnit:'weeks'},
+      {durationAmount:'2',durationUnit:'months'},{freeMonths:13},{plan:'gold'}
+    ])assert.equal((await request(endpoint,{method:'POST',headers:{cookie:admin.session},body:JSON.stringify({plan:'gold',...invalid})})).r.status,400,'invalid duration must be rejected: '+JSON.stringify(invalid));
+    assert.equal((await request(endpoint,{method:'POST',headers:{cookie:admin.session},body:JSON.stringify({plan:'gold',forever:true,durationAmount:1,durationUnit:'days'})})).r.status,400,'permanent and timed grants cannot be combined');
+    assert.equal((await request(endpoint,{method:'POST',headers:{cookie:admin.session},body:JSON.stringify({plan:'gold',forever:'true'})})).r.status,400,'permanent access requires a boolean');
+    const forever=await request(endpoint,{method:'POST',headers:{cookie:admin.session},body:JSON.stringify({plan:'gold',forever:true})});
+    assert.equal(forever.body.user.entitlementExpiresAt,null);assert.equal(forever.body.user.adminGranted,true);
+    assert.equal((await request(endpoint,{method:'DELETE',headers:{cookie:testUser.session}})).r.status,403,'members cannot revoke their own admin grant');
+    const revoked=await request(endpoint,{method:'DELETE',headers:{cookie:admin.session}});
+    assert.equal(revoked.r.status,200);assert.equal(revoked.body.user.adminGranted,false);assert.equal(revoked.body.user.status,'trial');
+    assert.equal((await request(endpoint,{method:'DELETE',headers:{cookie:admin.session}})).r.status,409,'a grant cannot be revoked twice');
+    const grantAudit=(await request('/api/admin/overview',{headers:{cookie:admin.session}})).body.audit;
+    assert(grantAudit.some(item=>item.event==='admin.grant'&&item.details.userId===testUser.body.user.id&&item.details.durationUnit==='years'&&item.details.expiresAt),'grant duration and expiry must be audited');
+    assert(grantAudit.some(item=>item.event==='admin.grant.revoke'&&item.details.userId===testUser.body.user.id),'grant revocation must be audited');
+  }
+  const adminGuest=await fetch(base+'/admin');assert.equal(adminGuest.status,403,'/admin must reject requests without an admin session');
+  const userAdminPage=await fetch(base+'/admin',{headers:{cookie:a.session}});assert.equal(userAdminPage.status,403,'a normal signed-in user must still be denied the admin portal');
+  const adminAliasGuest=await fetch(base+'/admin-portal.html');assert.equal(adminAliasGuest.status,403,'the direct private portal-shell path must also require an admin session');
+  const adminJsGuest=await fetch(base+'/admin.js');assert.equal(adminJsGuest.status,403,'the private admin script must also require an admin session');
+  const staticAdmin=await (await fetch(base+'/admin.html')).text();
+  assert(staticAdmin.includes('https://kingdom-bible.onrender.com/?admin=1'),'the public static admin page must hand off to the live service');
+  assert(!/<form\b|admin\.js/.test(staticAdmin),'the static admin page must not advertise a broken login form');
+  const adminPage=await fetch(base+'/admin',{headers:{cookie:admin.session}});assert.equal(adminPage.status,200,'/admin must be served to an authenticated administrator');
+  const adminHtml=await adminPage.text();assert(adminHtml.includes('id=\"adminApp\"')&&adminHtml.includes('/admin.js'),'only the authenticated Node route may serve the actual admin portal shell');
+  const adminAlias=await fetch(base+'/admin-portal.html',{headers:{cookie:admin.session}});assert.equal(adminAlias.status,200,'an admin session may load the direct portal-shell alias');
+  const adminJs=await fetch(base+'/admin.js',{headers:{cookie:admin.session}});assert.equal(adminJs.status,200,'an admin session may load the portal script');assert.match(adminJs.headers.get('cache-control')||'',/no-store/,'the private admin script must not enter a shared cache');
+  for(const page of ['/privacy','/refund','/status']){const r=await fetch(base+page);assert.equal(r.status,200,page+' must be served')}
+  /* Google sign-in must reject anything that is not a genuine, correctly signed,
+     unexpired token for THIS app. A forged or malformed credential must never mint a session. */
+  assert(cfg.body.googleClientId,'premium config must expose the public Google client id');
+  /* An "Internal" OAuth consent screen makes Google refuse every account outside
+     one Workspace org with "Error 403: org_internal" on GOOGLE's own page. The
+     app cannot catch that, so it must be able to take the button away instead of
+     stranding the user on a dead end. */
+  assert.equal(typeof cfg.body.googleSignInEnabled,'boolean','premium config must advertise whether Google sign-in is available');
+  {
+    const srv=fs.readFileSync(path.join(__dirname,'..','server.js'),'utf8');
+    const pm =fs.readFileSync(path.join(__dirname,'..','public','premium.js'),'utf8');
+    assert(srv.includes('GOOGLE_SIGNIN'),'the server must honour a GOOGLE_SIGNIN switch');
+    assert(pm.includes('googleSignInEnabled'),'premium.js must respect the switch instead of always rendering the Google button');
+    /* The gate is the FIRST googleSignInEnabled===false check, and the user-facing
+       note is inside the googleButton guard. Both must exist and point at email. */
+    assert(/googleSignInEnabled===false\)throw Error\('Google sign-in is switched off[^']*email and password/.test(pm),'loadGoogle must refuse cleanly when Google sign-in is off');
+    assert(/if \(config && config\.googleSignInEnabled === false\)\s*\{[\s\S]{0,320}Use your email and password below\.[\s\S]{0,80}return;/.test(pm),'googleButton must replace the disabled button with a note and return without rendering it');
+  }
+  for(const bad of [{},{credential:''},{credential:'not-a-jwt'},{credential:'a.b.c'},{credential:'a.b.c.d'}]){
+    const g=await request('/api/auth/google',{method:'POST',body:JSON.stringify(bad)});
+    assert.equal(g.r.status,400,'malformed Google credential must be rejected: '+JSON.stringify(bad));
+    assert(!g.cookie,'a rejected Google sign-in must not set a session cookie');
+  }
+  const ga=await request('/api/auth/google',{method:'POST',body:JSON.stringify({credential:'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln'})});
+  assert.equal(ga.r.status,400,'a token with an unknown signing key must be rejected');
+  assert(!ga.cookie,'no session may be minted from an unverified token');
+
+  /* ---- support number: one source of truth, no stale digits anywhere ---- */
+  assert.equal(cfg.body.whatsapp,'2348134438808','the public config must expose the correct support number');
+  assert(cfg.body.whatsappDisplay.includes('813 443 8808'),'the display form must read 813 443 8808');
+  const privacy=await (await fetch(base+'/privacy')).text();
+  const refund=await (await fetch(base+'/refund')).text();
+  for(const page of [privacy,refund]){
+    assert(!page.includes('23481344338808'),'a served page must not contain the old wrong number');
+    assert(!/\{\{WHATSAPP/.test(page),'every {{WHATSAPP}} placeholder must be injected before serving');
+    assert(page.includes('2348134438808'),'the served page must carry the correct number');
+  }
+
+  /* ---- link preview: a shared url must show the logo, not bare text ----
+     This is why the Vercel link used to look unbranded when shared. Vercel serves
+     static files with no server, so the old {{ORIGIN}} placeholder in index.html
+     reached crawlers literally and resolved to nothing. index.html therefore
+     hardcodes its og:image / twitter:image / canonical urls to the public Vercel
+     build; server.js must NOT rewrite absolute http(s) urls, so the hub now emits
+     the same stable share image. A relative or placeholder og:image is ignored by
+     every crawler. */
+  const home=await (await fetch(base+'/')).text();
+  assert(!/<meta property="og:image" content="\/(?!\/)/.test(home),'a root-relative og:image is ignored by every crawler');
+  const ogImage=(home.match(/property="og:image" content="([^"]+)"/)||[])[1]||'';
+  assert(/^https:\/\//.test(ogImage),'og:image must be absolute, got: '+ogImage);
+  assert(ogImage.endsWith('/assets/logo-social.png'),'og:image must point at the share card');
+  assert(home.includes('property="og:image:width" content="1200"'),'the share card is 1200px wide');
+  assert(home.includes('property="og:image:height" content="630"'),'the share card is 630px tall');
+  assert(home.includes('name="twitter:card" content="summary_large_image"'),'X needs an explicit card type');
+  assert(home.includes('rel="canonical"'),'a shared url should declare a canonical address');
+  const card=await fetch(base+'/assets/logo-social.png');
+  assert.equal(card.status,200,'the share card must be reachable without sign-in');
+  assert.equal(card.headers.get('content-type'),'image/png');
+  const cardBuf=Buffer.from(await card.arrayBuffer());
+  assert.equal(cardBuf.readUInt32BE(16),1200,'share card width must match og:image:width');
+  assert.equal(cardBuf.readUInt32BE(20),630,'share card height must match og:image:height');
+  const poster=await fetch(base+'/assets/kingdom-bible-product-preview.jpg?v=1.2.12');
+  assert.equal(poster.headers.get('content-type'),'image/jpeg','the Render hub must serve the demo poster with its image MIME type');
+  const media=await fetch(base+'/assets/kingdom-bible-product-preview.mp4?v=1.2.12',{headers:{range:'bytes=0-63'}});
+  assert.equal(media.status,206,'the Render hub must support byte-range video playback');
+  assert.equal(media.headers.get('content-type'),'video/mp4');
+  assert.equal(media.headers.get('content-range').split('/')[0],'bytes 0-63');
+  assert.equal((await media.arrayBuffer()).byteLength,64,'a media seek must return only the requested range');
+  /* {{ORIGIN}} is gone from index.html, but the injection path must stay safe for
+     any page that still uses it — a hostile header must never inject markup.
+     index.html legitimately boots the theme with a bare inline <script>, so the
+     guard matches the hostile PAYLOAD, never a <script> the page already has. */
+  const spoof=await (await fetch(base+'/',{headers:{'x-forwarded-host':'evil.example.com"><script>alert(1)</script>'}})).text();
+  assert(!/<script>alert\(1\)<\/script>/.test(spoof),'a hostile x-forwarded-host must never reach the HTML');
+  assert(!spoof.includes('evil.example.com'),'a rejected host must not be echoed back at all');
+
+  /* ---- referral link is shareable and credits the inviter ---- */
+  const w=await request('/api/wallet',{headers:{cookie:a.session}});
+  assert.equal(w.body.referral.code,a.body.user.referralCode);
+  assert.equal(w.body.referral.invited,1,'the referral count must reflect the invited account');
+  assert.equal(w.body.referral.balance,100);
+  assert.equal(w.body.referral.canWithdraw,false,'₦100 is below the ₦1,000 withdrawal minimum');
+  assert.equal(w.body.referral.shortfall,900,'the shortfall to the minimum must be exact');
+  assert(w.body.referral.link.includes(a.body.user.referralCode),'the referral link must carry the code');
+  assert(w.body.ledger.some(x=>x.type==='signup'),'the signup reward must appear in the ledger');
+  const low=await request('/api/wallet/withdraw',{method:'POST',headers:{cookie:a.session},body:JSON.stringify({amount:100,accountName:'A',bankCode:'058',accountNumber:'0123456789'})});
+  assert.equal(low.r.status,400,'a withdrawal below the minimum must be rejected');
+  assert.equal((await request('/api/wallet')).r.status,401,'wallet must require sign-in');
+
+  /* ---- profile photo: accepted, validated, and cleared ---- */
+  const px='data:image/png;base64,'+Buffer.from('fake-png-bytes').toString('base64');
+  const prof=await request('/api/account/profile',{method:'POST',headers:{cookie:a.session},body:JSON.stringify({name:'Ada Lovelace',avatar:px})});
+  assert.equal(prof.r.status,200);
+  assert.equal(prof.body.user.name,'Ada Lovelace');
+  assert.equal(prof.body.user.avatar,px,'the profile photo must be stored on the account');
+  assert.equal((await request('/api/auth/me',{headers:{cookie:a.session}})).body.user.avatar,px,'the photo must come back on the account, not just the device');
+  const adminAfterPhoto=await request('/api/admin/overview',{headers:{cookie:admin.session}});
+  assert(!('avatar' in adminAfterPhoto.body.users.find(u=>u.id===a.body.user.id)),'admin search data must not download profile photos');
+  const bad=await request('/api/account/profile',{method:'POST',headers:{cookie:a.session},body:JSON.stringify({avatar:'data:text/html;base64,PHNjcmlwdD4='})});
+  assert.equal(bad.r.status,400,'a non-image data URL must be rejected');
+  /* ~525 KB decoded: over the 512 KB image ceiling but inside the transport allowance,
+     so the route itself must reject it with a message the reader can act on. */
+  const bigRes=await request('/api/account/profile',{method:'POST',headers:{cookie:a.session},body:JSON.stringify({avatar:'data:image/png;base64,'+'A'.repeat(700*1024)})});
+  assert.equal(bigRes.r.status,400,'an oversized photo must be rejected');
+  assert(/smaller than 512 KB/.test(bigRes.body.error),'the size rejection must be explained');
+  /* Beyond even the transport allowance: still a readable error, never a dropped socket. */
+  const hugeRes=await request('/api/account/profile',{method:'POST',headers:{cookie:a.session},body:JSON.stringify({avatar:'data:image/png;base64,'+'A'.repeat(2*1024*1024)})});
+  assert.equal(hugeRes.body.error,'Payload too large','an oversized request must explain itself, not fail silently');
+  assert.equal((await request('/api/account/profile',{method:'POST',headers:{cookie:a.session},body:JSON.stringify({avatar:''})})).body.user.avatar,'','the photo must be removable');
+
+  /* ---- "keep me signed in" is a cookie lifetime decision, not stored plaintext ---- */
+  const keep=await request('/api/auth/login',{method:'POST',body:JSON.stringify({email:'a@example.com',password:'password-a',remember:true})});
+  assert(/Max-Age=/.test(keep.cookie),'remembering must promote the session to a 30-day cookie');
+  const temp=await request('/api/auth/login',{method:'POST',body:JSON.stringify({email:'a@example.com',password:'password-a',remember:false})});
+  assert(!/Max-Age=/.test(temp.cookie),'opting out must leave a session cookie that dies with the browser');
+
+  /* ---- forgot password: no account enumeration, admin-issued single-use code ---- */
+  const known=await request('/api/auth/password/forgot',{method:'POST',body:JSON.stringify({email:'a@example.com'})});
+  const unknown=await request('/api/auth/password/forgot',{method:'POST',body:JSON.stringify({email:'nobody@example.com'})});
+  assert.equal(known.r.status,202);
+  assert.equal(known.body.message,unknown.body.message,'a reset request must not reveal whether an account exists');
+  const noCode=await request('/api/auth/password/reset',{method:'POST',body:JSON.stringify({email:'a@example.com',code:'000000',newPassword:'brand-new-pass'})});
+  assert.equal(noCode.r.status,400,'a reset without an issued code must be refused');
+  const issue=await request('/api/admin/users/'+a.body.user.id+'/password-code',{method:'POST',headers:{cookie:admin.session},body:'{}'});
+  assert.equal(issue.r.status,200);
+  assert(/^\d{6}$/.test(issue.body.code),'the reset code must be 6 digits');
+  const wrongCode=String((Number(issue.body.code)+1)%1000000).padStart(6,'0');
+  for(let attempt=0;attempt<5;attempt++)assert.equal((await request('/api/auth/password/reset',{method:'POST',body:JSON.stringify({email:'a@example.com',code:wrongCode,newPassword:'brand-new-pass'})})).r.status,400,'a wrong reset code must be refused');
+  assert.equal((await request('/api/auth/password/reset',{method:'POST',body:JSON.stringify({email:'a@example.com',code:issue.body.code,newPassword:'brand-new-pass'})})).r.status,400,'five guesses must invalidate the one-time code');
+  const reissue=await request('/api/admin/users/'+a.body.user.id+'/password-code',{method:'POST',headers:{cookie:admin.session},body:'{}'});
+  assert.equal(reissue.r.status,200,'an administrator can replace an exhausted code');
+  assert.equal((await request('/api/auth/password/reset',{method:'POST',body:JSON.stringify({email:'a@example.com',code:issue.body.code,newPassword:'brand-new-pass'})})).r.status,400,'issuing a replacement must invalidate every older code');
+  assert.equal((await request('/api/auth/password/reset',{method:'POST',body:JSON.stringify({email:'a@example.com',code:reissue.body.code,newPassword:'short'})})).r.status,400,'a too-short new password must be refused');
+  const done=await request('/api/auth/password/reset',{method:'POST',body:JSON.stringify({email:'a@example.com',code:reissue.body.code,newPassword:'brand-new-pass'})});
+  assert.equal(done.r.status,200,'the current issued code must work');
+  assert.equal((await request('/api/auth/login',{method:'POST',body:JSON.stringify({email:'a@example.com',password:'password-a'})})).r.status,401,'the old password must stop working');
+  assert.equal((await request('/api/auth/login',{method:'POST',body:JSON.stringify({email:'a@example.com',password:'brand-new-pass'})})).r.status,200,'the new password must work');
+  assert.equal((await request('/api/auth/password/reset',{method:'POST',body:JSON.stringify({email:'a@example.com',code:reissue.body.code,newPassword:'another-pass-x'})})).r.status,400,'a reset code must be single-use');
+  assert(!JSON.stringify(JSON.parse(fs.readFileSync(store,'utf8'))).includes(reissue.body.code),'the plaintext reset code must not be written to disk');
+
+  /* ---- withdrawal is gated on the real balance and reports progress honestly ---- */
+  const loginA=await request('/api/auth/login',{method:'POST',body:JSON.stringify({email:'a@example.com',password:'brand-new-pass'})});
+  const funded=await request('/api/wallet',{headers:{cookie:loginA.session}});
+  const bal=Number(funded.body.referral.balance);
+  assert.equal(funded.body.referral.minWithdrawal,1000,'the minimum must be advertised to the client');
+  assert.equal(funded.body.referral.canWithdraw,bal>=1000,'the withdraw gate must follow the ₦1,000 minimum exactly');
+  assert.equal(funded.body.referral.shortfall,Math.max(0,1000-bal),'the shortfall must equal what is still missing');
+  const over=await request('/api/wallet/withdraw',{method:'POST',headers:{cookie:loginA.session},body:JSON.stringify({amount:bal+1,accountName:'Ada',bankCode:'058',accountNumber:'0123456789'})});
+  assert.equal(over.r.status,400,'a withdrawal above the balance must be refused');
+  const noBank=await request('/api/wallet/withdraw',{method:'POST',headers:{cookie:loginA.session},body:JSON.stringify({amount:1,accountName:'',bankCode:'',accountNumber:''})});
+  assert.equal(noBank.r.status,400,'bank details must be required');
+  /* Cross the real threshold using signup rewards, then prove payout metadata is
+     masked in the overview and exposed only by the authenticated, audited route. */
+  for(let i=0;i<9;i++){
+    const invite=await request('/api/auth/register',{method:'POST',body:JSON.stringify({email:'payout-invite-'+i+'@example.com',password:'password-invite-'+i,referralCode:a.body.user.referralCode})});
+    assert.equal(invite.r.status,201);
+  }
+  const payoutWallet=await request('/api/wallet',{headers:{cookie:loginA.session}});
+  assert.equal(payoutWallet.body.referral.balance,1000,'nine additional signup rewards must bring the inviter to the threshold');
+  const payoutRequest=await request('/api/wallet/withdraw',{method:'POST',headers:{cookie:loginA.session},body:JSON.stringify({amount:1000,accountName:'Ada Lovelace',bankCode:'058',accountNumber:'0123456789'})});
+  assert.equal(payoutRequest.r.status,201);
+  const payoutId=payoutRequest.body.withdrawal.id;
+  assert.equal((await request('/api/admin/withdrawals/'+payoutId+'/details',{headers:{cookie:loginA.session}})).r.status,403,'members cannot view protected payout details');
+  const payoutOverview=await request('/api/admin/overview',{headers:{cookie:admin.session}});
+  const listedPayout=payoutOverview.body.withdrawals.find(w=>w.id===payoutId);
+  assert.equal(listedPayout.accountNumberLast4,'6789','the overview must provide only the final four digits');
+  assert(!('accountNumber' in listedPayout),'the overview must never include the full bank number');
+  assert(!JSON.stringify(payoutOverview.body).includes('0123456789'),'full bank details must not leak through another overview field');
+  assert.equal(payoutOverview.body.summary.pendingWithdrawalNaira,1000,'pending payout totals must be computed from the complete store');
+  const protectedDetails=await request('/api/admin/withdrawals/'+payoutId+'/details',{headers:{cookie:admin.session}});
+  assert.equal(protectedDetails.r.status,200);
+  assert.match(protectedDetails.r.headers.get('cache-control')||'',/no-store/,'sensitive payout details must never be cached');
+  assert.equal(protectedDetails.body.withdrawal.accountNumber,'0123456789','a deliberate admin reveal must return the full account number');
+  const auditAfterReveal=(await request('/api/admin/overview',{headers:{cookie:admin.session}})).body.audit;
+  assert(auditAfterReveal.some(x=>x.event==='admin.withdrawal.details'&&x.details.withdrawalId===payoutId),'viewing payout details must be audited');
+  const payoutPaid=await request('/api/admin/withdrawals/'+payoutId+'/pay',{method:'POST',headers:{cookie:admin.session},body:'{}'});
+  assert.equal(payoutPaid.r.status,200);assert.equal(payoutPaid.body.withdrawal.status,'paid');
+  assert(!('accountNumber' in payoutPaid.body.withdrawal),'the payment confirmation must not echo sensitive bank details');
+  assert.equal((await request('/api/admin/withdrawals/'+payoutId+'/pay',{method:'POST',headers:{cookie:admin.session},body:'{}'})).r.status,409,'a paid withdrawal cannot be marked paid twice');
+  const settledOverview=(await request('/api/admin/overview',{headers:{cookie:admin.session}})).body;
+  assert.equal(settledOverview.summary.pendingWithdrawals,0);assert.equal(settledOverview.summary.paidWithdrawals,1);
+  assert.equal(settledOverview.withdrawals.find(w=>w.id===payoutId).status,'paid');
+
+  /* ---- the client must be able to tell people an update is ready ---- */
+  const appjs=await (await fetch(base+'/app.js')).text();
+  assert(appjs.includes('updatefound'),'the client must watch for a waiting service worker');
+  assert(appjs.includes('applyUpdate'),'the client must offer an update action');
+  const premiumjsText=await (await fetch(base+'/premium.js')).text();
+  assert(!/23481344338808/.test(appjs+premiumjsText),'no bundle may hardcode the old wrong number');
+  assert(premiumjsText.includes('forgotLink')||premiumjsText.includes('function forgot'),'the sign-in screen must offer password recovery');
+  assert(appjs.includes("onPasswordReset=msg=>{toast(msg||'Password updated")&&appjs.includes("openAuth('login')"),'successful recovery must take the user back to sign-in with the remembered email');
+  assert(premiumjsText.includes('passwordResetEmailEnabled')&&premiumjsText.includes('check your inbox'),'self-service recovery must show email instructions when a provider is configured');
+  assert(premiumjsText.includes('paystackReady')&&premiumjsText.includes('Checkout unavailable'),'subscription buttons must fail closed when Paystack is not configured');
+  assert(premiumjsText.includes("return host+'/?upgrade=1'")&&premiumjsText.includes('Open account service'),'the static reader must direct signup/recovery to the live account service');
+
+  /* ---- the icons must be derived from the real logo, not a stand-in mark ---- */
+  for(const icon of ['/favicon.svg','/icons/icon-192.png','/icons/maskable-512.png','/favicon.png']){
+    const r=await fetch(base+icon);assert.equal(r.status,200,icon+' must be served');
+    assert((await r.arrayBuffer()).byteLength>1000,icon+' must not be an empty placeholder');
+  }
+  const icon192=await fetch(base+'/icons/icon-192.png');
+  assert.equal(icon192.headers.get('content-type'),'image/png','the app icon must be a real PNG');
+
+  console.log('✓ premium trial, referral wallet, admin grant, legal routes, support number, profile photo, keep-me-signed-in, password recovery, update notification');
+/* ---- admin can reset or delete an account ---- */
+  {
+    /* The portal previously had no way to remove the throwaway accounts created while
+       testing, and no way to hand an account back to its owner in a clean state. */
+    const t=await request('/api/auth/register',{method:'POST',body:JSON.stringify({email:'throwaway@example.com',password:'password-t',name:'T'})});
+    assert.equal(t.r.status,201);
+    const id=t.body.user.id;
+    /* Give it a paid plan first, so the reset has something real to remove. */
+    await request('/api/admin/users/'+id+'/entitlement',{method:'POST',headers:{cookie:admin.session},body:JSON.stringify({plan:'premium',forever:true})});
+    const reset=await request('/api/admin/users/'+id+'/reset',{method:'POST',headers:{cookie:admin.session},body:JSON.stringify({})});
+    assert.equal(reset.r.status,200);
+    assert.equal(reset.body.user.status,'trial','a reset account must go back to the 30-day free trial');
+    assert.equal(reset.body.user.plan,'trial','a reset must drop the granted subscription');
+    assert.equal(reset.body.sessionsEnded,1,'a reset must end the account live sessions');
+    const stale=await request('/api/auth/me',{headers:{cookie:t.session}});
+    assert.equal(stale.body.user,null,'the old session must not survive a reset');
+    const stranger=await request('/api/admin/users/'+id+'/reset',{method:'POST',body:JSON.stringify({})});
+    assert.equal(stranger.r.status,403,'reset must be refused without an administrator session');
+
+    const gone=await request('/api/admin/users/'+id,{method:'DELETE',headers:{cookie:admin.session}});
+    assert.equal(gone.r.status,200);
+    assert.equal(gone.body.email,'throwaway@example.com');
+    const twice=await request('/api/admin/users/'+id,{method:'DELETE',headers:{cookie:admin.session}});
+    assert.equal(twice.r.status,404,'deleting an already-removed account must 404, not silently succeed');
+    const signin=await request('/api/auth/login',{method:'POST',body:JSON.stringify({email:'throwaway@example.com',password:'password-t'})});
+    assert.equal(signin.r.status,401,'a deleted account must not be able to sign in');
+    /* the whole point of deleting a test account: the email is free to sign up again */
+    const again=await request('/api/auth/register',{method:'POST',body:JSON.stringify({email:'throwaway@example.com',password:'password-t',name:'T'})});
+    assert.equal(again.r.status,201,'the email must be free to register again after deletion');
+    const noAdmin=await request('/api/admin/users/'+again.body.user.id,{method:'DELETE'});
+    assert.equal(noAdmin.r.status,403,'deletion must be refused without an administrator session');
+    const wrongMethod=await request('/api/admin/users/'+again.body.user.id,{method:'GET',headers:{cookie:admin.session}});
+    assert.equal(wrongMethod.r.status,404,'a GET must never delete an account');
+    await request('/api/admin/users/'+again.body.user.id,{method:'DELETE',headers:{cookie:admin.session}});
+    const auditLog=(await request('/api/admin/overview',{headers:{cookie:admin.session}})).body.audit.map(x=>x.event);
+    assert(auditLog.includes('admin.user.reset'),'a reset must be recorded in the activity log');
+    assert(auditLog.includes('admin.user.delete'),'a deletion must be recorded in the activity log');
+    console.log('✓ Admin account reset and deletion, sessions invalidated, both audited');
+  }
+
+  /* ---- client account flow: a fresh signup must land on Home, not the plan wall ---- */
+  {
+    const app=fs.readFileSync(path.join(__dirname,'..','public','app.js'),'utf8');
+    const prem=fs.readFileSync(path.join(__dirname,'..','public','premium.js'),'utf8');
+    assert(!/user=d\.user;g\.onAuth&&g\.onAuth\(user\);account\(\)/.test(prem),
+      'sign-in must not open the plan screen immediately after authenticating');
+    assert(!/user=d\.user;g\.onAuth&&g\.onAuth\(user\);account\(\)/.test(prem.split('googleButton')[1]||''),
+      'Google sign-in must not open the plan screen either');
+    assert(/function afterAuth\(u\)\{[\s\S]{0,120}close\(\)/.test(prem),
+      'afterAuth must hand control back to the shell and close the modal');
+    assert(/navigate\('home',true\)/.test(app),'a completed sign-in must navigate to Home');
+    /* Signing in lands people on the plan screen, so that screen must offer an explicit
+       way back into the app — otherwise a free trial feels like a paywall with no exit.
+       It reuses afterAuth on purpose: one tested path, not a second one that can drift. */
+    assert(/id="trialContinue"/.test(prem),'the account/plan screen must render a continue button');
+    assert(/Continue my free trial/.test(prem),'a trial user must be offered a "Continue my free trial" button');
+    assert(/trialContinue[\s\S]{0,80}afterAuth\(user\)/.test(prem),'the continue button must reuse the post-sign-in path');
+    assert(/\$\{continueBlock\}/.test(prem),'the continue block must actually be rendered into the modal');
+    /* "Google sign-in is not configured" appeared under the sign-in form on a server
+       that was completely healthy. loadGoogle() judged `config` before it had loaded,
+       then cached the REJECTED promise, so a single early failure (a blip on a phone
+       hotspot) broke Google sign-in for the rest of the page session. */
+    assert(/async function ensureConfig\(\)/.test(prem),'Google sign-in must wait for the config rather than assume it arrived');
+    assert(/googleReady\.catch\(\(\)=>\{googleReady=null\}\)/.test(prem),'a failed Google load must not be cached forever');
+    assert(!/Google sign-in is not configured/.test(prem),'the bare "not configured" message must be replaced with actionable copy');
+    assert(/sign in with your email and password/.test(prem),'a Google failure must tell the reader to use email instead');
+    /* "api.renderButton is not a function" was thrown on a healthy server. Google's
+       initialize() returns undefined, so chaining renderButton off the promise that
+       initialize() produced handed renderButton undefined. Both calls must now live
+       inside ONE .then() callback, with renderButton never chained off initialize(). */
+    assert(!/\.then\(\s*api\s*=>\s*api\.renderButton/.test(prem),
+      'renderButton must never be chained onto the promise returned by initialize() (initialize() returns undefined)');
+    assert(/\.then\(\s*api\s*=>\s*\{[\s\S]{0,400}?api\.initialize\([\s\S]{0,1200}?api\.renderButton\(/.test(prem),
+      'initialize() and renderButton() must both be called inside the same .then() callback');
+    assert(/api\.renderButton\(host/.test(prem),'renderButton must mount onto the host element');
+    assert(/if\s*\(\s*!errorBox\.parentNode\s*\)/.test(prem),
+      'a Google sign-in error must not append a duplicate error box on every retry');
+    /* applyAccount used to re-assign KingdomPremium.onAuth, silently replacing the
+       shell handler: the gate never closed on signup and sign-out did nothing. */
+    const applyLine=(app.split('function applyAccount')[1]||'').split('\n').find(l=>/accountState=u\?/.test(l))||'';
+    assert(!/KingdomPremium\.onAuth/.test(applyLine),'applyAccount must not overwrite KingdomPremium.onAuth');
+    assert(/if\(!u\)\{applyAccount\(null\)/.test(app),'a sign-out (onAuth null) must clear the account and restore the gate');
+    assert(/id="profileSignOut"/.test(app),'Profile must render a sign-out button');
+    assert(/profileSignOut[\s\S]{0,200}signOut\?\.\(\)/.test(app),'the Profile sign-out button must call KingdomPremium.signOut');
+    assert(/shareApp,signOut,supportText/.test(prem),'premium.js must export signOut');
+    assert(/await signOut\(\)/.test(prem),'the in-modal sign out must reuse the shared signOut helper');
+    assert(/function saveQuiet\(\)/.test(app),'a DOM-free persist must exist for the voice path');
+    /* the notification bell used to be a permanent "No new notifications" toast:
+       a dead control that looked live. It must now report real account state. */
+    assert(!/notifBtn'\)\.onclick=\(\)=>toast\('No new notifications'\)/.test(app),
+      'the notification bell must not be a hard-coded "no notifications" toast');
+    assert(/function openNotifications\(\)/.test(app),'the bell must open a real notifications view');
+    assert(/function notifItems\(\)/.test(app),'notifications must be derived from the real account state');
+    assert(/\.classList\.toggle\('has-dot'/.test(app),'the bell must show an unread marker when something needs attention');
+    assert(/bindNotifications\(\);/.test(app.split('KingdomPremium.onAuth=')[1]||''),
+      'the bell must refresh when the account changes');
+    /* stale copy: accounts and photo sync genuinely work now */
+    assert(!/Secure multi-device accounts are not connected/.test(app),
+      'Profile must not still claim accounts are not connected');
+    const css=fs.readFileSync(path.join(__dirname,'..','public','styles.css'),'utf8');
+    assert(/\.icon-btn\.has-dot/.test(css),'the unread marker needs a style');
+  }
+
+  console.log('✓ Client account flow: home after sign-in, reachable sign-out');
+  console.log('✓ Notifications reflect real account state; stale profile copy removed');
+}catch(e){console.error(e.stack||e);process.exitCode=1}finally{child.kill('SIGTERM');try{fs.unlinkSync(store)}catch{}}})();

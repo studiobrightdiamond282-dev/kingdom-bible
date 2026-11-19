@@ -1,0 +1,13 @@
+# Never upload local secrets or machine-local state.
+# Git integration already skips these (they are in .gitignore), but a manual
+# `vercel deploy` from this folder uploads the working tree and would
+# otherwise have nothing stopping .env — which holds the live ADMIN_PASSWORD
+# and PAYSTACK_SECRET_KEY — from leaving the machine.
+.env
+.env.*
+HANDOVER.md
+.data/
+.kilo/
+.vercel/
+node_modules/
+.git/

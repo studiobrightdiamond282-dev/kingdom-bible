@@ -1,128 +1,224 @@
 #!/usr/bin/env node
-/* Speech-to-command coverage for Voice Preacher Mode. This drives the actual
-   voice.js module with a deterministic fake SpeechRecognition implementation;
-   it does not require or claim to test a physical microphone/browser service. */
-const fs=require('fs');
-const path=require('path');
+'use strict';
+/* Voice Preacher Mode timing tests. These use a tiny Web Speech API/DOM double so
+   the important contract is exercised without a browser: every interim frame is
+   scanned, edge references use their fuses, and dispatch-time locking suppresses
+   duplicate recogniser frames. */
 const assert=require('assert');
-const KingdomRef=require('../public/bible-ref.js');
-const KingdomNav=require('../public/ministry-nav.js');
+const REF=require('../public/bible-ref.js');
 const books=require('../public/data/books.json').books;
-const bible=require('../public/data/bible_kjv.json').books;
-const {createVoiceHarness}=require('./voice-harness');
 
-let pass=0,fail=0;
-const ok=(name,cond,extra)=>{
-  if(cond){pass++;console.log('  PASS',name)}
-  else{fail++;console.log('  FAIL',name,extra===undefined?'':JSON.stringify(extra))}
-};
-
-function makePassage(hit,tr='kjv'){
-  const book=books[hit.book],chapter=bible[hit.book]&&bible[hit.book][hit.chapter-1];
-  if(!book||!chapter)return null;
-  const first=hit.verse==null?1:hit.verse;
-  if(first<1||first>chapter.length)return null;
-  const last=Math.min(hit.verseEnd||first,chapter.length,first+39);
-  const verses=[];
-  for(let n=first;n<=last;n++)verses.push({n,text:chapter[n-1]});
-  const label=book.name+' '+hit.chapter;
-  const ref=hit.verse==null?label:verses.length===1?label+':'+first:label+':'+first+'-'+last;
-  return{book:hit.book,chapter:hit.chapter,verse:first,verseEnd:last,verses,
-    text:verses.map(v=>v.text).join(' '),ref,label,translation:tr};
+class Element{
+  constructor(){this.className='';this.innerHTML='';this.textContent='';this.value='';this.onclick=null;this.onchange=null;this.classList={toggle:()=>{}};this.style={}}
+  setAttribute(){}
 }
-const loadBook=async(tr,book)=>({chapters:bible[book]});
-const getPassage=async(hit,tr)=>makePassage(hit,tr);
+const elements=new Map();
+for(const id of ['voiceMic','voiceStatus','voiceHint','voiceTranscript','voiceLog','voiceTr','voiceLang','voiceAuto','voiceNumStyle','voiceDevice','voiceMeterFill','voiceMeterHint'])elements.set('#'+id,new Element());
+global.document={querySelector:s=>elements.get(s)||new Element()};
+global.localStorage={getItem:()=>null,setItem:()=>{}};
+global.location={hostname:'localhost'};
+global.isSecureContext=true;
+let recogniser=null;
+class FakeSpeechRecognition{
+  constructor(){recogniser=this}
+  start(){this.started=true}
+  stop(){this.stopped=true}
+}
+global.SpeechRecognition=FakeSpeechRecognition;
+global.KingdomRef=REF;
+delete require.cache[require.resolve('../public/voice.js')];
+require('../public/voice.js');
+const Voice=global.KingdomVoice;
+const hooks={books,present:hit=>{calls.push(hit);return Promise.resolve({ref:REF.format(hit,books)})},gotoVerse:()=>Promise.resolve({ref:'John 3:16'}),next:()=>Promise.resolve(),prev:()=>Promise.resolve(),blank:()=>Promise.resolve(),show:()=>Promise.resolve(),notify:()=>{}};
+let calls=[];
 
-(async()=>{
-  console.log('\n--- Voice Preacher Mode recognition -> commands ---');
-  let current=makePassage({book:0,chapter:1,verse:1});
-  const notifications=[];
-  const hooks={
+function frame(text,isFinal=false){
+  recogniser.onresult({resultIndex:0,results:[Object.assign({isFinal}, {'0':{transcript:text}})]});
+}
+function wait(ms){return new Promise(resolve=>setTimeout(resolve,ms))}
+async function main(){
+  Voice.bind(hooks);
+  Voice.start();
+  assert(recogniser,'Voice Mode started a recogniser double');
+
+  /* More words after a complete verse means no pause/final result is needed. */
+  frame('John 3:16 for the next point');
+  assert.equal(calls.length,1,'a complete interim reference followed by speech dispatches immediately');
+  Voice.stop(true);
+
+  /* A verse at the edge gets only the 350 ms fuse. */
+  calls=[];Voice.start();frame('John 3:16');
+  assert.equal(calls.length,0,'edge verse waits for its short fuse');
+  await wait(380);
+  assert.equal(calls.length,1,'edge verse dispatches after 350 ms');
+  Voice.stop(true);
+
+  /* Chapter-only references get the longer 1.1 s hold for a following verse. */
+  calls=[];Voice.start();frame('John 3');
+  await wait(400);
+  assert.equal(calls.length,0,'chapter-only reference is held while a verse may follow');
+  await wait(760);
+  assert.equal(calls.length,1,'chapter-only reference dispatches after 1.1 s');
+  Voice.stop(true);
+
+  /* Dispatch-time locking wins even when the first display send is still pending. */
+  calls=[];Voice.start();
+  frame('John 3:16 for the next point');
+  frame('John 3:16 for the next point');
+  assert.equal(calls.length,1,'the same verse is locked at dispatch and cannot fire twice');
+  Voice.stop(true);
+
+  /* A reference split across a recogniser restart is still resolved: Chrome ends
+     a session on its own, and "the book of" must not be lost with it. */
+  calls=[];Voice.start();
+  const firstRun=recogniser;
+  frame('the book of',true);
+  firstRun.onend();                      /* Chrome closed the session itself */
+  await wait(120);
+  assert(recogniser&&recogniser!==firstRun,'the recogniser restarted with a fresh session');
+  frame('John 3:16 for the next point');
+  assert.equal(calls.length,1,'a reference spanning a recogniser restart still reaches the display');
+  Voice.stop(true);
+
+  /* Waiting for a reference must never throw the listening session away. */
+  calls=[];Voice.start();
+  const ended=recogniser;
+  ended.onend();
+  await wait(120);
+  assert(recogniser&&recogniser!==ended,'the recogniser restarts promptly after an unexpected end');
+  assert.equal(ended.stopped,undefined,'a restart never stops the recogniser it replaced');
+  assert.equal(recogniser.stopped,undefined,'the live recogniser keeps listening');
+  Voice.stop(true);
+
+  /* ---- the book must survive "Jude verse five" ------------------------------
+     Regression: the spoken word "verse" becomes a colon, so "jude:5" had no
+     whitespace for the scanner and the book was DISCARDED, leaving a bare
+     contextual "verse 5" that app.js resolved inside whatever was on screen —
+     preaching Romans 8 and saying "Jude verse five" put ROMANS 8:5 up. */
+  calls=[];Voice.start();
+  frame('Jude verse five for the next point');
+  assert.equal(calls.length,1,'Jude verse five reached the display');
+  const jude=calls[0];
+  assert.equal(jude.type,'ref','a named single-chapter book resolves as a full reference, not a bare verse');
+  assert.equal(jude.chapter,1,'Jude has one chapter');
+  assert.equal(jude.verse,5,'and it is verse 5');
+  Voice.stop(true);
+
+  /* The named book must travel to the display so a mismatch can be refused. */
+  let seen=null;
+  Voice.bind(Object.assign({},hooks,{gotoVerse:(v,ve,tr,bookHint)=>{seen={verse:v,book:bookHint};return Promise.resolve({ref:'x'})}}));
+  calls=[];Voice.start();
+  frame('John verse sixteen for the next point');
+  assert(seen&&seen.verse===16,'verse 16 was passed to the display');
+  assert(seen&&seen.book!=null,'the spoken book was passed to the display instead of being dropped');
+  Voice.stop(true);
+
+  /* Two different books at the same verse number must not be swallowed as
+     duplicates of one another by the dedupe key. */
+  Voice.bind(hooks);calls=[];Voice.start();
+  frame('Jude verse five for the next point');
+  frame('Philemon verse five for the next point');
+  assert.equal(calls.length,2,'the same verse number in two books is not a duplicate');
+  Voice.stop(true);
+
+  /* A bare "verse 5" with no book still means the passage on the display. */
+  Voice.bind(Object.assign({},hooks,{gotoVerse:(v,ve,tr,bookHint)=>{seen={verse:v,book:bookHint};return Promise.resolve({ref:'x'})}}));
+  seen=null;calls=[];Voice.start();
+  frame('now verse sixteen for the next point');
+  assert(seen&&seen.verse===16,'a bare verse number still resolves inside the current passage');
+  assert(seen&&seen.book==null,'with no book spoken, no book hint is invented');
+  Voice.stop(true);
+
+  /* ---- spoken numbers, alternatives, versions, prefetch (safe slice) ---- */
+  const R2=require('../public/bible-ref.js');
+  assert.equal(R2.parse('Genesis 13',books).verse,null,'default keeps Genesis 13 as chapter 13');
+  assert.equal(R2.parse('Genesis 13',books).chapter,13,'default chapter is 13');
+  const split=R2.parse('Genesis 13',books,{numberStyle:'split'});
+  assert(split&&split.chapter===1&&split.verse===3,'split mode reads Genesis 13 as 1:3');
+  assert.equal(R2.parse('Psalm 23',books,{numberStyle:'split'}).verse,null,'Psalms never split');
+  assert.equal(R2.parse('Genesis chapter 13',books,{numberStyle:'split'}).verse,null,'explicit chapter never splits');
+  assert.equal(R2.detectVersion('read it in the world english bible',['kjv','asv','web']),'web','spoken version detected');
+  assert.equal(R2.detectVersion('our text for tonight',['kjv','asv','web']),null,'no version invented from plain speech');
+  Voice.bind(hooks);calls=[];Voice.start();
+  recogniser.onresult({resultIndex:0,results:[Object.assign({isFinal:false},{length:2,'0':{transcript:'the lion 3 16 for the next point'},'1':{transcript:'John 3:16 for the next point'}})]});
+  assert.equal(calls.length,1,'an alternative that resolves wins over a miss');
+  assert.equal(calls[0]&&calls[0].book,42,'and it is John');
+  Voice.stop(true);
+  let warmed=null;
+  Voice.bind(Object.assign({},hooks,{warmBook:(tr,bi)=>{warmed=bi}}));
+  calls=[];Voice.start();
+  frame('John 3:16 for the next point');
+  assert.equal(warmed,42,'the spoken book is prefetched at parse time');
+  Voice.stop(true);
+
+  /* ---- preacher flow: Joshua 1:1 -> next -> previous, memory stays on ----
+     Interim "next" must step immediately (not only on final results), and a
+     repeated verse must re-display after the 6 s memory window. */
+  const R3=require('../public/bible-ref.js');
+  assert.equal(R3.command('next'), 'next', 'bare "next" is a command');
+  assert.equal(R3.command('previous'), 'prev', 'bare "previous" is a command');
+  assert.equal(R3.command('the next thing Jesus said was wonderful'), null, 'preaching prose is never a command');
+  const flow={presented:[],nexted:0,preved:0};
+  Voice.bind({
     books,
-    present:async(hit,tr)=>{const p=await getPassage(hit,tr||'kjv');if(p)current=p;return p||{ok:false,error:'Reference not found'}},
-    gotoVerse:async(verse,verseEnd,tr)=>{
-      if(!current)return{ok:false,error:'Send a verse first'};
-      const p=await getPassage({book:current.book,chapter:current.chapter,verse,verseEnd},tr||current.translation);
-      if(p)current=p;
-      return p||{ok:false,error:'Verse not found'};
-    },
-    next:async()=>{const out=await KingdomNav.step(current,1,books,loadBook,getPassage);if(out.ok)current=out.passage;return out.ok?current:out},
-    prev:async()=>{const out=await KingdomNav.step(current,-1,books,loadBook,getPassage);if(out.ok)current=out.passage;return out.ok?current:out},
-    blank:()=>{if(!current)return{ok:false,error:'Send a verse first'};current={...current,blank:true};return{ok:true}},
-    show:()=>{if(!current)return{ok:false,error:'Send a verse first'};current={...current,blank:false};return{ok:true}},
-    notify:(message,type)=>notifications.push({message,type}),
-  };
-  const h=createVoiceHarness(hooks);
-  h.voice.start();
-  ok('recognition starts in a secure supported context',h.voice.listening()&&h.recognition&&h.recognition.started);
+    present:hit=>{flow.presented.push(hit);return Promise.resolve({ref:R3.format(hit,books)})},
+    gotoVerse:()=>Promise.resolve({ref:'x'}),
+    next:()=>{flow.nexted++;return Promise.resolve()},
+    prev:()=>{flow.preved++;return Promise.resolve()},
+    blank:()=>Promise.resolve(),show:()=>Promise.resolve(),notify:()=>{},
+  });
+  Voice.start();
+  frame('Joshua chapter one verse one says be strong');
+  assert(flow.presented.length===1&&flow.presented[0].book===5&&flow.presented[0].chapter===1&&flow.presented[0].verse===1,'Joshua 1:1 displays from an interim frame');
+  frame('next');
+  assert.equal(flow.nexted,1,'interim "next" steps immediately');
+  frame('previous');
+  assert.equal(flow.preved,1,'interim "previous" steps immediately');
+  Voice.stop(true);
 
-  await h.speak('next verse',false);
-  ok('interim command is not fired early',current.ref==='Genesis 1:1');
-  await h.speak('next verse');
-  ok('spoken next verse advances in local fallback',current.ref==='Genesis 1:2',current.ref);
-  await h.speak('previous verse');
-  ok('spoken previous verse returns to the prior verse',current.ref==='Genesis 1:1',current.ref);
-  await h.speak('blank the screen');
-  ok('spoken blank screen blanks the local presentation',current.blank===true);
-  await h.speak('show the verse');
-  ok('spoken show verse restores the presentation',current.blank===false);
+  /* A final command must not fire again when restart-recovery scans its tail. */
+  let nextCalls=0;
+  Voice.bind({books,next:()=>{nextCalls++;return Promise.resolve({ok:true})},prev:()=>Promise.resolve({ok:true}),blank:()=>Promise.resolve({ok:true}),show:()=>Promise.resolve({ok:true}),notify:()=>{}});
+  Voice.start();
+  frame('next verse',true);
+  await wait(0);
+  assert.equal(nextCalls,1,'a final next-verse command runs once, not again from the tail scan');
+  Voice.stop(true);
 
-  await h.speak('John chapter three verse sixteen',false);
-  ok('one unstable interim reference is not sent early',current.ref==='Genesis 1:1');
-  await h.speak('John chapter three verse sixteen',false);
-  ok('stable interim speech resolves and presents the reference',current.ref==='John 3:16',current.ref);
-  ok('reference is logged as delivered',h.elements['#voiceLog'].innerHTML.includes('John 3:16 sent to the display'));
-  await h.speak('next verse');
-  ok('voice next advances the resolved reference',current.ref==='John 3:17',current.ref);
-  await h.speak('previous verse');
-  ok('voice previous returns to the prior reference',current.ref==='John 3:16',current.ref);
+  /* A settled hub/local failure must not be reported as a successful spoken
+     command; blank/show still confirm successful hook results. */
+  const commandNotices=[];
+  Voice.bind({
+    books,
+    present:hit=>Promise.resolve({ref:REF.format(hit,books)}),
+    gotoVerse:()=>Promise.resolve({ref:'John 3:16'}),
+    next:()=>Promise.resolve({ok:false,error:'End of Bible'}),
+    prev:()=>Promise.reject(new Error('hub unavailable')),
+    blank:()=>Promise.resolve({ok:true}),
+    show:()=>Promise.resolve({ok:true}),
+    notify:(message,type)=>commandNotices.push({message,type}),
+  });
+  Voice.start();
+  frame('next');
+  await wait(0);
+  assert(elements.get('#voiceLog').innerHTML.includes('Next verse failed: End of Bible'),
+    'a next boundary error is logged as a failure, not success');
+  frame('previous');
+  await wait(0);
+  assert(elements.get('#voiceLog').innerHTML.includes('Previous verse failed: hub unavailable'),
+    'a rejected previous hook is surfaced as a failure');
+  frame('blank screen');
+  await wait(0);
+  assert(elements.get('#voiceLog').innerHTML.includes('Screen blanked (voice command)'),
+    'a successful blank hook is logged');
+  frame('show the verse');
+  await wait(0);
+  assert(elements.get('#voiceLog').innerHTML.includes('Verse restored (voice command)'),
+    'a successful restore hook is logged');
+  frame('stop listening');
+  assert.equal(Voice.listening(),false,'spoken stop still shuts down the recogniser');
+  assert.equal(recogniser.onresult,null,'stop clears late result callbacks');
 
-  await h.speak('Malachi chapter four verse six');
-  await h.speak('next verse');
-  ok('local navigation crosses from Malachi to Matthew',current.ref==='Matthew 1:1',current.ref);
-  await h.speak('previous verse');
-  ok('local navigation crosses back from Matthew to Malachi',current.ref==='Malachi 4:6',current.ref);
-  await h.speak('John chapter three verse thirty six');
-  await h.speak('next verse');
-  ok('local navigation crosses chapter boundary forward',current.ref==='John 4:1',current.ref);
-  await h.speak('previous verse');
-  ok('local navigation crosses chapter boundary backward',current.ref==='John 3:36',current.ref);
-
-  await h.speak('Genesis chapter one verse one');
-  await h.speak('previous verse');
-  ok('start-of-Bible failure is not logged as a successful command',
-    h.elements['#voiceLog'].innerHTML.includes('Previous verse failed: Start of the Bible')&&
-    h.elements['#voiceLog'].innerHTML.includes('class="vlog miss"'));
-  ok('boundary failure is surfaced to the presenter',notifications.some(n=>n.message==='Start of the Bible'&&n.type==='error'));
-  await h.speak('Revelation chapter twenty two verse twenty one');
-  await h.speak('next verse');
-  ok('end-of-Bible failure is not logged as success',
-    h.elements['#voiceLog'].innerHTML.includes('Next verse failed: End of the Bible'));
-
-  await h.speak('stop listening');
-  ok('spoken stop listening stops recognition',!h.voice.listening()&&h.recognition.stopped);
-  ok('late recognition results are ignored after stopping',await h.speak('next verse')===false);
-  ok('stop command notifies the presenter',notifications.some(n=>n.message==='Voice listening stopped'));
-
-  const blocked=createVoiceHarness({books,notify:(message,type)=>notifications.push({message,type})});
-  blocked.voice.start();
-  blocked.recognition.onerror({error:'not-allowed'});
-  await blocked.flush();
-  ok('microphone permission denial stops listening and explains the problem',
-    !blocked.voice.listening()&&blocked.elements['#voiceStatus'].innerHTML.includes('Microphone blocked')&&
-    blocked.elements['#voiceLog'].innerHTML.includes('Microphone access is blocked'));
-
-  console.log('\n--- Voice Preacher Mode app wiring ---');
-  const app=fs.readFileSync(path.join(__dirname,'../public/app.js'),'utf8');
-  const html=fs.readFileSync(path.join(__dirname,'../public/index.html'),'utf8');
-  const sw=fs.readFileSync(path.join(__dirname,'../public/sw.js'),'utf8');
-  ok('next and previous speech hooks call Ministry navigation',/next:\s*\(\)=>minStep\(1,true\),\s*prev:\s*\(\)=>minStep\(-1,true\)/.test(app));
-  ok('blank and show hooks publish explicit blank/restore state',/blank:\s*\(\)=>\{const c=state\.ministry\.current;return c\?sendPresentation\(\{\.\.\.c,blank:true\}\)/.test(app)&&/show:\s*\(\)=>\{const c=state\.ministry\.current;return c\?sendPresentation\(\{\.\.\.c,blank:false\}\)/.test(app));
-  ok('local navigation uses the tested canon-walk module',/window\.KingdomNav\.step\(state\.ministry\.current,d,books,loadBook,getPassage\)/.test(app));
-  ok('ministry navigation module loads before app.js and is precached',
-    html.indexOf('/ministry-nav.js')>=0&&html.indexOf('/ministry-nav.js')<html.indexOf('/app.js')&&sw.includes("'/ministry-nav.js'"));
-  ok('failed live-hub actions are returned as failures to voice mode',/if\(!out\|\|out\.ok!==true\)[\s\S]*?return\{ok:false,error\}/.test(app));
-
-  console.log('\n'+pass+' passed, '+fail+' failed');
-  if(fail)process.exitCode=1;
-})().catch(e=>{console.error(e);process.exitCode=1});
+  console.log('✓ Voice Preacher Mode interim timing, fuses, dedupe, restart recovery, spoken-book preservation, and command outcomes');
+}
+main().catch(err=>{console.error(err.stack||err);process.exitCode=1});

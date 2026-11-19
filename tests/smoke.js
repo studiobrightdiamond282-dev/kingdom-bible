@@ -10,6 +10,18 @@ for(const tr of ['kjv','asv','web']){const d=JSON.parse(fs.readFileSync(path.joi
 const kjv=JSON.parse(fs.readFileSync(path.join(pub,'data/bible_kjv.json')));assert.equal(kjv.books.flat(2).length,31102);assert(kjv.books[0][0][0].startsWith('In the beginning'));
 const x=JSON.parse(fs.readFileSync(path.join(pub,'data/xrefs/22.json')));assert(x['Isaiah 53:5']?.some(r=>r.startsWith('1 Peter')));
 const html=fs.readFileSync(path.join(pub,'index.html'),'utf8'),app=fs.readFileSync(path.join(pub,'app.js'),'utf8');assert(html.includes('KINGDOM BIBLE'));assert(app.includes('renderBible'));assert(app.includes('renderMinistry'));
+/* Audit every UTF-8 site asset (skip binary images/fonts) and the source xref notes
+   so replacement glyphs cannot slip back into a page or its build input. */
+const walkFiles=dir=>fs.readdirSync(dir,{withFileTypes:true}).flatMap(e=>{
+  const f=path.join(dir,e.name);return e.isDirectory()?walkFiles(f):[f];
+});
+const binaryExts=new Set(['.png','.jpg','.jpeg','.webp','.gif','.ico','.mp4','.webm','.mov','.woff','.woff2','.ttf','.otf']);
+const decodeUtf8=new (require('util').TextDecoder)('utf-8',{fatal:true});
+for(const f of [...walkFiles(pub),path.join(root,'data/raw/xrefs_kjv.tsv')]){
+  if(binaryExts.has(path.extname(f).toLowerCase()))continue;
+  const src=decodeUtf8.decode(fs.readFileSync(f));
+  assert(!/[\u007f-\u009f\ufffd]/.test(src),`${path.relative(root,f)} must not contain C1 controls or replacement glyphs`);
+}
 const swSrc0=fs.readFileSync(path.join(pub,'sw.js'),'utf8');
 
 /* ---- ministry remote + vMix capture ---- */
@@ -35,23 +47,94 @@ assert(css.includes('.remote-body'),'phone remote styles missing');
 assert(css.includes('.connect-card'),'presenter connect card styles missing');
 assert(app.includes('connectCardHtml')&&app.includes('drawQR'),'presenter QR wiring missing');
 
+/* ---- back navigation: Backspace key + on-screen ‹ button ----
+   .icon-btn paints display:grid, which out-specifies the UA rule for [hidden],
+   so the button needs an explicit [hidden] rule or it shows on Home with
+   nowhere to go. The depth stamp is what tells goBack() whether a previous
+   in-app page exists — without it Backspace would walk out of the document. */
+assert(html.includes('id="backBtn"'),'topbar must render the back button');
+assert(html.indexOf('id="backBtn"')<html.indexOf('id="pageTitle"'),'the back button must precede the page title');
+assert(html.includes('aria-label="Go to previous page"'),'back button needs an accessible name');
+assert(css.includes('.back-btn[hidden]{display:none}'),'the back button must actually hide via [hidden]');
+assert(app.includes("e.key==='Backspace'"),'Backspace must be wired to go back');
+assert(app.includes('function goBack()'),'goBack() missing');
+assert(app.includes('if(t&&(/input|textarea|select/i.test(t.tagName)||t.isContentEditable))return;'),'Backspace must never fire while the caret is in a field');
+assert(app.includes('history.pushState({depth:'),'navigate() must stamp history depth so back knows the previous in-app page');
+assert(app.includes('if(presenting())return;'),'back navigation must stay out of the presentation surface');
+
 /* ---- shared reference engine + Voice Preacher Mode ---- */
 assert(fs.existsSync(path.join(pub,'bible-ref.js')),'Missing bible-ref.js (shared reference engine)');
 assert(fs.existsSync(path.join(pub,'voice.js')),'Missing voice.js (Voice Preacher Mode)');
-assert(fs.existsSync(path.join(pub,'ministry-nav.js')),'Missing ministry-nav.js (local presenter navigation)');
+assert(fs.existsSync(path.join(pub,'premium.js')),'Missing premium.js (accounts and subscriptions)');
+assert(fs.existsSync(path.join(pub,'admin.html'))&&fs.existsSync(path.join(pub,'admin-portal.html'))&&fs.existsSync(path.join(pub,'admin.js')),'Missing static admin handoff or gated admin portal');
+assert(fs.existsSync(path.join(pub,'privacy.html'))&&fs.existsSync(path.join(pub,'refund.html')),'Missing legal policy pages');
+const serverPremiumSrc=fs.readFileSync(path.join(root,'server.js'),'utf8');
+const openapi=JSON.parse(fs.readFileSync(path.join(pub,'openapi.json'),'utf8'));
+for(const ep of ['/api/payments/initialize','/api/payments/verify','/api/payments/webhook'])assert(openapi.paths[ep],`OpenAPI must document ${ep}`);
+for(const ep of ['/api/auth/register','/api/auth/login','/api/payments/initialize','/api/payments/webhook','/api/payments/verify','/api/wallet/withdraw','/api/admin/overview','/api/ai/ask','/api/speak'])assert(serverPremiumSrc.includes(ep),`premium endpoint missing ${ep}`);
+assert(serverPremiumSrc.includes('PAYSTACK_SECRET_KEY')&&!serverPremiumSrc.includes('pk_live_15b415df90f55aed4082c964b0fcb61daa642d41'),'live payment credentials must never be hard-coded');
+/* Paystack "pass fees to customers" makes the verified amount the GROSS the
+   customer paid (Nigeria: 1.5% + NGN 100), so a Silver plan charges 263,960
+   kobo instead of 250,000. An exact equality check silently rejected every real
+   payment. Guard against that regression coming back. */
+assert(!/Number\(d\.data\.amount\)\s*===\s*tx\.amount\s*\*\s*100/.test(serverPremiumSrc),'payment verify must not require Paystack amount to equal the plan price exactly (fees are added when the customer bears them)');
+assert(/function validPaystackTransaction[\s\S]*amount>=Number\(tx\.amount\)\*100/.test(serverPremiumSrc),'payment verify and webhook must accept customer-paid Paystack fees while rejecting underpayment');
+assert(serverPremiumSrc.includes("createHmac('sha512'")&&serverPremiumSrc.includes('timingSafeEqual(expected,supplied)'),'Paystack webhooks must verify the provider signature in constant time');
+/* The administrator portal is protected by an authenticated admin session.
+   Both the HTML shell and every admin API must fail closed for non-admin users. */
+assert(/function adminGate\(req\)[\s\S]*?sessionRecord\(req\)[\s\S]*?s\.role!==?'admin'/.test(serverPremiumSrc),'admin access must require a session whose role is admin');
+assert(/p==='\/admin'/.test(serverPremiumSrc)&&/adminGate\(req\)/.test(serverPremiumSrc),'the /admin page itself must be gated so outsiders cannot load the login form');
+assert(/p==='\/admin-portal\.html'/.test(serverPremiumSrc),'the direct authenticated admin-shell path must be gated too');
+assert(fs.readFileSync(path.join(pub,'admin.html'),'utf8').includes('https://kingdom-bible.onrender.com/?admin=1'),'the static admin page must link to the live, gated admin route');
+assert(fs.readFileSync(path.join(pub,'admin-portal.html'),'utf8').includes('id=\"adminApp\"'),'the Node admin route must retain its private portal shell');
+assert(serverPremiumSrc.includes('Administrator access required'),'admin APIs must reject non-admin sessions');
+/* Account reset and deletion. Both are destructive, so both must be reachable only by
+   their own explicit HTTP method — a GET that removes an account would be catastrophic
+   (a prefetch, a crawler, or a link preview could wipe a paying member). */
+assert(/resetUser&&req\.method==='POST'/.test(serverPremiumSrc),'an account reset must require POST');
+assert(/deleteUser&&req\.method==='DELETE'/.test(serverPremiumSrc),'account deletion must require DELETE and must never answer a GET');
+assert(serverPremiumSrc.includes('dropSessionsFor'),'reset and delete must end the account live sessions, or the change silently does nothing for a signed-in person');
+assert(serverPremiumSrc.includes('administrator account cannot be deleted'),'the administrator account must be protected from deletion');
+const adminJsSrc=fs.readFileSync(path.join(pub,'admin.js'),'utf8');
+assert(/data-action="reset-account"/.test(adminJsSrc)&&/data-action="delete-account"/.test(adminJsSrc),'the portal must render reset and delete controls on each account');
+assert(/Type the member’s email to confirm/.test(adminJsSrc)&&/confirmEmail/.test(adminJsSrc),'deletion must require the operator to type the email, so a stray click cannot remove a paying member');
+const premJsSrc=fs.readFileSync(path.join(pub,'premium.js'),'utf8');
+assert(/Continue my free trial/.test(premJsSrc),'a trial user must be able to leave the plan screen and keep using the app');
 assert(html.includes('/bible-ref.js'),'index.html must load bible-ref.js');
+assert(html.includes('/devotionals.js'),'index.html must load devotionals.js (daily library)');
+assert(html.indexOf('/devotionals.js')<html.indexOf('/app.js'),'devotionals.js must load before app.js');
+assert(html.includes('/reading-plans.js')&&html.indexOf('/reading-plans.js')<html.indexOf('/app.js'),'reading-plans.js must load before app.js');
 assert(html.includes('/voice.js'),'index.html must load voice.js');
-assert(html.includes('/ministry-nav.js'),'index.html must load ministry-nav.js');
+assert(html.includes('/premium.js'),'index.html must load premium.js');
 assert(html.indexOf('/bible-ref.js')<html.indexOf('/app.js'),'bible-ref.js must load before app.js');
-assert(html.indexOf('/ministry-nav.js')<html.indexOf('/app.js'),'ministry-nav.js must load before app.js');
-assert(swSrc0.includes('/bible-ref.js')&&swSrc0.includes('/voice.js')&&swSrc0.includes('/ministry-nav.js'),'the service worker must precache the reference engine, voice module and local navigator');
+assert(swSrc0.includes('/bible-ref.js')&&swSrc0.includes('/voice.js')&&swSrc0.includes('/premium.js'),'the service worker must precache the reference, voice, and premium modules');
+assert(swSrc0.includes('/devotionals.js'),'the service worker must precache the devotionals bundle');
+assert(swSrc0.includes('/reading-plans.js'),'the service worker must precache the reading-plan schedule');
+assert(!swSrc0.includes('/admin.js'),'the service worker must not precache the server-only admin UI');
+assert(app.includes('function devotionFor')&&app.includes('function todaysDevotional'),'app.js must rotate daily devotionals by track');
+assert(app.includes('devotionalTrack'),'devotional youth/adult track preference must be wired');
+assert(app.includes('id="devTrack"')&&app.includes('id="devPrev"')&&app.includes('id="devNext"'),'devotional page must keep the youth/adult switch plus Prev/Next day buttons');
+assert(app.includes("devotionalTrack=track==='youth'?'adult':'youth'"),'the track button must actually switch youth/adult');
+assert(app.includes('renderDevotional(offset-1)')&&app.includes('renderDevotional(offset+1)'),'Prev/Next must step backward/forward a day');
+assert(css.includes('.dev-controls'),'dev-controls CSS must exist so the buttons survive the small-phone rule');
+assert(/\.welcome-row \.dev-controls/.test(css),'devotional controls must be exempt from the ≤580px secondary-btn hide');
 assert(app.includes('KingdomRef'),'app.js must use the shared reference engine');
 assert(app.includes('bindVoice')&&app.includes('getPassage'),'Voice Mode + passage resolution wiring missing');
+assert(app.includes('function openManual')&&app.includes('id=\"openManual\"'),'Ministry page must expose the User Manual');
+assert(html.includes('data-admin-trigger')&&app.includes("location.href='/admin'"),'admin portal must use the long-hold logo entrance');
+assert(app.includes('id=\"profileManual\"')&&app.includes('data-cmanual'),'Profile row and Ctrl+K palette must expose the User Manual');
+for(const phrase of ['wrong mic','Voicemeeter','https://','localhost','vMix','OBS','QR'])assert(app.toLowerCase().includes(phrase.toLowerCase()),`User Manual missing ${phrase}`);
+const voiceSrc=fs.readFileSync(path.join(pub,'voice.js'),'utf8');
+assert(voiceSrc.includes('FUSE_MS=350')&&voiceSrc.includes('CHAPTER_HOLD_MS=1100'),'Voice Scripture lock fuse timings missing');
+assert(voiceSrc.includes('dispatchKeys')&&voiceSrc.includes('dispatchKeys.add(key)'),'Voice dedupe key must lock at dispatch time');
 const serverSrc1=fs.readFileSync(path.join(root,'server.js'),'utf8');
 assert(serverSrc1.includes("require('./public/bible-ref.js')"),'server.js must use the shared reference engine');
 /* Voice Preacher Mode needs the microphone for THIS origin only */
 assert(serverSrc1.includes('microphone=(self)'),'server.js must allow microphone for Voice Preacher Mode');
-const vercelCfg=fs.readFileSync(path.join(root,'vercel.json'),'utf8');
+const vercelConfig=JSON.parse(fs.readFileSync(path.join(root,'vercel.json'),'utf8'));
+assert.strictEqual(vercelConfig.buildCommand,'node scripts/build-static.js','Vercel must build static legal contacts and the safe admin handoff');
+assert.strictEqual(vercelConfig.outputDirectory,'dist','Vercel must serve the generated static output, not template files');
+const vercelCfg=JSON.stringify(vercelConfig);
 assert(vercelCfg.includes('microphone=(self)'),'vercel.json must allow microphone for Voice Preacher Mode');
 
 /* Play Store sensitive-permission guard: no Notification.requestPermission anywhere */
@@ -74,7 +157,7 @@ assert(mf.name&&mf.short_name&&mf.start_url&&mf.display,'manifest is incomplete'
 const pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
 const swSrc=fs.readFileSync(path.join(pub,'sw.js'),'utf8');
 const serverSrc=fs.readFileSync(path.join(root,'server.js'),'utf8');
-assert.equal(pkg.version,'1.2.0','package.json version');
+assert.equal(pkg.version,'1.2.12','package.json version');
 assert(serverSrc.includes("VERSION='"+pkg.version+"'"),'server.js must report the same version as package.json');
 assert(swSrc.includes(`kingdom-bible-v${pkg.version}`),'sw.js cache version must match package.json so updates are picked up');
 
@@ -84,6 +167,72 @@ assert(sw.includes('/present')&&sw.includes('network only'),'service worker must
 
 /* the presenter must not fall back to a code-less, localhost-only display URL */
 assert(!/window\.open\('\/present'/.test(app),'presenter must open the LAN display URL with the service code');
+
+/* ---- guest access: essential Bible reading must never be behind an account ----
+   A signed-out visitor used to get a full-screen gate that replaced #main, so no
+   Bible, no service worker, no install prompt and no offline support. */
+assert(!/function showSignInGate/.test(app),'the full-screen sign-in gate must not replace the application for signed-out readers');
+assert(!/showSignInGate\(\)/.test(app),'nothing may re-open the gate, including the sign-out path');
+const initSrc=app.slice(app.indexOf('async function init()'),app.indexOf('function renderNav()'));
+assert(!/if\(!accountState\.signedIn\)\{[^}]*return/.test(initSrc),'init() must not return early for a signed-out visitor');
+assert(/loadHub|navigate\(/.test(initSrc),'init() must still navigate for every visitor');
+/* Removing the reading gate must NOT have removed the guards on other people's data. */
+assert(/if\(!accountState\.signedIn\)\{box\.innerHTML='[\s\S]{0,200}?Sign in to see your referral earnings/.test(app),'the referral wallet must stay hidden from signed-out visitors');
+assert(/registerPWA\(\); networkStatus\(\);/.test(app),'the service worker and network status must be set up for guests too');
+assert(/clearSignInGate\(\);\s*[\r\n]+\s*paintTrialBanner\(\);/.test(app),'init() must tear the gate down and paint the banner for every visitor');
+assert(/s\.status==='signed_out'/.test(app),'the banner must have a signed-out state, not only trial/expired');
+assert(/status==='unknown'/.test(app),'the banner must stay hidden while the session is unresolved so a signed-in reader never sees the guest invite flash');
+assert(/kb\.bannerDismissed\.v1/.test(app),'the guest banner must be dismissible and remember the dismissal');
+assert(/data-banner-x/.test(app),'the guest banner must carry a dismiss control');
+assert(/data-open-auth="register"/.test(app)&&/data-open-auth="login"/.test(app),'the guest banner must offer both create-account and sign-in');
+assert(/openAuth/.test(app),'the guest banner buttons must open the form they promise, via openAuth');
+assert(/body\.gate-open[^{]*\.quick-fab\{display:none!important\}/.test(css),'the floating quick-action button must never sit on top of a full-screen gate');
+
+/* ---- Google sign-in must actually be reachable under the CSP ---- */
+assert(/function openAuth\(mode\)/.test(premJsSrc),'premium.js must offer a direct sign-in/sign-up entry point');
+assert(/g\.KingdomPremium=\{open,openAuth/.test(premJsSrc),'openAuth must be exported on window.KingdomPremium');
+assert(premJsSrc.includes("if(apiState!=='online'){showAccountServiceNotice();return}user?account():auth(mode==='login'?'login':'register')"),'openAuth must open login on the live service and explain the static/offline state');
+for(const [name,src] of [['server.js',serverSrc1],['vercel.json',vercelCfg]]){
+  assert(/script-src[^;]*https:\/\/accounts\.google\.com/.test(src),`${name} CSP must allow the Google Identity Services script`);
+  assert(/connect-src[^;]*https:\/\/accounts\.google\.com/.test(src),`${name} CSP must allow Google sign-in network calls`);
+  assert(/frame-src[^;]*https:\/\/accounts\.google\.com/.test(src),`${name} CSP must allow the Google sign-in popup frame`);
+  assert(/style-src[^;]*https:\/\/accounts\.gstatic\.com/.test(src),`${name} CSP must allow Google's button stylesheet`);
+}
+
+/* ---- home: the personal dashboard, not a marketing explainer ---- */
+assert(app.includes('async function renderHome()'),'renderHome must still be defined');
+assert(app.includes('function renderMinistry()'),'Ministry Mode must still be defined');
+assert(app.includes('KingdomPremium?.open()')&&app.includes('KingdomPremium?.supportText?.()'),'Premium upgrade + WhatsApp support must stay wired from home');
+/* The explainer landing page replaced this screen once and was removed again on
+   the owner's instruction. Pin its absence so it cannot silently come back:
+   the home screen must stay the reader's own dashboard, not a product pitch. */
+for(const dead of ['kbx-home','kbx-hero','KBX_PILLARS','KBX_DEMOS','KINGDOM BIBLE EXPLAINER HOME','bindHomeWalkthrough','initHomeReveal'])
+  assert(!app.includes(dead),`the removed explainer home must not return: ${dead}`);
+assert(!css.includes('kbx-'),'the explainer home CSS must not return');
+assert(!app.includes('READ THE WORD.')&&!app.includes('START READING'),'home must not be the explainer hero copy');
+for(const id of ['resumeTop','resumeReading','homeUpgrade','homeWhatsApp','dailySave','dailyShare','dailyOpen','memoryStart'])
+  assert(app.includes(`id="${id}"`),`home must keep #${id}`);
+/* Every panel the dashboard is built from, so it cannot be gutted to a stub. */
+for(const c of ['welcome-row','home-membership','daily-grid','verse-card','today-stack','continue-card','devotional-card','home-stats','stat-card','quick-grid','quick-card','section-head'])
+  assert(app.includes(c),`home markup must include .${c}`);
+for(const c of ['.welcome-row','.daily-grid','.verse-card','.continue-card','.devotional-card','.home-stats','.stat-card','.quick-grid','.quick-card','.home-membership'])
+  assert(css.includes(c),`styles.css must still define ${c}`);
+for(const s of ['Good ${','VERSE OF THE DAY','CONTINUE READING',"TODAY'S DEVOTIONAL",'Today with God','Quick actions','Your next step','day reading streak','chapters read','verses saved','prayer entries'])
+  assert(app.includes(s),`home is missing the dashboard copy "${s}"`);
+/* The dashboard must read its verse from the Bible data and greet the signed-in
+   reader by name; a hardcoded verse here would quietly go stale or be wrong. */
+const homeBlock=app.slice(app.indexOf('async function renderHome()'),app.indexOf('/* BIBLE READER */'));
+assert(homeBlock.includes('getVerse(dr)'),'the verse of the day must be resolved from the Bible data');
+/* A failed verse fetch must never blank Home ("Something went wrong / Failed to
+   fetch"). The render must survive a throwing/null getVerse via its bundled
+   devotional fallback. Regression pin for the 2026-10-09 outage. */
+assert(/try\{dv=await getVerse\(dr\)\}catch/.test(homeBlock.replace(/\s+/g,''))||homeBlock.includes("verse of the day failed"),'home must survive a failed verse-of-the-day fetch');
+assert(homeBlock.includes('DEVOTIONAL.verse'),'home fallback verse must come from the bundled devotional');
+assert(homeBlock.includes('displayName()'),'home must greet the signed-in reader by name');
+assert(/Thy word is a lamp/.test(homeBlock)===false,'home must not hardcode Bible text');
+assert(/book-mark/.test(homeBlock),'the continue-reading card must show the book initial');
+assert(app.includes("const NAV=[['home'"),'Home must remain the first navigation entry');
+assert(app.includes("navigate('home')")||app.includes("'home'"),'sign-in must still land on Home');
 
 console.log('✓ 66 canonical books');console.log('✓ 1,189 chapters');console.log('✓ 31,102 KJV verses');
 console.log('✓ KJV, ASV and WEB data available');console.log('✓ Cross references validated');

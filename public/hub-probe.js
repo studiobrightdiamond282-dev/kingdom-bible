@@ -17,6 +17,9 @@
 'use strict';
 const APP='KINGDOM BIBLE';
 const PORT=4173;
+/* Render is the live ministry hub; Vercel is a static reader deployment.
+   Keep this in sync with the server's LIVE_HUB_URL setting. */
+const LIVE_HUB_URL='https://kingdom-bible.onrender.com';
 
 /* GET a path and try to read it as JSON. Never throws. */
 async function readJSON(path,fetchImpl){
@@ -48,31 +51,31 @@ const isLive=state=>state==='online';
    status page all explain an offline hub in exactly the same words. */
 function describe(state){
   if(isLive(state))return {
-    title:'Ministry hub connected',
-    body:'Service codes, the phone remote and the live stream are running on this computer.',
-    hint:'Scan the code with any phone on the same Wi-Fi network.',
+    title:'Live ministry hub connected',
+    body:'Service codes, the phone remote and the live presentation stream are available on this hub.',
+    hint:'Scan the QR or open the full phone link. Local hubs need both devices on the same Wi-Fi.',
     steps:[],launchUrl:'http://localhost:'+PORT,dot:''
   };
   if(state==='offline')return {
-    title:'The ministry hub is not responding',
-    body:'This page is open locally, but nothing is answering on the hub port. Reading and study work offline; the phone remote and live stream need the hub running.',
-    hint:'The audience display still works on this computer.',
-    steps:['In the KINGDOM BIBLE folder, open a terminal and run `npm start`.',
-           'Open the LAN address it prints, for example `http://192.168.1.20:'+PORT+'`.',
+    title:'The local ministry hub is not responding',
+    body:'This page is open locally, but nothing is answering on the hub port. Reading and study work offline; phone control needs a running ministry hub.',
+    hint:'Use the online Render hub or start the hub on this computer. The presenter and phone must use the same hub.',
+    steps:['For online phone control, open the Live Ministry Hub and start a session in Ministry Mode.',
+           'For an offline/local service, run `npm start` in the KINGDOM BIBLE folder on the ministry computer.',
+           'Open the LAN address it prints on both the presenter and phone.',
            'Come back to Ministry Mode and choose "Check again".'],
-    launchUrl:'http://localhost:'+PORT,dot:'off'
+    launchUrl:'http://localhost:'+PORT,liveHubUrl:LIVE_HUB_URL,dot:'off'
   };
   return {
-    title:'Phone remote needs the ministry hub',
-    body:'This page is running from a website. Reading, study and the audience display all work here, but the service code, the phone remote and live sync are served by the ministry computer itself.',
-    hint:'You can still present from this computer: open the audience display and use Presenter control. To control it from a phone, use the local hub.',
-    steps:['On the ministry computer, open the KINGDOM BIBLE folder in a terminal.',
-           'Run `npm start`.',
-           'Open the LAN address it prints, for example `http://192.168.1.20:'+PORT+'`, and go to Ministry Mode.',
-           'Choose "Check again" here once the hub is running.'],
-    launchUrl:'http://localhost:'+PORT,dot:'off'
+    title:'Phone remote needs the live ministry hub',
+    body:'This static Bible reader cannot create a service code or pair a phone. Open the live Render hub for phone control, or run the local hub on the ministry computer.',
+    hint:'The presenter and phone must open the same hub. Ministry Mode on that hub shows a QR code and full phone link.',
+    steps:['Tap "Open Live Ministry Hub" and wait briefly if the service is waking up.',
+           'On Render, open Ministry Mode, then scan its QR or use its code-bearing phone link.',
+           'For a local/offline service instead, run `npm start` on the ministry computer and open its LAN address.'],
+    launchUrl:'http://localhost:'+PORT,liveHubUrl:LIVE_HUB_URL,dot:'off'
   };
 }
 
-g.KingdomHub={APP,PORT,probe,isLive,describe,readJSON};
+g.KingdomHub={APP,PORT,LIVE_HUB_URL,probe,isLive,describe,readJSON};
 })(typeof window!=='undefined'?window:globalThis);

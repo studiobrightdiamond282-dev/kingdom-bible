@@ -1,0 +1,386 @@
+/* KINGDOM BIBLE — secure account, trial, subscription and referral UI.
+   Payment verification and entitlement decisions stay on server.js. */
+(function(g){
+'use strict';
+const root=()=>document.querySelector('#modalRoot');
+const esc=s=>String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+let config=null,user=null,googleReady=null,configPromise=null,apiState='unknown',paymentVerification=null;
+/* Support contact is served by the server (/api/premium/config) so the number is defined
+   in exactly one place. The literal below is only a fallback for the first paint, before
+   config has loaded, and must agree with the shared SUPPORT_PHONE in config/site.js. */
+const FALLBACK_WHATSAPP='2348134438808';
+const supportPhone=()=>config?.whatsapp||FALLBACK_WHATSAPP;
+const supportText=text=>'https://wa.me/'+supportPhone()+'?text='+encodeURIComponent(text||'Hello KINGDOM BIBLE support');
+/* Referral link for the signed-in account. Falls back to a code-less link so the share
+   button still works before /api/auth/me has resolved. */
+function referralLink(){
+  const code=user?.referralCode;
+  if(!code)return location.origin+'/';
+  return location.origin+'/?ref='+encodeURIComponent(code);
+}
+function sharePayload(text){
+  return text+'\n\nJoin me on KINGDOM BIBLE:\n'+referralLink();
+}
+/* Loaded on demand, only when someone actually opens sign-in. Putting
+   accounts.google.com in the page on every load would slow the app and hand Google
+   a request for every reader who never signs in. */
+/* Make sure the config is actually in hand before judging it. app.js paints the
+   sign-in gate as soon as /api/auth/me resolves, and load() swallows its own
+   errors, so on a flaky phone connection `config` could still be null here even
+   though the server is perfectly healthy. Concurrent callers share one request. */
+async function ensureConfig(){
+  if(config&&config.googleClientId)return config;
+  if(!configPromise)configPromise=load().finally(()=>{configPromise=null});
+  return configPromise;
+}
+/* The old version cached a REJECTED promise forever, so one early failure poisoned
+   Google sign-in for the whole page session with no way back except a reload. A
+   failure now clears the cache so a retry can genuinely succeed. */
+function loadGoogle(){
+  if(googleReady)return googleReady;
+  googleReady=(async()=>{
+    const c=await ensureConfig();
+    if(c&&c.googleSignInEnabled===false)throw Error('Google sign-in is switched off for this deployment. Please sign in with your email and password.');
+    if(!c?.googleClientId)throw Error('Google sign-in is unavailable. Please sign in with your email and password.');
+    if(window.google?.accounts?.id)return window.google.accounts.id;
+    await new Promise((res,rej)=>{
+      const s=document.createElement('script');
+      s.src='https://accounts.google.com/gsi/client';s.async=true;
+      s.onload=res;
+      s.onerror=()=>rej(Error('Google sign-in could not load. Check your connection, or sign in with your email and password.'));
+      document.head.append(s);
+    });
+    if(!window.google?.accounts?.id)throw Error('Google sign-in could not load. Check your connection, or sign in with your email and password.');
+    return window.google.accounts.id;
+  })();
+  googleReady.catch(()=>{googleReady=null});
+  return googleReady;
+}
+/* Renders Google's own button into `mount`. The credential is posted to our server,
+   which verifies it against Google — the browser is never trusted for the email.
+
+   When the deployment has Google sign-in switched off, render a plain explanation
+   instead of the button. Tapping "Continue with Google" when the OAuth consent
+   screen is "Internal" opens Google's own error page ("Error 403: org_internal")
+   which we cannot intercept, style or explain — the user is simply stranded. */
+function googleButton(mount) {
+  const host =
+    mount ||
+    root().querySelector('#googleMount');
+
+  if (!host) return;
+
+  host.innerHTML = '';
+
+  if (config && config.googleSignInEnabled === false) {
+    host.innerHTML =
+      '<p class="gate-note">Google sign-in is switched off for this deployment. Use your email and password below.</p>';
+
+    return;
+  }
+
+  loadGoogle()
+    .then(api => {
+      api.initialize({
+        client_id: config.googleClientId,
+
+        callback: async response => {
+          let errorBox =
+            host.querySelector('.premium-form-error');
+
+          if (!errorBox) {
+            errorBox = document.createElement('div');
+            errorBox.className = 'premium-form-error';
+          }
+
+          try {
+            const data = await apiPost('/api/auth/google', {
+              credential: response.credential,
+              referralCode:
+                new URLSearchParams(location.search).get('ref') || ''
+            });
+
+            user = data.user;
+            afterAuth(user);
+          } catch (error) {
+            if (!errorBox.parentNode) {
+              host.append(errorBox);
+            }
+
+            errorBox.textContent =
+              error.message ||
+              'Google sign-in was unsuccessful.';
+          }
+        }
+      });
+
+      api.renderButton(host, {
+        theme: 'filled_black',
+        size: 'large',
+        width: Math.min(
+          360,
+          host.clientWidth || 340
+        ),
+        text: 'continue_with'
+      });
+    })
+    .catch(error => {
+      host.innerHTML = `
+        <p class="gate-note">
+          ${esc(
+            error.message ||
+            'Google sign-in is unavailable. Please continue with email.'
+          )}
+        </p>
+      `;
+    });
+}
+async function apiPost(path,body){const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Request failed');return d}
+async function api(path,opts={}){const r=await fetch(path,{...opts,headers:{'content-type':'application/json',...(opts.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Request failed');return d}
+async function load(){
+  if(apiState==='static')return undefined;
+  try{const [c,m]=await Promise.all([api('/api/premium/config'),api('/api/auth/me')]);config=c;user=m.user||null;apiState='online';if(user){const q=new URLSearchParams(location.search);if(q.has('reference')||q.has('trxref'))void verifyPendingPayment()}return user}
+  catch{
+    if(g.KingdomHub&&typeof g.KingdomHub.probe==='function'){
+      try{const host=await g.KingdomHub.probe();apiState=g.KingdomHub.isLive(host)?'online':host}
+      catch{apiState='unavailable'}
+    }else apiState='unavailable';
+    return undefined;
+  }
+}
+function accountServiceUrl(){
+  const host=String(g.KingdomHub?.LIVE_HUB_URL||'https://kingdom-bible.onrender.com').replace(/\/+$/,'');
+  return host+'/?upgrade=1';
+}
+function showAccountServiceNotice(){
+  const url=accountServiceUrl();
+  const copy=apiState==='static'
+    ?'This Vercel reader is a static, offline-capable Bible app. Sign-in, subscriptions, referral earnings, and account settings are hosted on the live Kingdom Bible service.'
+    :'The account service is not reachable from this page right now. Your Bible reading and local notes remain available; retry on the live Kingdom Bible service.';
+  shell(`<div class="modal-head"><div><div class="eyebrow">ACCOUNT SERVICE</div><h2>Continue on the live service</h2><p>${esc(copy)}</p></div><button class="close-btn" data-premium-close aria-label="Close">×</button></div><div class="notice">Your saved reading, notes, bookmarks, and prayers stay in this browser. Opening the live service does not move or upload them.</div><div class="modal-actions"><button class="secondary-btn" data-premium-close>Stay in the reader</button><a class="primary-btn" href="${esc(url)}" target="_blank" rel="noopener">Open account service</a></div>`);
+}
+/* After Paystack redirects back from payment, the URL contains ?reference=xxx.
+   Verify the payment with the server and update the account if successful. */
+async function verifyPendingPayment(){
+  if(paymentVerification)return paymentVerification;
+  const params=new URLSearchParams(location.search);
+  const reference=params.get('reference')||params.get('trxref');
+  if(!reference||!user)return;
+  paymentVerification=(async()=>{
+    try{
+      const d=await api('/api/payments/verify',{method:'POST',body:JSON.stringify({reference})});
+      if(d.ok&&d.user){
+        user=d.user;
+        try{history.replaceState(null,'',location.pathname+location.hash)}catch{}
+        if(typeof toast==='function')toast('Subscription activated — thank you!','success');
+      }
+    }catch(e){
+      const err=document.createElement('div');
+      err.className='premium-form-error';
+      err.textContent='Payment verification failed: '+e.message;
+      const r=root();if(r)r.append(err);
+      setTimeout(()=>err.remove(),8000);
+    }finally{paymentVerification=null}
+  })();
+  return paymentVerification;
+}
+function close(){root().innerHTML=''}
+/* Where a newly signed-in account should land. The plan screen used to open the
+   instant somebody signed up, so finishing the trial felt like being stuck on a
+   paywall instead of reaching the app. Hand control back to the shell and let
+   the trial banner explain the plan; "View plans" stays one tap away on Profile.
+   onAuth already tears down the welcome gate and repaints identity in app.js. */
+function afterAuth(u){
+  g.onAuth&&g.onAuth(u);
+  try{close()}catch{}
+  /* If Paystack returned here after the session expired during checkout, finish
+     verification immediately after the customer signs back in. */
+  const params=new URLSearchParams(location.search);
+  if(params.has('reference')||params.has('trxref'))void verifyPendingPayment();
+}
+/* Sign out from anywhere in the shell. Clears the session server-side, drops the
+   cached user, and re-runs the same onAuth(null) path the app already handles. */
+async function signOut(){
+  try{await api('/api/auth/logout',{method:'POST'})}catch{}
+  user=null;
+  try{g.onAuth&&g.onAuth(null)}catch{}
+  try{localStorage.removeItem('kb.lastEmail')}catch{}
+}
+function shell(body,cls='premium-modal'){root().innerHTML=`<div class="modal-backdrop"><div class="modal ${cls}" role="dialog" aria-modal="true">${body}</div></div>`;root().querySelector('.modal-backdrop').onclick=e=>{if(e.target.classList.contains('modal-backdrop'))close()};root().querySelectorAll('[data-premium-close]').forEach(b=>b.onclick=close)}
+function planCards(){
+  if(user?.role==='admin')return`<div class="premium-notice premium-admin-plan-notice" role="status"><strong>Administrator access is complimentary.</strong><p>This account cannot purchase a subscription. To subscribe, sign out and use a standard member account.</p><button type="button" class="secondary-btn small-btn" id="switchMemberAccount">Sign out to switch account</button></div>`;
+  const canBuy=!!config?.paystackReady;
+  return(config?.plans||[]).map(p=>`<article class="premium-plan ${p.id==='premium'?'featured':''}"><div class="eyebrow">${p.name.toUpperCase()}</div><h3>₦${Number(p.price).toLocaleString()}<small>/month</small></h3><p>${esc(p.tagline)}</p><ul>${p.benefits.map(b=>`<li>${esc(b)}</li>`).join('')}</ul><button class="${p.id==='premium'?'primary-btn':'secondary-btn'}" data-buy="${p.id}"${canBuy?'':' disabled aria-disabled="true"'}>${canBuy?'Choose '+esc(p.name):'Checkout unavailable'}</button></article>`).join('');
+}
+function bindAdminPlanNotice(){
+  const button=root()?.querySelector('#switchMemberAccount');
+  if(button)button.onclick=async()=>{await signOut();landing()};
+}
+function referralBlock(role){
+  if(role==='admin')return`<div class="referral-box" role="status"><strong>Referral rewards are for member accounts</strong><p>This administrator account has no referral code. Its app link cannot track signups or earn referral rewards. Sign out and use a standard member account to get a trackable referral link.</p></div>`;
+  return`<div class="referral-box"><strong>Earn with referrals</strong><p>Share your link. You receive ₦100 for a verified signup and 10% of their first successful subscription payment. 1 point equals ₦1. Withdrawals are reviewed by an administrator and paid within three working days.</p><div class="referral-link-row"><input id="referralLink" class="referral-input" readonly value="${esc(referralLink())}" aria-label="Your referral link"></div><div class="referral-actions"><button class="secondary-btn small-btn" id="copyReferral">Copy link</button><button class="primary-btn small-btn" id="shareReferral">Share app</button><button class="secondary-btn small-btn" id="withdrawOpen">Withdraw</button></div></div>`;
+}
+function paymentNotice(){if(config?.paystackReady||user?.role==='admin')return'';return`<div class="premium-notice premium-payment-offline" role="status"><strong>Secure checkout is unavailable right now.</strong> No payment can be started here. Please contact <a href="${esc(supportText('Help with KINGDOM BIBLE subscription checkout'))}" target="_blank" rel="noopener">support</a> while payment settings are checked.</div>`}
+function open(){load().then(async()=>{if(apiState!=='online'){showAccountServiceNotice();return}await verifyPendingPayment();user?account():landing()})}
+/* Open sign-in or sign-up DIRECTLY, skipping the plan screen. The welcome gate
+   had two different promises ("Create free account" and "I already have an
+   account") but both funnelled into open(), so both landed on the same generic
+   Premium window and neither matched what the reader had clicked. */
+function openAuth(mode){load().then(()=>{if(apiState!=='online'){showAccountServiceNotice();return}user?account():auth(mode==='login'?'login':'register')})}
+function landing(){shell(`<div class="modal-head"><div><div class="eyebrow">KINGDOM BIBLE PRO</div><h2>Grow deeper. Serve better.</h2><p>Start with a 30-day free trial. We show a warning when seven days remain.</p></div><button class="close-btn" data-premium-close>×</button></div><div class="premium-notice"><strong>Fair and clear:</strong> subscriptions are charged through Paystack. AI access uses fair-use monthly allowances so you are never exposed to an unexpected bill. Read our <a href="/privacy" target="_blank">Privacy Policy</a> and <a href="/refund" target="_blank">Refund Policy</a>.</div>${paymentNotice()}<div class="premium-plans">${planCards()}</div><div class="premium-footer"><button class="secondary-btn" id="premiumLogin">Sign in</button><button class="primary-btn" id="premiumRegister">Start free trial</button><a href="${esc(supportText())}" target="_blank" rel="noopener">Questions? WhatsApp support</a></div>`);
+  root().querySelector('#premiumLogin').onclick=()=>auth('login');root().querySelector('#premiumRegister').onclick=()=>auth('register');bindAdminPlanNotice();bindBuy();}
+function auth(mode){
+  const remembered=mode==='login'?(localStorage.getItem('kb.lastEmail')||''):'';
+  const pendingRef=new URLSearchParams(location.search).get('ref')||'';
+  shell(`<div class="modal-head"><div><div class="eyebrow">${mode==='login'?'WELCOME BACK':'30-DAY FREE TRIAL'}</div><h2>${mode==='login'?'Sign in to KINGDOM BIBLE':'Create your account'}</h2><p>One secure account across reading, study, and Ministry.</p></div><button class="close-btn" data-premium-close>×</button></div><form id="premiumAuth"><div class="field"><label>Email</label><input id="authEmail" type="email" autocomplete="email" value="${esc(remembered)}" required></div><div class="field" style="margin-top:10px"><label>Password</label><div class="password-field"><input id="authPassword" type="password" minlength="8" autocomplete="${mode==='login'?'current-password':'new-password'}" required><button type="button" class="password-toggle" id="pwToggle" aria-label="Show password" aria-pressed="false">👁</button></div></div>${mode==='register'?`<div class="field" style="margin-top:10px"><label>Name</label><input id="authName" autocomplete="name"></div><div class="field" style="margin-top:10px"><label>Referral code (optional)</label><input id="authReferral" placeholder="KB…" value="${esc(pendingRef)}" autocomplete="off"></div>`:''}${mode==='login'?'<div class="auth-row"><label class="check"><input type="checkbox" id="authRemember" checked><span>Keep me signed in</span></label><button type="button" class="text-btn" id="forgotLink">Forgot password?</button></div>':''}<div id="googleMount" class="google-mount"></div><div class="auth-divider"><span>or continue with email</span></div><div class="premium-form-error" id="authError"></div><div class="modal-actions"><button class="secondary-btn" type="button" id="authBack">Back</button><button class="primary-btn">${mode==='login'?'Sign in':'Start my free trial'}</button></div></form>`);
+  bindPasswordToggle();
+  const back=root().querySelector('#authBack'),fgt=root().querySelector('#forgotLink');
+  if(back)back.onclick=landing;
+  if(fgt)fgt.onclick=()=>forgot();
+  googleButton();
+  root().querySelector('#premiumAuth').onsubmit=async e=>{
+    e.preventDefault();
+    const err=root().querySelector('#authError');err.textContent='';
+    const email=root().querySelector('#authEmail').value.trim();
+    const remember=root().querySelector('#authRemember')?.checked!==false;
+    /* Only the email is remembered, never the password. Saving a password to
+       localStorage would expose every account on a shared ministry laptop. */
+    try{email?localStorage.setItem('kb.lastEmail',email):localStorage.removeItem('kb.lastEmail')}catch{}
+    try{
+      const d=await api('/api/auth/'+(mode==='login'?'login':'register'),{method:'POST',body:JSON.stringify({email,password:root().querySelector('#authPassword').value,name:root().querySelector('#authName')?.value,referralCode:root().querySelector('#authReferral')?.value||pendingRef,remember})});
+      user=d.user;afterAuth(user);
+    }catch(x){err.textContent=x.message}
+  };
+}
+/* Show/hide applies to every password field in the account UI, including the reset form. */
+function bindPasswordToggle(){
+  const btn=root().querySelector('#pwToggle'),input=root().querySelector('#authPassword')||root().querySelector('#codePassword');
+  if(!btn||!input)return;
+  btn.onclick=()=>{
+    const show=input.type==='password';
+    input.type=show?'text':'password';
+    btn.textContent=show?'🙈':'👁';
+    btn.setAttribute('aria-pressed',String(show));
+    btn.setAttribute('aria-label',show?'Hide password':'Show password');
+  };
+}
+/* ---------- forgot password ----------
+   A configured transactional-email provider sends the one-time code automatically;
+   without one, the same UI explains the administrator-assisted WhatsApp fallback. */
+function forgot(){
+  const emailEnabled=!!config?.passwordResetEmailEnabled;
+  const instruction=emailEnabled
+    ?'<strong>Next:</strong> check your inbox and spam folder for a one-time code. It expires in 30 minutes. <a href="'+esc(supportText('Password reset help for my KINGDOM BIBLE account'))+'" target="_blank" rel="noopener">Contact support</a> if it does not arrive.'
+    :'<strong>How it works:</strong> an administrator sends your 6-digit code. Request one below, then message us on <a href="'+esc(supportText('Password reset for my KINGDOM BIBLE account'))+'" target="_blank" rel="noopener">WhatsApp</a> to receive it.';
+  shell(`<div class="modal-head"><div><div class="eyebrow">ACCOUNT RECOVERY</div><h2>Reset your password</h2><p>Enter your account email and we will arrange a one-time reset code.</p></div><button class="close-btn" data-premium-close>×</button></div><form id="forgotForm"><div class="field"><label>Email</label><input id="forgotEmail" type="email" autocomplete="email" value="${esc(localStorage.getItem('kb.lastEmail')||'')}" required></div><div class="premium-form-error" id="forgotError"></div><div class="premium-notice" style="margin-top:14px">${instruction}</div><div class="modal-actions"><button class="secondary-btn" type="button" id="forgotBack">Back</button><button class="primary-btn">Request code</button></div></form>`);
+  root().querySelector('#forgotBack').onclick=()=>auth('login');
+  root().querySelector('#forgotForm').onsubmit=async e=>{
+    e.preventDefault();
+    const err=root().querySelector('#forgotError');err.textContent='';
+    const email=root().querySelector('#forgotEmail').value.trim();
+    try{
+      const d=await api('/api/auth/password/forgot',{method:'POST',body:JSON.stringify({email})});
+      try{localStorage.setItem('kb.lastEmail',email)}catch{}
+      codeStep(email,d.message);
+    }catch(x){err.textContent=x.message}
+  };
+}
+function codeStep(email,message){
+  const contact=`<div class="premium-notice" style="margin-top:14px"><a href="${esc(supportText('Password reset help for my KINGDOM BIBLE account'))}" target="_blank" rel="noopener">Need help? WhatsApp support</a></div>`;
+  shell(`<div class="modal-head"><div><div class="eyebrow">ACCOUNT RECOVERY</div><h2>Enter your reset code</h2><p>${esc(message||'Enter the 6-digit code from the administrator.')}</p></div><button class="close-btn" data-premium-close>×</button></div><form id="codeForm"><div class="field"><label>Email</label><input id="codeEmail" type="email" value="${esc(email)}" required></div><div class="field" style="margin-top:10px"><label>6-digit code</label><input id="codeValue" inputmode="numeric" maxlength="6" placeholder="000000" required></div><div class="field" style="margin-top:10px"><label>New password</label><div class="password-field"><input id="codePassword" type="password" minlength="8" autocomplete="new-password" required><button type="button" class="password-toggle" id="pwToggle" aria-label="Show password" aria-pressed="false">👁</button></div></div><div class="field" style="margin-top:10px"><label>Confirm new password</label><input id="codeConfirm" type="password" minlength="8" autocomplete="new-password" required></div><div class="premium-form-error" id="codeError"></div><div class="modal-actions"><button class="secondary-btn" type="button" id="codeBack">Back</button><button class="primary-btn">Update password</button></div></form>${contact}`);
+  bindPasswordToggle();
+  root().querySelector('#codeBack').onclick=forgot;
+  root().querySelector('#codeForm').onsubmit=async e=>{
+    e.preventDefault();
+    const err=root().querySelector('#codeError');err.textContent='';
+    const pw=root().querySelector('#codePassword').value;
+    if(pw!==root().querySelector('#codeConfirm').value){err.textContent='The two passwords do not match';return}
+    try{
+      const d=await api('/api/auth/password/reset',{method:'POST',body:JSON.stringify({email:root().querySelector('#codeEmail').value.trim(),code:root().querySelector('#codeValue').value,newPassword:pw})});
+      close();g.onPasswordReset&&g.onPasswordReset(d.message);
+    }catch(x){err.textContent=x.message}
+  };
+}
+function account(){const e=user||{};const warning=e.status==='trial'&&e.daysRemaining<=7?`<div class="premium-warning"><strong>${e.daysRemaining} day${e.daysRemaining===1?'':'s'} left</strong> in your free trial. Choose a plan before access expires.</div>`:'';
+  /* This screen is exactly where somebody lands right after signing in or logging in,
+     so it has to offer an explicit way back into the app. Reading, study and Voice
+     Preacher Mode stay free for the whole trial, so "Continue my free trial" is the
+     PRIMARY action here, not a small dismiss link — otherwise finishing a free trial
+     feels like being trapped on a paywall. */
+  const canContinue=e.status==='trial'||e.status==='expired'||e.status==='active'||e.status==='admin';
+  const continueBlock=canContinue?'<div class="trial-continue"><div><strong>'+(e.status==='trial'?'Your free trial is running':e.status==='admin'?'Complimentary administrator access':'You are signed in')+'</strong><p>'+(e.status==='trial'?`${e.daysRemaining} day${e.daysRemaining===1?'':'s'} left — reading, study and the Voice Preacher Mode stay free until it ends.`:e.status==='expired'?'Your trial has ended. Basic reading stays free; Pro tools need a plan.':e.status==='admin'?'Administrator access is free on this account.':'Your plan is active. Go back to the Bible whenever you are ready.')+'</p></div><button class="primary-btn" id="trialContinue">'+(e.status==='trial'?'Continue my free trial':'Continue to the app')+'</button></div>':'';
+  const accountSummary=e.role==='admin'?'':`<div class="account-grid"><div><strong>₦${Number(e.walletBalance||0).toLocaleString()}</strong><small>referral wallet</small></div><div><strong>${esc(e.referralCode||'—')}</strong><small>your referral code</small></div><div><strong>${e.status==='expired'?'Upgrade required':e.status==='trial'?'Trial access':'Active access'}</strong><small>account status</small></div></div>`;
+  shell(`<div class="modal-head"><div><div class="eyebrow">${e.role==='admin'?'ADMINISTRATOR ACCESS':'YOUR KINGDOM BIBLE ACCOUNT'}</div><h2>Welcome, ${esc(e.name||e.email)}</h2><p>${e.status==='trial'?'30-day free trial':e.status==='expired'?'Trial expired':e.status==='admin'?'Unlimited admin access':String(e.plan||'').toUpperCase()+' plan'}${e.daysRemaining!=null?' · '+e.daysRemaining+' days remaining':''}</p></div><button class="close-btn" data-premium-close>×</button></div>${warning}${continueBlock}${paymentNotice()}${accountSummary}<h3 class="premium-section-title">${e.role==='admin'?'Administrator access':'Choose your plan'}</h3><div class="premium-plans">${planCards()}</div>${referralBlock(e.role)}<div class="premium-footer"><button class="secondary-btn" id="premiumLogout">Sign out</button><a href="/privacy" target="_blank">Privacy</a><a href="/refund" target="_blank">Refunds</a><a href="${esc(supportText())}" target="_blank" rel="noopener">WhatsApp support</a></div>`,'premium-modal');/* Reuses afterAuth on purpose: it is the exact path a fresh sign-in takes, so the
+   trial banner repaints and Home is reached the same way — no second code path that
+   can drift from the one already covered by tests. */
+const cont=root().querySelector('#trialContinue');if(cont)cont.onclick=()=>afterAuth(user);const logout=root().querySelector('#premiumLogout');if(logout)logout.onclick=async()=>{await signOut();landing()};const withdrawButton=root().querySelector('#withdrawOpen');if(withdrawButton)withdrawButton.onclick=withdraw;const copyButton=root().querySelector('#copyReferral');if(copyButton)copyButton.onclick=async()=>{const i=root().querySelector('#referralLink');i.select();try{await navigator.clipboard.writeText(referralLink())}catch{document.execCommand&&document.execCommand('copy')}};const shareButton=root().querySelector('#shareReferral');if(shareButton)shareButton.onclick=()=>shareApp();bindAdminPlanNotice();bindBuy();}
+/* Share the app itself. The referral code travels in the URL, so a new user who opens
+   the link and signs up credits the person who shared it. */
+async function shareApp(){
+  const text='Read, study and understand the Word with me on KINGDOM BIBLE.';
+  const payload={title:'KINGDOM BIBLE',text,url:referralLink()};
+  if(navigator.share){try{await navigator.share(payload);return}catch(x){if(x&&x.name==='AbortError')return}}
+  try{await navigator.clipboard.writeText(sharePayload(text))}catch{}
+  account();
+}
+const CHECKOUT_SLOW_MS=8000;
+const CHECKOUT_TIMEOUT_MS=30000;
+function bindBuy(){
+  const dialog=root();
+  if(!dialog)return;
+  const buttons=Array.from(dialog.querySelectorAll('[data-buy]'));
+  const message=(text,role='alert')=>{
+    let n=dialog.querySelector('.premium-form-error');
+    if(!n){
+      n=document.createElement('div');n.className='premium-form-error';
+      const plans=dialog.querySelector('.premium-plans');
+      if(plans?.parentNode)plans.parentNode.insertBefore(n,plans.nextSibling);
+      else(dialog.querySelector('.modal')||dialog).append(n);
+    }
+    n.setAttribute('role',role);
+    n.setAttribute('aria-live',role==='alert'?'assertive':'polite');
+    n.textContent=text;
+  };
+  buttons.forEach(b=>b.onclick=async()=>{
+    if(b.disabled)return;
+    const controller=new AbortController();
+    const originalLabel=b.textContent;
+    let timedOut=false;
+    buttons.forEach(x=>{x.disabled=true});
+    b.textContent='Opening secure checkout…';
+    b.setAttribute('aria-busy','true');
+    const slowTimer=setTimeout(()=>{
+      if(dialog.contains(b)&&b.disabled)b.textContent='Still connecting…';
+    },CHECKOUT_SLOW_MS);
+    const timeoutTimer=setTimeout(()=>{timedOut=true;controller.abort()},CHECKOUT_TIMEOUT_MS);
+    try{
+      const d=await api('/api/payments/initialize',{method:'POST',body:JSON.stringify({plan:b.dataset.buy}),signal:controller.signal});
+      if(!dialog.contains(b))return;
+      if(d.admin){
+        buttons.forEach(x=>{x.disabled=false});
+        b.textContent=originalLabel;
+        b.removeAttribute('aria-busy');
+        message(d.message||'Administrator access is complimentary.','status');
+        return;
+      }
+      if(!d.authorizationUrl)throw new Error('Checkout is not configured yet');
+      location.href=d.authorizationUrl;
+    }catch(e){
+      if(!dialog.contains(b))return;
+      buttons.forEach(x=>{x.disabled=false});
+      b.textContent='Try again';
+      b.removeAttribute('aria-busy');
+      message(timedOut
+        ?'Secure checkout timed out before Paystack opened. No payment was made. Please retry or contact support.'
+        :e.name==='AbortError'
+          ?'Secure checkout was interrupted. Please try again.'
+          :e.message||'Could not open secure checkout. Please try again.');
+    }finally{
+      clearTimeout(slowTimer);
+      clearTimeout(timeoutTimer);
+    }
+  });
+}
+function withdraw(){shell(`<div class="modal-head"><div><div class="eyebrow">REFERRAL WALLET</div><h2>Request a withdrawal</h2><p>Minimum ₦1,000. An administrator reviews requests and pays within three working days.</p></div><button class="close-btn" data-premium-close>×</button></div><form id="withdrawForm"><div class="field"><label>Amount (₦)</label><input id="withdrawAmount" type="number" min="1000" step="1" required></div><div class="field" style="margin-top:10px"><label>Account name</label><input id="withdrawName" required></div><div class="field" style="margin-top:10px"><label>Bank code</label><input id="withdrawBank" placeholder="e.g. 058" required></div><div class="field" style="margin-top:10px"><label>Account number</label><input id="withdrawAccount" inputmode="numeric" minlength="10" maxlength="10" required></div><div class="premium-form-error" id="withdrawError"></div><div class="modal-actions"><button class="secondary-btn" type="button" data-premium-close>Cancel</button><button class="primary-btn">Submit request</button></div></form>`);root().querySelector('#withdrawForm').onsubmit=async e=>{e.preventDefault();try{const d=await api('/api/wallet/withdraw',{method:'POST',body:JSON.stringify({amount:root().querySelector('#withdrawAmount').value,accountName:root().querySelector('#withdrawName').value,bankCode:root().querySelector('#withdrawBank').value,accountNumber:root().querySelector('#withdrawAccount').value})});user=d.user;account()}catch(x){root().querySelector('#withdrawError').textContent=x.message}}}
+g.KingdomPremium={open,openAuth,load,onAuth:null,onPasswordReset:null,googleButton,forgot,shareApp,signOut,supportText,referralLink,get user(){return user},status:()=>user?{signedIn:true,status:user.status,plan:user.plan,daysRemaining:user.daysRemaining,name:user.name,email:user.email,avatar:user.avatar||'',referralCode:user.referralCode,walletBalance:user.walletBalance||0}:{signedIn:false,status:'signed_out'},plans:()=>config?.plans||[],config:()=>config,async saveProfile(name,avatar){const d=await api('/api/account/profile',{method:'POST',body:JSON.stringify({name,avatar})});user=d.user;return user},async wallet(){return api('/api/wallet')},async setPassword(email,code,newPassword){return api('/api/auth/password/reset',{method:'POST',body:JSON.stringify({email,code,newPassword})})}};
+})(typeof window!=='undefined'?window:globalThis);

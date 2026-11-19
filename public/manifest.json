@@ -18,12 +18,18 @@
     {"src":"/icons/icon-192.png","sizes":"192x192","type":"image/png","purpose":"any"},
     {"src":"/icons/icon-512.png","sizes":"512x512","type":"image/png","purpose":"any"},
     {"src":"/icons/maskable-512.png","sizes":"512x512","type":"image/png","purpose":"maskable"},
-    {"src":"/icons/icon-180.png","sizes":"180x180","type":"image/png","purpose":"any"}
+    {"src":"/icons/icon-180.png","sizes":"180x180","type":"image/png","purpose":"any"},
+    {"src":"/icons/icon-64.png","sizes":"64x64","type":"image/png","purpose":"any"},
+    {"src":"/icons/icon-48.png","sizes":"48x48","type":"image/png","purpose":"any"},
+    {"src":"/icons/icon-32.png","sizes":"32x32","type":"image/png","purpose":"any"}
   ],
   "shortcuts": [
-    {"name":"Read Bible","short_name":"Read","url":"/#bible","icons":[{"src":"/icons/icon-192.png","sizes":"192x192"}]},
-    {"name":"Search Scripture","short_name":"Search","url":"/#search","icons":[{"src":"/icons/icon-192.png","sizes":"192x192"}]},
-    {"name":"Prayer Journal","short_name":"Prayer","url":"/#prayer","icons":[{"src":"/icons/icon-192.png","sizes":"192x192"}]},
-    {"name":"Ministry Mode","short_name":"Ministry","url":"/#ministry","icons":[{"src":"/icons/icon-192.png","sizes":"192x192"}]}
+    {"name":"Read Bible","short_name":"Read","description":"Continue reading where you left off","url":"/#bible","icons":[{"src":"/icons/icon-192.png","sizes":"192x192"}]},
+    {"name":"Search Scripture","short_name":"Search","description":"Search every verse instantly","url":"/#search","icons":[{"src":"/icons/icon-192.png","sizes":"192x192"}]},
+    {"name":"Prayer Journal","short_name":"Prayer","description":"Record and revisit prayers","url":"/#prayer","icons":[{"src":"/icons/icon-192.png","sizes":"192x192"}]},
+    {"name":"Ministry Mode","short_name":"Ministry","description":"Present Scripture live","url":"/#ministry","icons":[{"src":"/icons/icon-192.png","sizes":"192x192"}]}
+  ],
+  "screenshots": [
+    {"src":"/assets/logo-social.png","sizes":"1200x630","type":"image/png","form_factor":"wide","label":"KINGDOM BIBLE — Read. Study. Understand. Live the Word."}
   ]
 }

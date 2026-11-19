@@ -1,0 +1,44 @@
+{
+  "appId": "com.kingdombible.app",
+  "appName": "KINGDOM BIBLE",
+  "webDir": "public",
+  "bundledWebRuntime": false,
+  "server": {
+    "url": "https://kingdom-bible-wine.vercel.app",
+    "cleartext": true,
+    "allowNavigation": [
+      "kingdom-bible-wine.vercel.app",
+      "kingdom-bible.onrender.com",
+      "localhost",
+      "127.0.0.1",
+      "*.tail876272.ts.net"
+    ]
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1500,
+      "backgroundColor": "#020617",
+      "androidSplashResourceName": "splash",
+      "iosSplashContentMode": "scaleToFill",
+      "showSpinner": false
+    },
+    "StatusBar": {
+      "style": "DARK",
+      "backgroundColor": "#07142f"
+    },
+    "Keyboard": {
+      "resize": "body",
+      "style": "DARK"
+    },
+    "LocalNotifications": {
+      "smallIcon": "ic_stat_icon_sample",
+      "iconColor": "#07142f",
+      "sound": "beep.wav"
+    },
+    "Device": {},
+    "Network": {},
+    "Haptics": {},
+    "Dialog": {},
+    "Filesystem": {}
+  }
+}

@@ -79,13 +79,23 @@ function wordsToDigits(toks){
 }
 
 /* ---- normalisation pipeline --------------------------------------------- */
-function normalize(input){
+function normalize(input,opts){
+  const keepFiller=!!(opts&&opts.keepFiller);
   let s=String(input||'').toLowerCase();
   s=s.replace(/[\u2013\u2014\u2212]/g,'-');          /* en/em dash -> hyphen   */
   s=s.replace(/(\d)\s*[.,]\s*(\d)/g,'$1:$2');        /* "3.16" / "3,16" -> 3:16*/
   s=s.replace(/[^a-z0-9\s:\-]/g,' ');                /* strip punctuation      */
   s=s.replace(/(\d)(st|nd|rd|th)\b/g,'$1');          /* 1st -> 1               */
   s=s.replace(/([a-z])-(?=[a-z])/g,'$1 ');           /* twenty-three           */
+  /* A hyphen is only meaningful as a RANGE marker between two digits
+     ("John 3:16-18"). Anywhere else it is a stray separator, and leaving it
+     in place let compact() glue it onto the book name: "John -3:16" became
+     "john3", which prefix-matched "john" and silently answered John 16
+     instead of John 3:16. Demote every other hyphen to a space so the input
+     is read the way it was meant. */
+  s=s.replace(/(\d)-(\d)/g,'$1\u0000$2');            /* protect real ranges    */
+  s=s.replace(/-/g,' ');
+  s=s.replace(/\u0000/g,'-');
   s=s.replace(/([a-z])(?=\d)/g,'$1 ').replace(/(\d)(?=[a-z])/g,'$1 '); /* 1john */
   let toks=s.split(/\s+/).filter(Boolean);
   /* ordinal words and roman numerals before numbered books */
@@ -103,7 +113,7 @@ function normalize(input){
     if(RANGE.has(t)&&/\d$/.test(prev)&&/^\d/.test(next)){out.push('-');continue}
     if(VERSEWORD.has(t)){out.push(':');continue}
     if(t==='chapter'||t==='chapters')continue;
-    if(FILLER.has(t))continue;
+    if(!keepFiller&&FILLER.has(t))continue;
     out.push(t);
   }
   return out.join(' ')
@@ -163,6 +173,13 @@ function matchBook(q,books,opts){
     if(pre.length>1&&!fuzzy)return -1;
   }
   if(!fuzzy)return -1;
+  /* Short queries must never reach the fuzzy tiers. At 1-3 characters almost
+     every abbreviation in the canon is within edit distance 1, so "abc 1:1"
+     resolved to Acts (via the alias "ac") and "x 1:1" to Exodus (via "ex") —
+     a confident wrong verse instead of a "Reference not found". A real book
+     token needs at least 4 characters before a guess is defensible; below
+     that, only the exact and unique-prefix tiers above may match. */
+  if(qc.length<4)return -1;
   if(qc.length>=4){                                                     /* subsequence */
     const sub=ix.filter(e=>isSubseq(qc,e.name));
     if(sub.length===1)return sub[0].i;
@@ -196,32 +213,106 @@ function refine(bi,chapter,verse,verseEnd,books){
   return{book:bi,chapter,verse:verse==null?null:verse,verseEnd:verseEnd==null?null:verseEnd};
 }
 
+/* ---- spoken translation switching -----------------------------------------
+   Voice aliases ("king james" -> kjv) so "read it in the world english bible"
+   can switch the presented translation. Keys must match the app TR table;
+   unknown names return null and never change behaviour. */
+const VERSION_ALIASES={'king james':'kjv',kjv:'kjv','new king james':'kjv',
+  asv:'asv','american standard':'asv','web':'web','world english':'web',
+  'world english bible':'web','amplified':'web','niv':'kjv','esv':'kjv'};
+function detectVersion(text,known){
+  const s=' '+String(text||'').toLowerCase().replace(/[^a-z\s]/g,' ').replace(/\s+/g,' ').trim()+' ';
+  const keys=Object.keys(VERSION_ALIASES).sort((a,b)=>b.length-a.length);
+  for(const k of keys){
+    if(s.indexOf(' '+k+' ')>=0||s.indexOf(' '+k+' bible ')>=0||s.indexOf('in '+k+' ')>=0||s.indexOf('in the '+k+' ')>=0){
+      const tr=VERSION_ALIASES[k];
+      if(!known||known.indexOf(tr)>=0)return tr;
+    }
+  }
+  return null;
+}
+
 /* ---- parse one typed/spoken reference ------------------------------------
+   opts.numberStyle: 'chapter' (default, unchanged) keeps "Genesis 13" as
+   chapter 13; 'split' reads a bare two-digit number as chapter+verse
+   ("Genesis 13" -> 1:3). Psalms + explicit "chapter" always stay chapters.
    -> {book, chapter, verse|null, verseEnd|null} or null. verse===null means
    the whole chapter was asked for. */
 const REF_RE=/^(.+?)\s+(\d{1,3})(?:[:\s](\d{1,3})(?:-(\d{1,3}))?)?$/;
 function parse(input,books,opts){
   if(!Array.isArray(books)||!books.length)return null;
+  const rawInput=String(input||'');
+  const saidChapter=/\bchapters?\b/i.test(rawInput);
   let s=normalize(input);
   if(!s)return null;
   let m=s.match(REF_RE);
   if(!m){m=s.replace(/:/g,' ').replace(/\s+/g,' ').match(REF_RE);if(!m)return null}
   const bi=matchBook(m[1],books,opts);
   if(bi<0)return null;
+  const style=opts&&opts.numberStyle;
+  if(style==='split'&&!saidChapter&&m[3]==null&&/^\d{2}$/.test(m[2])){
+    const b=books[bi];
+    const nm=String((b&&b.name)||'').toLowerCase();
+    const isPsalm=(nm==='psalm'||nm==='psalms')||(b&&b.chapters===150);
+    if(!isPsalm){
+      const c=+m[2][0],v=+m[2][1];
+      if(v>=1)return refine(bi,c,v,null,books);
+    }
+  }
   return refine(bi,+m[2],m[3]?+m[3]:null,m[4]?+m[4]:null,books);
 }
 
 /* ---- scan free speech for the most recent reference ----------------------
    Strict book matching only — a sermon must never trigger a fuzzy guess.
-   -> {type:'ref',book,chapter,verse,verseEnd}
-   -> {type:'verse',verse,verseEnd}   ("...now verse twenty five" — caller
+   `atEnd` is true when the recognised reference is the last thing in this
+   speech frame. Voice Preacher Mode uses it as a fuse: a complete verse that
+   is followed by more speech dispatches now, while a reference at the edge of
+   a frame gets a short chance to grow before it is sent.
+   -> {type:'ref',book,chapter,verse,verseEnd,atEnd}
+   -> {type:'verse',verse,verseEnd,atEnd} ("...now verse twenty five" — caller
       resolves it against the verse currently on the display)
    -> null */
 const SCAN_RE=/((?:[1-3]\s)?[a-z]+(?:\s[a-z]+){0,2})\s(\d{1,3})(?:[:\s](\d{1,3})(?:-(\d{1,3}))?)?(?=[\s:]|$)/g;
-function scan(text,books){
+/* The spoken word "verse" becomes a colon in normalize(), so "Jude verse five"
+   arrives as "jude:5" with NO whitespace for SCAN_RE to split on. SCAN_RE then
+   misses the book entirely and the fallback below reports a bare contextual
+   "verse 5" - which app.js resolves inside whatever is already on the projector,
+   so preaching Romans 8 and saying "Jude verse five" put ROMANS 8:5 on screen.
+   This pattern keeps the book: a single-chapter book is exact (Jude 1:5), and a
+   multi-chapter book hands the book on so the display can refuse a mismatch. */
+const SCAN_VERSE_RE=/((?:[1-3]\s)?[a-z]+(?:\s[a-z]+){0,2}):(\d{1,3})(?:-(\d{1,3}))?(?=[\s:]|$)/g;
+function frameAtEnd(text,s,m,hit){
+  /* normalize() removes harmless spoken fillers for matching. Re-run it while
+     retaining those words so "John 3:16 with us" is not mistaken for an edge
+     reference merely because "with" and "us" are parser filler. */
+  const edge=normalize(text,{keepFiller:true});
+  if(edge.endsWith(m[0]))return true;
+  const markers=[];
+  if(hit.verseEnd!=null)markers.push('-'+hit.verseEnd);
+  if(hit.verse!=null)markers.push(':'+hit.verse,' '+hit.verse);
+  else markers.push(' '+hit.chapter);
+  for(const marker of markers){
+    const i=edge.lastIndexOf(marker);
+    if(i>=0)return edge.slice(i+marker.length).trim()==='';
+  }
+  return m.index+m[0].length===s.length;
+}
+function scan(text,books,opts){
   if(!Array.isArray(books)||!books.length)return null;
   const s=normalize(text);
   if(!s)return null;
+  const splitNums=!!(opts&&opts.numberStyle==='split');
+  const rawSaidChapter=/\bchapters?\b/i.test(String(text||''));
+  const splitHit=(bi,num)=>{
+    if(!splitNums||rawSaidChapter||num==null||!/^\d{2}$/.test(String(num)))return null;
+    const b=books[bi];
+    const nm=String((b&&b.name)||'').toLowerCase();
+    const isPsalm=(nm==='psalm'||nm==='psalms')||(b&&b.chapters===150);
+    if(isPsalm)return null;
+    const c=+String(num)[0],v=+String(num)[1];
+    if(!(v>=1))return null;
+    return refine(bi,c,v,null,books);
+  };
   let best=null,m;
   SCAN_RE.lastIndex=0;
   while((m=SCAN_RE.exec(s))){
@@ -229,30 +320,71 @@ function scan(text,books){
     let hit=null;
     for(let k=0;k<words.length&&!hit;k++){
       const bi=matchBook(words.slice(k).join(' '),books,{fuzzy:false});
-      if(bi>=0)hit=refine(bi,+m[2],m[3]?+m[3]:null,m[4]?+m[4]:null,books);
+      if(bi>=0){
+        if(m[3]==null){const sp=splitHit(bi,m[2]);hit=sp||refine(bi,+m[2],m[3]?+m[3]:null,m[4]?+m[4]:null,books)}
+        else hit=refine(bi,+m[2],m[3]?+m[3]:null,m[4]?+m[4]:null,books);
+      }
     }
-    if(hit)best={type:'ref',book:hit.book,chapter:hit.chapter,verse:hit.verse,verseEnd:hit.verseEnd};
+    if(hit){
+      /* normalize strips punctuation and trailing whitespace, so the end of the
+         match is a reliable indication that the recogniser has more words in
+         this frame. Do not wait for isFinal: this is deliberately per-frame. */
+      best={type:'ref',book:hit.book,chapter:hit.chapter,verse:hit.verse,
+        verseEnd:hit.verseEnd,atEnd:frameAtEnd(text,s,m,hit)};
+    }
     /* the phrase may have eaten a numbered-book prefix ("reading 1 john 2 5"):
        retry from inside the failed phrase */
     else SCAN_RE.lastIndex=m.index+words[0].length+1;
   }
   if(best)return best;
+  /* book:verse ("Jude verse five" -> "jude:5") - see SCAN_VERSE_RE. */
+  SCAN_VERSE_RE.lastIndex=0;
+  while((m=SCAN_VERSE_RE.exec(s))){
+    const words=m[1].split(' '),verse=+m[2],verseEnd=m[3]?+m[3]:null;
+    let hit=null;
+    for(let k=0;k<words.length&&!hit;k++){
+      const bi=matchBook(words.slice(k).join(' '),books,{fuzzy:false});
+      if(bi<0)continue;
+      if(books[bi].chapters===1){
+        /* A one-chapter book has no ambiguity: "Jude verse five" IS Jude 1:5. */
+        const r=refine(bi,1,verse,verseEnd,books);
+        if(r&&r.verse!=null)hit={type:'ref',book:r.book,chapter:1,verse:r.verse,verseEnd:r.verseEnd,atEnd:frameAtEnd(text,s,m,{chapter:1,verse:r.verse,verseEnd:r.verseEnd})};
+      }else if(verse>=1&&verse<=200){
+        /* Keep the book on a contextual verse. The presenter decides whether the
+           named book is the one on the display; without it the book is lost. */
+        const edge=normalize(text,{keepFiller:true});
+        const marker=verseEnd&&verseEnd>verse?'-'+verseEnd:':'+verse;
+        hit={type:'verse',book:bi,verse,verseEnd:verseEnd&&verseEnd>verse?verseEnd:null,atEnd:edge.endsWith(marker)||edge.endsWith(' '+verse)};
+      }
+    }
+    if(hit)best=hit;
+    else SCAN_VERSE_RE.lastIndex=m.index+words[0].length+1;
+  }
+  if(best)return best;
   let vm=null;
-  const vre=/:(\d{1,3})(?:-(\d{1,3}))?/g;let v;
+  const vre=/:([0-9]{1,3})(?:-([0-9]{1,3}))?/g;let v;
   while((v=vre.exec(s)))vm=v;
   if(vm){
-    const verse=+vm[1],verseEnd=vm[2]?+vm[2]:null;
-    if(verse>=1&&verse<=200)return{type:'verse',verse,verseEnd:verseEnd&&verseEnd>verse?verseEnd:null};
+    const verse=+vm[1],verseEnd=vm[2]?+vm[2]:null,edge=normalize(text,{keepFiller:true});
+    const marker=verseEnd&&verseEnd>verse?'-'+verseEnd:':'+verse;
+    const atEnd=edge.endsWith(marker)||edge.endsWith(' '+verse);
+    if(verse>=1&&verse<=200)return{type:'verse',verse,verseEnd:verseEnd&&verseEnd>verse?verseEnd:null,atEnd};
   }
   return null;
 }
 
 /* ---- presenter voice commands --------------------------------------------
-   Deliberately narrow phrases so ordinary preaching never fires one. */
+   Deliberately narrow phrases so ordinary preaching never fires one.
+   Bare "next"/"previous" alone are ALSO commands when the frame holds almost
+   nothing else — a preacher saying "next verse" split across interim frames
+   ("next…" then "…verse") must still step immediately. Guarded by word-count
+   so "the next thing Jesus said" never fires. */
 function command(text){
   const s=' '+String(text||'').toLowerCase().replace(/[^a-z\s]/g,' ').replace(/\s+/g,' ').trim()+' ';
-  if(/\b(next|following) (verse|scripture)\b/.test(s))return 'next';
-  if(/\b(previous|preceding) (verse|scripture)\b/.test(s)||/\bback (one|a) verse\b/.test(s)||/\b(one|a) verse back\b/.test(s))return 'prev';
+  const words=s.trim().split(/\s+/).filter(Boolean);
+  const bare=(w)=>words.length<=3&&words[0]===w;
+  if(/\b(next|following) (verse|scripture|slide|one)\b/.test(s)||bare('next'))return 'next';
+  if(/\b(previous|preceding) (verse|scripture|slide|one)\b/.test(s)||/\bback (one|a) verse\b/.test(s)||/\b(one|a) verse back\b/.test(s)||bare('previous')||bare('back'))return 'prev';
   if(/\b(blank|clear|hide|black) (the |that )?(screen|display|projector)\b/.test(s))return 'blank';
   if(/\b(show|unblank|restore) (the |that )?(screen|display|verse)\b/.test(s)||/\bbring (the verse |it )?back\b/.test(s))return 'show';
   if(/\b(stop|pause|end) (the )?(listening|voice|recognition|dictation|microphone)\b/.test(s))return 'stop';
@@ -267,5 +399,5 @@ function format(p,books){
   return base+':'+p.verse+(p.verseEnd?'-'+p.verseEnd:'');
 }
 
-return{normalize,parse,scan,command,matchBook,format,wordsToDigits,compact,VERSION:'1.2.0'};
+return{normalize,parse,scan,command,matchBook,format,wordsToDigits,compact,detectVersion,VERSION_ALIASES,VERSION:'1.2.1'};
 });

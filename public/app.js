@@ -3,44 +3,244 @@
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const esc=s=>String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
-const today=()=>new Date().toISOString().slice(0,10);
+const dateKey=(d=new Date())=>{const x=d instanceof Date?d:new Date(d);return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}-${String(x.getDate()).padStart(2,'0')}`};
+const today=()=>dateKey(new Date());
 const fmtDate=d=>new Intl.DateTimeFormat('en',{weekday:'long',month:'long',day:'numeric'}).format(d||new Date());
 const LS='kingdomBible.v1';
-const DEFAULT={profile:{name:'Stanley',translation:'kjv',theme:'dark',font:'serif',fontSize:20,lineHeight:1.9,readingTime:'06:30',notifications:false},reader:{book:44,chapter:8,translation:'kjv',lastVerse:1},bookmarks:{},highlights:{},notes:{},prayers:[],planProgress:{},history:[],favorites:{},aiHistory:[],readingDays:[],chaptersRead:[],installed:false,devotionalDone:[],onboarded:true,ministry:{theme:'royal',church:'KINGDOM BIBLE',speaker:'',sermon:''}};
-let state=loadState(),books=[],bookCache=new Map(),xrefCache=new Map(),route='home',selectedVerse=null,deferredInstall=null,searchWorker=null,searchState={query:'',results:[],total:0,status:''};
+const APP_VERSION='1.2.12';
+const DEFAULT={profile:{name:'',translation:'kjv',theme:'dark',font:'serif',fontSize:20,lineHeight:1.9,readingTime:'06:30',notifications:false,avatar:'',devotionalTrack:'adult',voice:'device'},reader:{book:44,chapter:8,translation:'kjv',lastVerse:1},bookmarks:{},highlights:{},notes:{},prayers:[],planProgress:{},history:[],favorites:{},aiHistory:[],readingDays:[],chaptersRead:[],installed:false,devotionalDone:[],onboarded:true,ministry:{theme:'royal',church:'KINGDOM BIBLE',speaker:'',sermon:''}};
+let state=loadState(),books=[],bookCache=new Map(),bookPending=new Map(),xrefCache=new Map(),route='home',selectedVerse=null,deferredInstall=null,searchWorker=null,searchState={query:'',results:[],total:0,status:''};
 function loadState(){try{return deepMerge(structuredClone(DEFAULT),JSON.parse(localStorage.getItem(LS)||'{}'))}catch{return structuredClone(DEFAULT)}}
 function deepMerge(a,b){for(const k in b){if(b[k]&&typeof b[k]==='object'&&!Array.isArray(b[k])&&a[k]&&typeof a[k]==='object'&&!Array.isArray(a[k]))deepMerge(a[k],b[k]);else a[k]=b[k]}return a}
 function save(){localStorage.setItem(LS,JSON.stringify(state)); updateProfileBits()}
-function updateProfileBits(){const n=state.profile.name||'Guest',i=n[0]?.toUpperCase()||'G';$$('#sideName').forEach(x=>x.textContent=n);$$('.avatar').forEach(x=>x.textContent=i);document.documentElement.dataset.theme=state.profile.theme;document.documentElement.style.setProperty('--reader-size',state.profile.fontSize+'px');document.documentElement.style.setProperty('--reader-line',state.profile.lineHeight)}
+/* Persist without touching the DOM. Voice Mode calls save() several times a
+   minute, and updateProfileBits() walks the page each time — a main-thread stall
+   in the middle of a service. Nothing visible depends on it. */
+function saveQuiet(){try{localStorage.setItem(LS,JSON.stringify(state))}catch{}}
+function avatarMarkup(){const n=displayName(),i=esc(n[0]?.toUpperCase()||'R');const src=accountState.avatar||state.profile.avatar;return src?`<img src="${esc(src)}" alt="${esc(n)} profile photo">`:i}
+function updateProfileBits(){const n=displayName();$$('#sideName').forEach(x=>x.textContent=n);$$('.avatar').forEach(x=>x.innerHTML=avatarMarkup());document.documentElement.dataset.theme=state.profile.theme;document.documentElement.style.setProperty('--reader-size',state.profile.fontSize+'px');document.documentElement.style.setProperty('--reader-line',state.profile.lineHeight)}
+/* The greeting must belong to whoever is signed in, never to whoever built the app.
+   A stale name in localStorage would also leak to the next visitor on a shared
+   device, so the display name is always re-derived from the signed-in account. */
+function displayName(){const n=String(state.profile.name||'').trim();return n||'Reader'}
+function syncIdentity(u){if(!u)return;const raw=String(u.name||'').trim()||String(u.email||'').split('@')[0].trim();if(raw&&raw!==state.profile.name){state.profile.name=raw;save()}}
+/* ---- account gate ---- */
+let accountState={signedIn:false,status:'unknown',daysRemaining:0,plan:'none'};
+/* Repaint identity and the trial banner from the account itself.
+   It used to re-assign KingdomPremium.onAuth here, which silently REPLACED the
+   handler bindGlobal() installs. After that swap, onAuth was a stub that only
+   repainted the banner: the sign-in gate never closed on a fresh signup, and a
+   sign-out repainted nothing at all. The shell owns onAuth; this only updates
+   state and repaints. */
+function applyAccount(u){if(u===undefined)return false;accountState=u?{signedIn:true,status:u.status,daysRemaining:u.daysRemaining||0,plan:u.plan,role:u.role,name:u.name,email:u.email,avatar:u.avatar||'',referralCode:u.referralCode}:{signedIn:false,status:'signed_out',daysRemaining:0,plan:'none'};syncIdentity(u);return true}
+/* After a successful sign-in the gate must be torn down explicitly: it hid the
+   navigation and set body.gate-open, so simply re-rendering the page left the reader
+   staring at the welcome screen with no way to move. */
+function clearSignInGate(){document.body.classList.remove('gate-open');$$('#desktopNav,#mobileNav,.side-footer').forEach(x=>{if(x)x.style.display=''});const gate=$('.signin-gate');if(gate)gate.remove()}
+function freeOnly(){return accountState.status==='expired'||accountState.status==='signed_out'}
+/* One banner, four states. A signed-out reader gets an invitation, not a wall:
+   the app is already fully rendered behind it, and both buttons open the form
+   they actually promise. */
+function paintTrialBanner(){
+  const el=$('#trialBanner');if(!el)return;const s=accountState;
+  /* 'unknown' = session not resolved yet (slow data / first paint). Never flash
+     the guest invite for a signed-in reader, and never trap them behind it:
+     stay hidden until applyAccount() reports a real state. */
+  if(!s||s.status==='unknown'){el.hidden=true;el.innerHTML='';return}
+  try{if(s.status==='signed_out'&&localStorage.getItem('kb.bannerDismissed.v1')==='1'){el.hidden=true;el.innerHTML='';return}}catch{}
+  const put=(html,wire)=>{el.hidden=false;el.innerHTML=html;wire&&wire()};
+  const toPremium=()=>{el.querySelector('[data-open-premium]').onclick=()=>window.KingdomPremium?.open()};
+  if(s.status==='signed_out')return put(`<span>📖 <strong>Bible reading is free.</strong> Create a free account to sync across devices and open Ministry Mode.</span><button class="secondary-btn small-btn" data-open-auth="register">Create free account</button><button class="text-btn" data-open-auth="login">Sign in</button><button class="icon-btn" data-banner-x aria-label="Dismiss" title="Dismiss" style="margin-left:auto;width:28px;height:28px;font-size:16px;line-height:1">×</button>`,()=>{$$('[data-open-auth]',el).forEach(b=>b.onclick=()=>window.KingdomPremium?.openAuth?.(b.dataset.openAuth));const x=el.querySelector('[data-banner-x]');if(x)x.onclick=()=>{try{localStorage.setItem('kb.bannerDismissed.v1','1')}catch{};el.hidden=true;el.innerHTML=''}});
+  if(s.status==='trial'&&s.daysRemaining<=7)return put(`<span>⏳ <strong>${s.daysRemaining} day${s.daysRemaining===1?'':'s'} left</strong> in your free trial.</span><button class="secondary-btn small-btn" data-open-premium>Choose a plan</button>`,toPremium);
+  if(s.status==='expired')return put(`<span>🔒 Your free trial has ended. You have free reading access.</span><button class="secondary-btn small-btn" data-open-premium>See subscription plans</button>`,toPremium);
+  el.hidden=true;el.innerHTML='';
+}
+/* There is deliberately no full-screen sign-in gate any more. It replaced the whole
+   application for signed-out visitors, which meant no Bible, no service worker, no
+   install prompt and no offline support - even though Bible reading is free. The app
+   now always renders; the banner above is the invitation to create an account. */
 const NAV=[['home','⌂','Home'],['bible','▤','Bible'],['study','✦','Study'],['search','⌕','Search'],['prayer','♧','Prayer'],['devotional','☼','Devotional'],['plans','◫','Plans'],['ministry','▣','Ministry'],['profile','○','Profile']];
-const QUICK=[['bible','▤','Read Bible'],['search','⌕','Search'],['study','✦','Study'],['prayer','♧','Pray'],['bible','◉','Listen'],['plans','◇','Memorize'],['study','✎','Sermon'],['ministry','▣','Present']];
+const QUICK=[['bible','▤','Read Bible'],['search','⌕','Search'],['study','✦','Study'],['prayer','♧','Pray'],['bible','◉','Listen'],['plans','◇','Memorize'],['study','✏','Sermon'],['ministry','▣','Present']];
 const TR={kjv:'KJV',asv:'ASV',web:'WEB'};
-const DEVOTIONAL={title:'Walking by Faith',scripture:'2 Corinthians 5:7',verse:'For we walk by faith, not by sight.',message:[`Faith is not a denial of what we can see. It is a settled confidence that God remains faithful beyond the limits of our present view. Paul writes these words while speaking about courage, longing, and the hope of being with the Lord.`, `Today, choose the next faithful step available to you. You may not see the whole road, but Scripture invites you to trust the One who does. Let the Word—not fear, pressure, or appearances—shape your response.`],reflection:'Where are you being invited to trust God beyond what you can presently see?',prayer:'Lord, steady my heart in Your truth. Help me walk faithfully today, guided by Your Word rather than by fear. Give me wisdom for the next step and courage to obey. Amen.',action:'Write down one faithful next step, then prayerfully take it today.'};
+/* DAILY DEVOTIONALS — rotating library (public/devotionals.js) with two tracks.
+   devotionFor(track, date) picks the calendar-day entry: same topic for
+   everyone today, a new one tomorrow. DEVOTIONAL stays a live alias of
+   today's entry on the reader's track, so every existing caller (Home card,
+   Home offline fallback, Devotional page) keeps working unchanged. */
+function devLibrary(track){const lib=window.KingdomDevotionals&&(track==='youth'?window.KingdomDevotionals.YOUTH:window.KingdomDevotionals.ADULT);return lib&&lib.length?lib:null}
+function dayIndex(n,d){d=d||new Date();const day=Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()),start=Date.UTC(d.getFullYear(),0,0);return Math.floor((day-start)/86400000)%n}
+function devotionFor(track,date){const lib=devLibrary(track)||devLibrary(track==='youth'?'adult':'youth');if(!lib)return DEVOTIONAL_FALLBACK;return lib[dayIndex(lib.length,date||new Date())%lib.length]}
+function todaysDevotional(date){return devotionFor(state.profile.devotionalTrack||'adult',date)}
+const DEVOTIONAL_FALLBACK={title:'Walking by Faith',scripture:'2 Corinthians 5:7',verse:'For we walk by faith, not by sight.',message:[`Faith is not a denial of what we can see. It is a settled confidence that God remains faithful beyond the limits of our present view.`, `Today, choose the next faithful step available to you. Trust the One who sees the whole road.`],reflection:'Where are you being invited to trust God beyond what you can presently see?',prayer:'Lord, steady my heart in Your truth. Help me walk faithfully today. Amen.',action:'Write down one faithful next step, then prayerfully take it today.'};
+const DEVOTIONAL=new Proxy({},{get:(t,k)=>todaysDevotional()[k],has:()=>true,ownKeys:()=>Reflect.ownKeys(todaysDevotional()),getOwnPropertyDescriptor:(t,k)=>({enumerable:true,configurable:true,value:todaysDevotional()[k]})});
 const PLANS=[{id:'year',icon:'◫',name:'Bible in One Year',days:365,desc:'Journey through the whole Bible with a balanced daily rhythm.'},{id:'nt90',icon:'✦',name:'New Testament in 90 Days',days:90,desc:'Read through the New Testament in a focused three-month journey.'},{id:'gospels30',icon:'☼',name:'Gospels in 30 Days',days:30,desc:'Walk with Jesus through Matthew, Mark, Luke, and John.'},{id:'psalms30',icon:'♬',name:'Psalms in 30 Days',days:30,desc:'Pray and reflect through the book of Psalms.'},{id:'proverbs31',icon:'◇',name:'Proverbs in 31 Days',days:31,desc:'One chapter of biblical wisdom each day.'},{id:'faith7',icon:'♧',name:'7 Days of Faith',days:7,desc:'Key passages for trusting God in every season.'},{id:'prayer7',icon:'○',name:'7 Days of Prayer',days:7,desc:'A Scripture-centered week of growing in prayer.'},{id:'kingdom21',icon:'♕',name:'21 Days of Kingdom Living',days:21,desc:'Explore the values and calling of God’s Kingdom.'},{id:'jesus30',icon:'✧',name:'30 Days with Jesus',days:30,desc:'Daily encounters with the words and works of Christ.'}];
 const DICTIONARY={grace:['God’s unmerited favor and active kindness toward humanity. In the New Testament, grace is central to salvation and Christian life.',['Ephesians 2:8-9','Titus 2:11-12','Romans 3:24']],faith:['Trust, confidence, and faithful reliance upon God. Biblical faith includes belief expressed through allegiance and action.',['Hebrews 11:1','Romans 10:17','James 2:17']],covenant:['A solemn, binding relationship established by God, often accompanied by promises, signs, and responsibilities.',['Genesis 17:7','Exodus 24:7-8','Luke 22:20']],atonement:['Reconciliation with God through the dealing with sin; fulfilled for Christians in the sacrificial death of Jesus Christ.',['Leviticus 16:30','Romans 3:25','1 John 2:2']],kingdom:['God’s sovereign reign and rule, announced and embodied in the ministry of Jesus and awaiting final consummation.',['Matthew 6:33','Mark 1:15','Revelation 11:15']],gospel:['The good news of God’s saving work through Jesus Christ—His life, death, resurrection, and lordship.',['Mark 1:1','Romans 1:16','1 Corinthians 15:1-4']],sanctification:['The work of God by which believers are set apart and progressively formed in holiness.',['John 17:17','1 Thessalonians 4:3','Hebrews 12:14']]};
+function consumeUpgradeIntent(){
+  const url=new URL(location.href);
+  if(url.searchParams.get('upgrade')!=='1')return false;
+  url.searchParams.delete('upgrade');
+  if(typeof history==='undefined'||typeof history.replaceState!=='function')return false;
+  try{history.replaceState(history.state,'',url.pathname+url.search+url.hash)}catch{return false}
+  return true;
+}
 async function init(){
   updateProfileBits();
   try{books=(await (await fetch('/data/books.json')).json()).books}catch(e){$('#main').innerHTML=`<div class="empty-state"><h3>Unable to load Bible library</h3><p>${esc(e.message)}</p></div>`;return}
   renderNav(); bindGlobal();
-  if(location.pathname.startsWith('/present')||new URLSearchParams(location.search).has('present')){renderPresentation();return}
+  if(location.pathname.startsWith('/present')||new URLSearchParams(location.search).has('present')){if(typeof window!=='undefined')window.KingdomAnalytics?.trackPage('presentation');renderPresentation();return}
+  /* Splash -> account. The presentation surface is a capture target for the
+     projector and must never be gated, so it returns above. A signed-out visitor
+     is NOT stopped here: the early return that used to sit on this line meant a
+     guest never got the service worker, the install prompt, offline support or a
+     single word of Scripture. Entitlement stays enforced on server.js. */
+  try{const u=await window.KingdomPremium?.load();if(u!==undefined)applyAccount(u)}catch{}
+  clearSignInGate();
+  paintTrialBanner();
+  /* Slow 4G: the fetch above can still be in flight when this runs (load()
+     swallows its own errors and may resolve null early). Re-check once the
+     session actually settles so a signed-in reader never keeps the guest
+     banner, and a guest always gets it. applyAccount(undefined) is a no-op. */
+  try{const u2=await window.KingdomPremium?.load?.();if(applyAccount(u2))paintTrialBanner()}catch{}
   const hash=location.hash.slice(1),valid=NAV.some(n=>n[0]===hash.split('/')[0]); navigate(valid?hash:'home',false);
   registerPWA(); networkStatus();
+  const intent=new URLSearchParams(location.search),openUpgrade=consumeUpgradeIntent();
+  if(intent.get('admin')==='1'){if(accountState.role==='admin')location.replace('/admin');else window.KingdomPremium?.openAuth?.('login')}
+  else if(openUpgrade)window.KingdomPremium?.open?.();
 }
 function renderNav(){
   $('#desktopNav').innerHTML=NAV.map((n,i)=>`${i===7?'<div class="nav-sep">MINISTRY & ACCOUNT</div>':''}<button class="nav-btn" data-route="${n[0]}"><span class="nav-icon">${n[1]}</span>${n[2]}</button>`).join('');
-  const mob=NAV.filter(n=>['home','bible','search','prayer','profile'].includes(n[0]));
+  const mob=NAV.filter(n=>['home','bible','devotional','prayer','profile'].includes(n[0]));
   $('#mobileNav').innerHTML=mob.map(n=>`<button class="nav-btn" data-route="${n[0]}"><span class="nav-icon">${n[1]}</span>${n[2]}</button>`).join('');
 }
 function bindGlobal(){
   document.addEventListener('click',e=>{const r=e.target.closest('[data-route]');if(r){e.preventDefault();navigate(r.dataset.route)}const c=e.target.closest('[data-close]');if(c)closeModal()});
-  $('#commandBtn').onclick=openCommand;$('#quickBtn').onclick=openQuick;$('#themeBtn').onclick=cycleTheme;
-  $('#notifBtn').onclick=()=>toast('No new notifications');
-  window.addEventListener('hashchange',()=>navigate(location.hash.slice(1)||'home',false));
-  window.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openCommand()}if(!/input|textarea|select/i.test(e.target.tagName)&&!e.ctrlKey&&!e.metaKey){if(e.key.toLowerCase()==='b')navigate('bible');if(e.key.toLowerCase()==='s')navigate('search');if(e.key.toLowerCase()==='p')navigate('ministry')}});
+  /* Premium sign-in (Google, email, register) finishes inside a modal. When it
+     succeeds we must refresh identity, drop the welcome gate and repaint the trial
+     banner — otherwise the reader stays on the gate with no navigation. */
+  window.KingdomPremium&&(window.KingdomPremium.onAuth=u=>{
+    /* u === null means the account was signed out. Everything the account
+       unlocked goes away, but the reader stays in the app on free reading
+       access and the banner invites them back. */
+    if(!u){applyAccount(null);updateProfileBits();paintTrialBanner();bindNotifications();
+      if(new URLSearchParams(location.search).get('admin')==='1'){window.KingdomPremium?.openAuth?.('login');return}
+      navigate('home',true);return}
+    applyAccount(u);clearSignInGate();updateProfileBits();paintTrialBanner();bindNotifications();
+    const adminLogin=new URLSearchParams(location.search).get('admin')==='1';
+    if(adminLogin&&u.role==='admin'){location.replace('/admin');return}
+    if(adminLogin&&u.role!=='admin')toast('This account does not have administrator access','error');
+    /* A fresh sign-in belongs on Home. Landing on the plan screen made finishing
+       the free trial feel like being trapped on a paywall. */
+    navigate('home',true);
+  });
+  window.KingdomPremium&&(window.KingdomPremium.onPasswordReset=msg=>{toast(msg||'Password updated — sign in with your new password','success');window.KingdomPremium.openAuth('login')});
+  $('#commandBtn').onclick=openCommand;$('#quickBtn').onclick=openQuick;$('#themeBtn').onclick=cycleTheme;$('#backBtn')&&($('#backBtn').onclick=goBack);
+  /* ---- notifications ----
+   This used to be a permanent "No new notifications" toast, which is the worst
+   kind of dead control: it looks live and can never deliver anything. It now shows
+   only what is actually true for this account — trial/plan state and referral
+   earnings — so the button either has real content or explains why it is empty.
+   Server-side admin notifications are a separate, admin-only surface. */
+function notifItems(){
+  const s=accountState;
+  if(!s.signedIn)return{empty:'Sign in to see trial and referral updates.',items:[]};
+  const items=[];
+  if(s.status==='trial'&&s.daysRemaining!=null)
+    items.push({tone:s.daysRemaining<=7?'warn':'info',title:`${s.daysRemaining} day${s.daysRemaining===1?'':'s'} left in your free trial`,
+      body:s.daysRemaining<=7?'Choose a plan before access expires.':'Your trial runs until it ends.'});
+  else if(s.status==='expired')
+    items.push({tone:'warn',title:'Your free trial has ended',body:'Reading stays free. Choose a plan to restore Pro tools.'});
+  else if(s.status==='active')
+    items.push({tone:'ok',title:`${String(s.plan||'').toUpperCase()} plan active`,body:'Your subscription is running.'});
+  if(s.status==='trial')
+    items.push({tone:'info',title:'Referral rewards are waiting',body:'Earn ₦100 per verified signup. Share your link from Profile.'});
+  return{items,empty:'Nothing new right now. Trial and referral updates appear here.'};
 }
-function navigate(to,push=true){route=to.split('/')[0]||'home';if(push)history.pushState(null,'','#'+to);$$('.nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.route===route));const info=NAV.find(n=>n[0]===route)||NAV[0];$('#pageTitle').textContent=info[2];$('#pageEyebrow').textContent=route==='ministry'?'MINISTRY MODE':'KINGDOM BIBLE';closeModal();renderRoute(to);scrollTo(0,0)}
+function openNotifications(){
+  const n=notifItems();
+  modal(`<div class="modal-head"><div><div class="eyebrow">UPDATES</div><h2>Notifications</h2><p>Trial status and referral activity for this account.</p></div><button class="close-btn" data-close>×</button></div>
+  ${n.items.length?n.items.map(i=>`<div class="notice" style="margin-bottom:10px"><strong>${esc(i.title)}</strong><br>${esc(i.body)}</div>`).join(''):`<p style="color:var(--muted)">${esc(n.empty)}</p>`}
+  <div class="modal-actions"><button class="primary-btn" id="notifPlans">View plans</button></div>`,'command-modal');
+  const b=$('#notifPlans');if(b)b.onclick=()=>{closeModal();window.KingdomPremium?.open()};
+}
+function bindNotifications(){
+  const btn=$('#notifBtn');if(!btn)return;
+  const s=accountState;
+  /* a real dot when there is something worth surfacing (trial running low) */
+  const urgent=s.signedIn&&((s.status==='trial'&&s.daysRemaining<=7)||s.status==='expired');
+  btn.classList.toggle('has-dot',!!urgent);
+  btn.setAttribute('aria-label',urgent?'Notifications — action needed':'Notifications');
+  btn.onclick=openNotifications;
+}
+$('#notifBtn')&&bindNotifications();
+  window.addEventListener('hashchange',()=>navigate(location.hash.slice(1)||'home',false));
+  /* Repaint the on-screen back button on every traversal. hashchange misses the one case
+     where two entries share an identical hash (a duplicate push), but popstate
+     always fires — so the button never gets stranded visible or invisible. */
+  window.addEventListener('popstate',paintBackBtn);
+  window.addEventListener('keydown',e=>{
+    if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openCommand();return}
+    if(e.ctrlKey||e.metaKey||e.altKey)return;
+    const t=e.target;
+    /* Backspace is the delete key the moment a caret is in a field — never
+       steal it, or typing would navigate away mid-sentence. */
+    if(t&&(/input|textarea|select/i.test(t.tagName)||t.isContentEditable))return;
+    if(e.key==='Backspace'){e.preventDefault();goBack();return}
+    if(e.key.toLowerCase()==='b')navigate('bible');
+    if(e.key.toLowerCase()==='s')navigate('search');
+    if(e.key.toLowerCase()==='p')navigate('ministry');
+  });let adminHold=null;$$('[data-admin-trigger]').forEach(logo=>{const start=()=>{clearTimeout(adminHold);adminHold=setTimeout(()=>{location.href='/admin'},2500)},cancel=()=>clearTimeout(adminHold);logo.addEventListener('pointerdown',start);logo.addEventListener('pointerup',cancel);logo.addEventListener('pointercancel',cancel);logo.addEventListener('pointerleave',cancel)})
+}
+/* ---------- back navigation ----------
+   The Backspace key and the on-screen back button both land in goBack(). The
+   previous page is NOT kept in a shadow stack that can drift out of sync — it
+   is the browser's own history, stamped with how many in-app pushes deep the
+   current entry is (state.depth). So the browser back button, the keyboard and
+   the on-screen button always agree, and back/forward traversal restores the
+   right depth for free. depth 0 means this document has no earlier page of its
+   own, so "back" falls home instead of leaving the app for a blank tab. */
+function presenting(){return location.pathname.startsWith('/present')||new URLSearchParams(location.search).has('present')}
+function backDepth(){const s=typeof history!=='undefined'&&history.state;return s&&typeof s.depth==='number'?s.depth:0}
+/* The button is a control, not decoration: it is shown only while pressing it
+   would actually do something. */
+function paintBackBtn(){const b=$('#backBtn');if(b)b.hidden=presenting()||(backDepth()===0&&route==='home')}
+function goBack(){
+  if(presenting())return;
+  /* An open dialog is the page the reader is really on. Backspace dismisses it
+     first — like Escape — instead of navigating away underneath it. (This never
+     fires while the caret sits in a field; bindGlobal filters that out.) */
+  const mr=$('#modalRoot');if(mr&&mr.firstChild){closeModal();return}
+  if(backDepth()>0&&typeof history.back==='function'){history.back();return}
+  /* No earlier page in this document (a deep link straight to /#bible). Swap the
+     entry for Home instead of pushing one — a push would leave Backspace
+     ping-ponging between Home and the deep link forever. */
+  if(route!=='home'){if(typeof history.replaceState==='function')history.replaceState({depth:0},'','#home');navigate('home',false)}
+}
+function navigate(to,push=true){route=to.split('/')[0]||'home';if(typeof window!=='undefined')window.KingdomAnalytics?.trackPage(route);if(push)history.pushState({depth:backDepth()+1},'','#'+to);$$('.nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.route===route));const info=NAV.find(n=>n[0]===route)||NAV[0];$('#pageTitle').textContent=info[2];$('#pageEyebrow').textContent=route==='ministry'?'MINISTRY MODE':'KINGDOM BIBLE';closeModal();renderRoute(to);scrollTo(0,0);paintBackBtn()}
 function renderRoute(full){const m=$('#main');m.innerHTML='<div class="loading-screen"><span></span><p>Opening…</p></div>';const renderers={home:renderHome,bible:renderBible,search:renderSearch,study:renderStudy,prayer:renderPrayer,devotional:renderDevotional,plans:renderPlans,ministry:renderMinistry,profile:renderProfile};Promise.resolve(renderers[route]?.(full)).catch(e=>{console.error(e);m.innerHTML=`<div class="empty-state"><div class="empty-icon">!</div><h3>Something went wrong</h3><p>${esc(e.message)}</p><button class="secondary-btn" data-route="home">Return home</button></div>`})}
-async function loadBook(tr,bi){const key=tr+':'+bi;if(bookCache.has(key))return bookCache.get(key);const d=await (await fetch(`/data/bibles/${tr}/${bi}.json`)).json();bookCache.set(key,d);return d}
+async function loadBook(tr,bi){const key=tr+':'+bi;if(bookCache.has(key))return bookCache.get(key);
+  /* Two callers asking for the same unopened book at once (voice dispatch plus
+     the next-verse walk) must share one request, not race two fetches. */
+  if(bookPending.has(key))return bookPending.get(key);
+  const p=(async()=>{const d=await (await fetch(`/data/bibles/${tr}/${bi}.json`)).json();bookCache.set(key,d);return d})()
+    .finally(()=>bookPending.delete(key));
+  bookPending.set(key,p);return p}
+/* Warm a whole translation in the background. Voice Preacher Mode resolves a
+   reference the instant it is spoken; without this the first mention of an
+   unopened book stalls on a network fetch while the preacher waits. */
+let warming=new Set();
+function warmTranslation(tr){
+  tr=String(tr||state.reader.translation||'kjv');
+  if(warming.has(tr)||!books.length)return;
+  warming.add(tr);
+  const idle=typeof requestIdleCallback==='function'?requestIdleCallback:cb=>setTimeout(cb,120);
+  let i=0;
+  const step=()=>{
+    if(i>=books.length){warming.delete(tr);return}
+    const bi=i++;
+    Promise.resolve(loadBook(tr,bi)).catch(()=>{}).then(()=>idle(step));
+  };
+  idle(step);
+}
 async function getVerse(ref,tr=state.reader.translation){const p=parseRef(ref);if(!p)return null;const v=p.verse||1;const d=await loadBook(tr,p.book);return {...p,verse:v,text:d.chapters[p.chapter-1]?.[v-1],translation:tr,ref:`${books[p.book].name} ${p.chapter}:${v}`}}
 /* One parser for everything the user can type or say. bible-ref.js understands
    "jn 3 16", "1john2:5", "John 3:16-18", spoken forms and misspellings —
@@ -48,10 +248,10 @@ async function getVerse(ref,tr=state.reader.translation){const p=parseRef(ref);i
    The old exact-match-only regex here was the "Reference not found" bug. */
 function parseRef(s){
   if(window.KingdomRef)return window.KingdomRef.parse(s,books);
-  s=String(s||'').trim();const m=s.match(/^(.+?)\s+(\d+)(?::(\d+)(?:[-–]\d+)?)?$/);if(!m)return null;
+  s=String(s||'').trim();const m=s.match(/^(.+?)\s+(\d+)(?::(\d+)(?:[-–—](\d+))?)?$/);if(!m)return null;
   const q=m[1].toLowerCase().replace(/\./g,'').trim();
   const bi=books.findIndex(b=>[b.name,b.abbr,...b.aliases].some(a=>a.toLowerCase().replace(/\./g,'')===q));
-  if(bi<0)return null;return{book:bi,chapter:+m[2],verse:m[3]?+m[3]:null,verseEnd:null};
+  if(bi<0)return null;return{book:bi,chapter:+m[2],verse:m[3]?+m[3]:null,verseEnd:m[4]?+m[4]:null};
 }
 /* Resolve a reference into display-ready verses: a single verse, a range
    ("John 3:16-18") or a whole chapter — the client twin of server.js resolve(),
@@ -74,60 +274,96 @@ async function getPassage(ref,tr=state.reader.translation){
   return{book:p.book,chapter:p.chapter,verse:list[0].n,verseEnd:list[list.length-1].n,verses:list,text:list.map(v=>v.text).join(' '),ref:out,label,translation:tr};
 }
 function markRead(b,c){const id=`${b}:${c}`;if(!state.chaptersRead.includes(id))state.chaptersRead.push(id);if(!state.readingDays.includes(today()))state.readingDays.push(today());save()}
-function streak(){let n=0,d=new Date();for(;;){const k=d.toISOString().slice(0,10);if(state.readingDays.includes(k)){n++;d.setDate(d.getDate()-1)}else if(n===0&&k===today()){d.setDate(d.getDate()-1)}else break}return n}
+function streak(){let n=0,d=new Date();for(;;){const k=dateKey(d);if(state.readingDays.includes(k)){n++;d.setDate(d.getDate()-1)}else if(n===0&&k===today()){d.setDate(d.getDate()-1)}else break}return n}
 function toast(msg,type=''){const x=document.createElement('div');x.className='toast '+type;x.textContent=msg;$('#toastRoot').append(x);setTimeout(()=>x.remove(),3100)}
 function modal(html,cls=''){$('#modalRoot').innerHTML=`<div class="modal-backdrop"><div class="modal ${cls}" role="dialog" aria-modal="true">${html}</div></div>`;setTimeout(()=>$('.modal input,.modal textarea')?.focus(),20);$('.modal-backdrop').onclick=e=>{if(e.target.classList.contains('modal-backdrop'))closeModal()}}
-function closeModal(){$('#modalRoot').innerHTML=''}
+function closeModal(){window.KingdomDemo?.dispose?.({restoreFocus:false});$('#modalRoot').innerHTML=''}
 function setTitle(t,e='KINGDOM BIBLE'){$('#pageTitle').textContent=t;$('#pageEyebrow').textContent=e}
 function chapterOptions(bi,selected){return Array.from({length:books[bi].chapters},(_,i)=>`<option value="${i+1}" ${i+1===selected?'selected':''}>Chapter ${i+1}</option>`).join('')}
+/* A chapter can run past 150 verses (Psalm 119 has 176), so a verse picker is the only
+   reliable way to reach a verse instead of scrolling the whole chapter. */
+function verseOptions(count,selected){const n=clamp(Number(selected)||1,1,count);return Array.from({length:count},(_,i)=>`<option value="${i+1}" ${i+1===n?'selected':''}>Verse ${i+1}</option>`).join('')}
+function focusVerse(v){const el=$('#v'+v);if(!el)return;$$('.verse').forEach(x=>x.classList.remove('jump'));el.classList.add('jump');el.scrollIntoView({behavior:'smooth',block:'center'})}
+function goToVerse(v){const sel=$('#readerVerse'),n=clamp(Number(v)||1,1,sel?sel.options.length:1);state.reader.lastVerse=n;save();if(sel)sel.value=String(n);focusVerse(n)}
 function translationOptions(sel){return Object.entries(TR).map(([k,v])=>`<option value="${k}" ${k===sel?'selected':''}>${v}</option>`).join('')}
 
 /* HOME */
 async function renderHome(){
   setTitle('Home');const dailyRefs=['John 3:16','Psalms 119:105','Proverbs 3:5','Isaiah 41:10','Romans 8:28','Philippians 4:6','Matthew 6:33','Joshua 1:9','2 Corinthians 5:7','Psalms 46:1'];
-  const dr=dailyRefs[Math.floor(Date.now()/86400000)%dailyRefs.length],dv=await getVerse(dr),last=state.reader;
+  const dr=dailyRefs[Math.floor(Date.now()/86400000)%dailyRefs.length],last=state.reader;
+  /* A single offline/failed verse fetch must never blank the whole Home screen
+     ("Something went wrong / Failed to fetch"). Fall back to the bundled
+     devotional verse so Home always renders, online or off. */
+  let dv=null;try{dv=await getVerse(dr)}catch(e){console.warn('verse of the day failed, using fallback',e)}
+  dv=dv&&dv.text?dv:{text:DEVOTIONAL.verse,ref:DEVOTIONAL.scripture,translation:state.reader.translation};
   $('#main').innerHTML=`<div class="page">
-    <div class="welcome-row"><div><div class="eyebrow">${esc(fmtDate())}</div><h1 class="hero-title">Good ${new Date().getHours()<12?'morning':new Date().getHours()<18?'afternoon':'evening'}, ${esc(state.profile.name)}.</h1><p class="lead">Make space for the Word today.</p></div><button class="secondary-btn" id="resumeTop">▤ Continue reading</button></div>
-    <div class="daily-grid"><article class="card verse-card"><div class="eyebrow">VERSE OF THE DAY · ${TR[dv.translation]}</div><blockquote>“${esc(dv.text)}”</blockquote><cite>— ${esc(dv.ref)}</cite><div class="card-actions"><button class="secondary-btn small-btn" id="dailySave">♡ Save</button><button class="secondary-btn small-btn" id="dailyShare">↗ Share</button><button class="secondary-btn small-btn" id="dailyOpen">Read chapter</button></div></article>
-    <div class="today-stack"><article class="card continue-card"><span class="book-mark">${esc(books[last.book].name[0])}</span><div class="eyebrow">CONTINUE READING</div><h3>${esc(books[last.book].name)} ${last.chapter}</h3><p>Resume where you last stopped.</p><button class="text-btn" id="resumeReading">Continue →</button></article><article class="card devotional-card"><div class="eyebrow">TODAY’S DEVOTIONAL</div><h3>${DEVOTIONAL.title}</h3><p>${DEVOTIONAL.scripture} · 5 min read</p><button class="text-btn" data-route="devotional">Read devotional →</button></article></div></div>
+    <div class="welcome-row"><div><div class="eyebrow">${esc(fmtDate())}</div><h1 class="hero-title">Good ${new Date().getHours()<12?'morning':new Date().getHours()<18?'afternoon':'evening'}, ${esc(displayName())}.</h1><p class="lead">Make space for the Word today.</p></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="secondary-btn" id="resumeTop">▤ Continue reading</button><button class="primary-btn" id="homeUpgrade">✦ Try Pro free</button></div></div>
+    <div class="home-membership card"><div><div class="eyebrow">KINGDOM BIBLE PRO</div><strong>30 days to build a deeper rhythm</strong><p>Unlock ministry tools, guided study, AI Bible questions, and referral rewards. Read the <a href="/privacy" target="_blank">privacy</a> and <a href="/refund" target="_blank">refund</a> policy before subscribing.</p></div><button class="secondary-btn small-btn" id="homeWhatsApp">WhatsApp support</button></div>
+    <div class="daily-grid"><article class="card verse-card"><div class="eyebrow">VERSE OF THE DAY · ${TR[dv.translation]}</div><blockquote>"${esc(dv.text)}"</blockquote><cite>— ${esc(dv.ref)}</cite><div class="card-actions"><button class="secondary-btn small-btn" id="dailySave">♡ Save</button><button class="secondary-btn small-btn" id="dailyShare">↗ Share</button><button class="secondary-btn small-btn" id="dailyOpen">Read chapter</button></div></article>
+    <div class="today-stack"><article class="card continue-card"><span class="book-mark">${esc(books[last.book].name[0])}</span><div class="eyebrow">CONTINUE READING</div><h3>${esc(books[last.book].name)} ${last.chapter}</h3><p>Resume where you last stopped.</p><button class="text-btn" id="resumeReading">Continue →</button></article><article class="card devotional-card"><div class="eyebrow">TODAY'S DEVOTIONAL · ${esc((state.profile.devotionalTrack||'adult')==='youth'?'YOUTH':'ADULT')}</div><h3>${DEVOTIONAL.title}</h3><p>${DEVOTIONAL.scripture} · 5 min read</p><button class="text-btn" data-route="devotional">Read devotional →</button></article></div></div>
     <div class="section-head"><div><h2>Today with God</h2><p>Personal activity only — never a measure of spiritual worth.</p></div></div>
     <div class="home-stats"><div class="card stat-card"><span class="stat-icon">♨</span><div><strong>${streak()}</strong><small>day reading streak</small></div></div><div class="card stat-card"><span class="stat-icon">▤</span><div><strong>${state.chaptersRead.length}</strong><small>chapters read</small></div></div><div class="card stat-card"><span class="stat-icon">♡</span><div><strong>${Object.keys(state.bookmarks).length}</strong><small>verses saved</small></div></div><div class="card stat-card"><span class="stat-icon">♧</span><div><strong>${state.prayers.length}</strong><small>prayer entries</small></div></div></div>
     <div class="section-head"><div><h2>Quick actions</h2><p>Scripture-centered tools, one tap away.</p></div></div><div class="quick-grid">${QUICK.map(q=>`<button class="quick-card" data-route="${q[0]}"><span>${q[1]}</span><strong>${q[2]}</strong></button>`).join('')}</div>
+    <section class="card home-demo-card" aria-labelledby="homeDemoTitle"><div class="home-demo-copy"><div class="eyebrow">KINGDOM BIBLE PRO · PRODUCT PREVIEW</div><h2 id="homeDemoTitle">Read deeper. Serve with confidence.</h2><p>Watch a short visual tour of Scripture reading, focused study, daily plans, prayer, and Ministry Mode. Then explore the features in the guided interactive demo.</p><div class="home-demo-actions"><button class="primary-btn" id="playDemo" type="button">▶ Explore the interactive demo</button><span class="home-demo-duration">34-second video · 1-minute guided tour</span></div></div><figure class="home-demo-media"><video class="home-demo-video" controls preload="none" playsinline poster="/assets/kingdom-bible-product-preview.jpg?v=1.2.12" aria-label="KINGDOM BIBLE product preview showing Scripture reading, study, plans, prayer and Ministry Mode"><source src="/assets/kingdom-bible-product-preview.mp4?v=1.2.12" type="video/mp4">Your browser cannot play this video. Open the guided interactive demo instead.</video><figcaption class="home-demo-video-caption">Illustrative sample screens · no personal account data shown</figcaption><details class="home-demo-transcript"><summary>Read the video transcript</summary><ol><li><strong>A quieter space for Scripture.</strong> Read, study, and serve with tools made to work together.</li><li><strong>Bible reading.</strong> Choose a book, chapter, and translation; save verses and notes.</li><li><strong>Search and study.</strong> Search by word, phrase, or reference, then explore context and related passages.</li><li><strong>Plans and prayer.</strong> Follow a reading plan, track progress, and keep a private prayer journal.</li><li><strong>Ministry Mode.</strong> Prepare an audience display and control it from the presenter screen.</li><li><strong>KINGDOM BIBLE PRO.</strong> Explore voice reading, focused study, and hands-free presentation.</li></ol></details></figure></section>
     <div class="section-head"><div><h2>Your next step</h2><p>A gentle rhythm for today.</p></div></div><div class="card" style="padding:20px;display:flex;gap:16px;align-items:center;flex-wrap:wrap"><div class="stat-icon">◇</div><div style="flex:1;min-width:220px"><strong>Memory verse · ${dv.ref}</strong><p style="margin:4px 0;color:var(--muted);font-size:12px">Read it aloud, hide key words, then recall it from memory.</p></div><button class="secondary-btn" id="memoryStart">Begin practice</button></div>
   </div>`;
-  const resume=()=>{state.reader={...last};navigate('bible')};$('#resumeTop').onclick=resume;$('#resumeReading').onclick=resume;
-  $('#dailyOpen').onclick=()=>openReference(dv.ref);$('#dailySave').onclick=()=>{state.bookmarks[dv.ref]={text:dv.text,date:today(),folder:'Favorite Scriptures'};save();toast('Verse saved','success')};$('#dailyShare').onclick=()=>shareText(`${dv.text}\n— ${dv.ref} (${TR[dv.translation]})`);$('#memoryStart').onclick=()=>openMemory(dv);
+  const resume=()=>{state.reader={...last};navigate('bible')};$('#resumeTop').onclick=resume;$('#resumeReading').onclick=resume;$('#homeUpgrade').onclick=()=>window.KingdomPremium?.open();const hw=$('#homeWhatsApp');if(hw)hw.onclick=()=>window.open(window.KingdomPremium?.supportText?.()||'https://wa.me/2348134438808?text=Hello%20KINGDOM%20BIBLE%20support','_blank','noopener');
+  $('#dailyOpen').onclick=()=>openReference(dv.ref);$('#dailySave').onclick=()=>{state.bookmarks[dv.ref]={text:dv.text,date:today(),folder:'Favorite Scriptures'};save();toast('Verse saved','success')};$('#dailyShare').onclick=()=>shareText(`${dv.text}\n— ${dv.ref} (${TR[dv.translation]})`);$('#memoryStart').onclick=()=>openMemory(dv);$('#playDemo').onclick=()=>{if(window.KingdomDemo?.open)window.KingdomDemo.open();else toast('The guided demo is still loading — please try again in a moment.')};
 }
 
 /* BIBLE READER */
 async function renderBible(){
   setTitle('Bible');const r=state.reader, data=await loadBook(r.translation,r.book);r.chapter=clamp(r.chapter,1,data.chapters.length);const ch=data.chapters[r.chapter-1];markRead(r.book,r.chapter);
   $('#main').innerHTML=`<div class="page reader-layout"><aside class="card book-panel"><h3>OLD TESTAMENT</h3>${books.slice(0,39).map((b,i)=>bookRow(b,i,r.book)).join('')}<h3>NEW TESTAMENT</h3>${books.slice(39).map((b,j)=>bookRow(b,j+39,r.book)).join('')}</aside>
-  <section class="reader-main"><div class="reader-toolbar"><select class="reader-select reader-mobile-books" id="readerBook" aria-label="Book">${books.map((b,i)=>`<option value="${i}" ${i===r.book?'selected':''}>${b.name}</option>`).join('')}</select><select class="reader-select" id="readerChapter" aria-label="Chapter">${chapterOptions(r.book,r.chapter)}</select><select class="reader-select" id="readerTranslation" aria-label="Translation">${translationOptions(r.translation)}</select><span class="reader-spacer"></span><button class="icon-btn" id="readerAudio" title="Read aloud">◉</button><button class="icon-btn" id="readerSettings" title="Reading settings">Aa</button></div>
+  <section class="reader-main"><div class="reader-toolbar"><select class="reader-select reader-mobile-books" id="readerBook" aria-label="Book">${books.map((b,i)=>`<option value="${i}" ${i===r.book?'selected':''}>${b.name}</option>`).join('')}</select><select class="reader-select" id="readerChapter" aria-label="Chapter">${chapterOptions(r.book,r.chapter)}</select><select class="reader-select reader-verse-select" id="readerVerse" aria-label="Verse">${verseOptions(ch.length,r.lastVerse)}</select><select class="reader-select" id="readerTranslation" aria-label="Translation">${translationOptions(r.translation)}</select><span class="reader-spacer"></span><button class="icon-btn" id="readerAudio" title="Read aloud">◉</button><button class="icon-btn" id="readerSettings" title="Reading settings">Aa</button></div>
   <article class="card chapter-paper"><div class="chapter-label">${TR[r.translation]} · ${books[r.book].t==='OT'?'OLD':'NEW'} TESTAMENT</div><h1>${books[r.book].name} ${r.chapter}</h1><div class="scripture-text">${ch.map((v,i)=>verseHTML(v,i+1,r)).join(' ')}</div></article>
   <div class="reader-footer"><button class="secondary-btn" id="prevChapter">← Previous</button><span class="pill">${r.chapter} / ${data.chapters.length}</span><button class="secondary-btn" id="nextChapter">Next →</button></div></section>
   <aside class="card study-panel"><div class="study-tabs"><button class="active">Study</button><button>Notes</button><button>Saved</button></div><div id="contextPanel"><div class="eyebrow">CHAPTER CONTEXT</div><h3>${books[r.book].name} ${r.chapter}</h3><p>Select a verse to open study tools, cross references, notes, highlights, and Scripture assistance.</p><button class="secondary-btn small-btn" data-route="study">Open Study Mode</button><h3>Translation</h3><p>${r.translation==='kjv'?'King James Version · Public domain':r.translation==='asv'?'American Standard Version (1901) · Public domain':'World English Bible · Public domain'}</p></div></aside></div>`;
   $$('.book-row').forEach(b=>b.onclick=()=>changeReader(+b.dataset.book,1));$('#readerBook').onchange=e=>changeReader(+e.target.value,1);$('#readerChapter').onchange=e=>changeReader(r.book,+e.target.value);$('#readerTranslation').onchange=e=>{state.reader.translation=e.target.value;save();renderBible()};
-  $$('.verse').forEach(v=>v.onclick=()=>openVerse(+v.dataset.v,ch[+v.dataset.v-1]));$('#prevChapter').onclick=()=>stepChapter(-1);$('#nextChapter').onclick=()=>stepChapter(1);$('#readerSettings').onclick=openReaderSettings;$('#readerAudio').onclick=()=>speakChapter(ch,r);
+  $$('.verse').forEach(v=>v.onclick=()=>{const n=+v.dataset.v;const sv=$('#readerVerse');if(sv)sv.value=String(n);openVerse(n,ch[n-1])});$('#prevChapter').onclick=()=>stepChapter(-1);$('#nextChapter').onclick=()=>stepChapter(1);$('#readerSettings').onclick=openReaderSettings;$('#readerAudio').onclick=()=>speakChapter(ch,r);
+  if($('#readerVerse'))$('#readerVerse').onchange=e=>goToVerse(+e.target.value);
+  if(r.lastVerse>1&&r.lastVerse<=ch.length)setTimeout(()=>focusVerse(r.lastVerse),60);
 }
 function bookRow(b,i,sel){return `<button class="book-row ${i===sel?'active':''}" data-book="${i}"><span>${b.name}</span><small>${b.chapters}</small></button>`}
 function verseHTML(text,v,r){const ref=`${books[r.book].name} ${r.chapter}:${v}`,hl=state.highlights[ref]?.color||'';return `<span class="verse ${hl?'hl-'+hl:''}" data-v="${v}" id="v${v}"><sup class="verse-num">${v}</sup>${text?esc(text):'<em style="color:var(--muted);font-family:var(--ui);font-size:.68em">Verse not included in this edition.</em>'}</span>`}
 function changeReader(book,chapter){state.reader.book=book;state.reader.chapter=chapter;state.reader.lastVerse=1;save();renderBible();scrollTo(0,0)}
 async function stepChapter(d){let {book,chapter}=state.reader;chapter+=d;if(chapter<1){if(book===0)return;book--;chapter=books[book].chapters}else if(chapter>books[book].chapters){if(book===65)return;book++;chapter=1}changeReader(book,chapter)}
-async function openReference(ref){const p=parseRef(ref);if(!p){toast('Reference not recognized — try “John 3:16”','error');return}const vv=p.verse||1;state.reader.book=p.book;state.reader.chapter=p.chapter;state.reader.lastVerse=vv;save();navigate('bible');setTimeout(()=>{$(`#v${vv}`)?.scrollIntoView({behavior:'smooth',block:'center'});$(`#v${vv}`)?.classList.add('selected')},350)}
-function openVerse(v,text){const r=state.reader,ref=`${books[r.book].name} ${r.chapter}:${v}`;selectedVerse={ref,text,book:r.book,chapter:r.chapter,verse:v,translation:r.translation};state.reader.lastVerse=v;save();modal(`<div class="verse-sheet"><div class="modal-head"><div><div class="eyebrow">${TR[r.translation]} · SELECTED VERSE</div><h2>${esc(ref)}</h2></div><button class="close-btn" data-close>×</button></div><div class="selected-passage">“${esc(text)}”<cite>${esc(ref)} · ${TR[r.translation]}</cite></div><div class="action-grid"><button class="action-btn" data-vact="bookmark"><span>♡</span>${state.bookmarks[ref]?'Unsave':'Save'}</button><button class="action-btn" data-vact="highlight"><span>▰</span>Highlight</button><button class="action-btn" data-vact="note"><span>✎</span>Note</button><button class="action-btn" data-vact="copy"><span>▣</span>Copy</button><button class="action-btn" data-vact="share"><span>↗</span>Share</button><button class="action-btn" data-vact="compare"><span>◫</span>Compare</button><button class="action-btn" data-vact="xref"><span>⌁</span>Cross refs</button><button class="action-btn" data-vact="ai"><span>✦</span>Study</button><button class="action-btn" data-vact="prayer"><span>♧</span>Prayer</button><button class="action-btn" data-vact="memory"><span>◇</span>Memorize</button><button class="action-btn" data-vact="present"><span>▣</span>Present</button><button class="action-btn" data-vact="collection"><span>⊕</span>Collection</button></div></div>`,'verse-modal');$$('[data-vact]').forEach(b=>b.onclick=()=>verseAction(b.dataset.vact))}
+async function openReference(ref){const p=parseRef(ref);if(!p){toast('Reference not recognized — try "John 3:16"','error');return}const vv=p.verse||1;state.reader.book=p.book;state.reader.chapter=p.chapter;state.reader.lastVerse=vv;save();navigate('bible');setTimeout(()=>focusVerse(vv),350)}
+function openVerse(v,text){const r=state.reader,ref=`${books[r.book].name} ${r.chapter}:${v}`;selectedVerse={ref,text,book:r.book,chapter:r.chapter,verse:v,translation:r.translation};state.reader.lastVerse=v;save();modal(`<div class="verse-sheet"><div class="modal-head"><div><div class="eyebrow">${TR[r.translation]} · SELECTED VERSE</div><h2>${esc(ref)}</h2></div><button class="close-btn" data-close>×</button></div><div class="selected-passage">"${esc(text)}"<cite>${esc(ref)} · ${TR[r.translation]}</cite></div><div class="action-grid"><button class="action-btn" data-vact="bookmark"><span>♡</span>${state.bookmarks[ref]?'Unsave':'Save'}</button><button class="action-btn" data-vact="highlight"><span>▰</span>Highlight</button><button class="action-btn" data-vact="note"><span>✏</span>Note</button><button class="action-btn" data-vact="copy"><span>▢</span>Copy</button><button class="action-btn" data-vact="share"><span>↗</span>Share</button><button class="action-btn" data-vact="compare"><span>◫</span>Compare</button><button class="action-btn" data-vact="xref"><span>↔</span>Cross refs</button><button class="action-btn" data-vact="ai"><span>✦</span>Study</button><button class="action-btn" data-vact="prayer"><span>♧</span>Prayer</button><button class="action-btn" data-vact="memory"><span>◇</span>Memorize</button><button class="action-btn" data-vact="present"><span>↗</span>Present</button><button class="action-btn" data-vact="collection"><span>⊕</span>Collection</button></div></div>`,'verse-modal');$$('[data-vact]').forEach(b=>b.onclick=()=>verseAction(b.dataset.vact))}
 async function verseAction(a){const v=selectedVerse;if(a==='bookmark'){if(state.bookmarks[v.ref])delete state.bookmarks[v.ref];else state.bookmarks[v.ref]={text:v.text,date:today(),folder:'Favorite Scriptures'};save();closeModal();toast(state.bookmarks[v.ref]?'Verse saved':'Bookmark removed','success')}
- else if(a==='highlight')openHighlights();else if(a==='note')openNote(v);else if(a==='copy'){await navigator.clipboard.writeText(`“${v.text}” — ${v.ref} (${TR[v.translation]})`);toast('Copied to clipboard');closeModal()}else if(a==='share')shareText(`${v.text}\n— ${v.ref} (${TR[v.translation]})`);else if(a==='compare')openCompare(v);else if(a==='xref')openXrefs(v);else if(a==='ai'){closeModal();state.aiContext=v;save();navigate('study')}else if(a==='prayer'){closeModal();openPrayerForm(v)}else if(a==='memory')openMemory(v);else if(a==='present'){closeModal();state.ministry.current=v;save();navigate('ministry')}else toast('Custom collections are coming soon')}
+ else if(a==='highlight')openHighlights();else if(a==='note')openNote(v);else if(a==='copy'){await navigator.clipboard.writeText(`"${v.text}" — ${v.ref} (${TR[v.translation]})`);toast('Copied to clipboard');closeModal()}else if(a==='share')shareText(`${v.text}\n— ${v.ref} (${TR[v.translation]})`);else if(a==='compare')openCompare(v);else if(a==='xref')openXrefs(v);else if(a==='ai'){closeModal();state.aiContext=v;save();navigate('study')}else if(a==='prayer'){closeModal();openPrayerForm(v)}else if(a==='memory')openMemory(v);else if(a==='present'){closeModal();state.ministry.current=v;save();navigate('ministry')}else toast('Custom collections are coming soon')}
 function openHighlights(){modal(`<div class="modal-head"><div><h2>Highlight verse</h2><p>${esc(selectedVerse.ref)}</p></div><button class="close-btn" data-close>×</button></div><div class="highlight-colors">${['yellow','blue','green','red','purple','orange'].map(c=>`<button class="color-dot" data-color="${c}" style="background:${c==='yellow'?'#facc15':c==='blue'?'#3b82f6':c==='green'?'#22c55e':c==='red'?'#ef4444':c==='purple'?'#a855f7':'#f97316'}" aria-label="${c}"></button>`).join('')}</div><div class="modal-actions"><button class="secondary-btn" id="clearHighlight">Remove highlight</button></div>`);$$('[data-color]').forEach(b=>b.onclick=()=>{state.highlights[selectedVerse.ref]={color:b.dataset.color,text:selectedVerse.text,date:today()};save();closeModal();renderBible();toast('Highlight saved','success')});$('#clearHighlight').onclick=()=>{delete state.highlights[selectedVerse.ref];save();closeModal();renderBible()}}
-function openNote(v){const old=state.notes[v.ref]||{};modal(`<div class="modal-head"><div><h2>Scripture note</h2><p>${esc(v.ref)}</p></div><button class="close-btn" data-close>×</button></div><div class="form-grid"><div class="field full"><label>Title</label><input id="noteTitle" value="${esc(old.title||'')}" placeholder="What stood out?"/></div><div class="field full"><label>Note</label><textarea id="noteBody" placeholder="Write your reflection…">${esc(old.content||'')}</textarea></div><div class="field full"><label>Tags</label><input id="noteTags" value="${esc((old.tags||[]).join(', '))}" placeholder="faith, study, sermon"/></div></div><div class="modal-actions">${old.content?'<button class="danger-btn" id="deleteNote">Delete</button>':''}<button class="secondary-btn" data-close>Cancel</button><button class="primary-btn" id="saveNote">Save note</button></div>`);$('#saveNote').onclick=()=>{state.notes[v.ref]={title:$('#noteTitle').value.trim()||v.ref,content:$('#noteBody').value.trim(),tags:$('#noteTags').value.split(',').map(x=>x.trim()).filter(Boolean),text:v.text,date:today()};save();closeModal();toast('Note saved','success')};if($('#deleteNote'))$('#deleteNote').onclick=()=>{delete state.notes[v.ref];save();closeModal();toast('Note deleted')}}
+function openNote(v){const old=state.notes[v.ref]||{};modal(`<div class="modal-head"><div><h2>Scripture note</h2><p>${esc(v.ref)}</p></div><button class="close-btn" data-close>×</button></div><div class="form-grid"><div class="field full"><label>Title</label><input id="noteTitle" value="${esc(old.title||'')}" placeholder="What stood out?"/></div><div class="field full"><label>Note</label><textarea id="noteBody" placeholder="Write your reflection">${esc(old.content||'')}</textarea></div><div class="field full"><label>Tags</label><input id="noteTags" value="${esc((old.tags||[]).join(', '))}" placeholder="faith, study, sermon"/></div></div><div class="modal-actions">${old.content?'<button class="danger-btn" id="deleteNote">Delete</button>':''}<button class="secondary-btn" data-close>Cancel</button><button class="primary-btn" id="saveNote">Save note</button></div>`);$('#saveNote').onclick=()=>{state.notes[v.ref]={title:$('#noteTitle').value.trim()||v.ref,content:$('#noteBody').value.trim(),tags:$('#noteTags').value.split(',').map(x=>x.trim()).filter(Boolean),text:v.text,date:today()};save();closeModal();toast('Note saved','success')};if($('#deleteNote'))$('#deleteNote').onclick=()=>{delete state.notes[v.ref];save();closeModal();toast('Note deleted')}}
 async function openCompare(v){const vals=await Promise.all(Object.keys(TR).map(t=>getVerse(v.ref,t)));modal(`<div class="modal-head"><div><h2>Compare translations</h2><p>${esc(v.ref)} · Public-domain editions</p></div><button class="close-btn" data-close>×</button></div>${vals.map(x=>`<div style="padding:14px 0;border-bottom:1px solid var(--line)"><span class="pill">${TR[x.translation]}</span><p style="font:17px/1.7 var(--scripture);margin:9px 0">${esc(x.text||'Verse numbering differs in this edition.')}</p></div>`).join('')}`)}
 async function loadXrefs(bi){if(xrefCache.has(bi))return xrefCache.get(bi);const d=await(await fetch(`/data/xrefs/${bi}.json`)).json();xrefCache.set(bi,d);return d}
 async function openXrefs(v){const d=await loadXrefs(v.book),refs=d[v.ref]||[];modal(`<div class="modal-head"><div><h2>Cross references</h2><p>${esc(v.ref)} · Treasury of Scripture Knowledge</p></div><button class="close-btn" data-close>×</button></div>${refs.length?`<div>${refs.map(r=>`<button class="xref" data-ref="${esc(r.split(',')[0])}">${esc(r)}</button>`).join('')}</div>`:'<div class="empty-state"><p>No cross references are indexed for this verse.</p></div>'}<div class="notice" style="margin-top:15px">Cross references suggest related passages; they are study aids, not part of the Bible text.</div>`);$$('[data-ref]').forEach(b=>b.onclick=()=>openReference(b.dataset.ref))}
-function openReaderSettings(){modal(`<div class="modal-head"><div><h2>Reading appearance</h2><p>Make the Bible comfortable to read.</p></div><button class="close-btn" data-close>×</button></div><div class="field"><label>Text size · <span id="fontVal">${state.profile.fontSize}px</span></label><input id="fontRange" type="range" min="15" max="34" value="${state.profile.fontSize}"/></div><div class="field" style="margin-top:16px"><label>Line spacing</label><select id="lineSelect"><option value="1.6">Compact</option><option value="1.9" ${state.profile.lineHeight==1.9?'selected':''}>Comfortable</option><option value="2.2" ${state.profile.lineHeight==2.2?'selected':''}>Spacious</option></select></div><div class="modal-actions"><button class="primary-btn" id="applyReading">Apply</button></div>`);$('#fontRange').oninput=e=>$('#fontVal').textContent=e.target.value+'px';$('#applyReading').onclick=()=>{state.profile.fontSize=+$('#fontRange').value;state.profile.lineHeight=+$('#lineSelect').value;save();closeModal();renderBible()}}
-function speakChapter(ch,r){if(!('speechSynthesis'in window)){toast('Device speech is unavailable','error');return}if(speechSynthesis.speaking){speechSynthesis.cancel();toast('Reading stopped');return}const u=new SpeechSynthesisUtterance(`${books[r.book].name} chapter ${r.chapter}. `+ch.map((x,i)=>`Verse ${i+1}. ${x}`).join(' '));u.rate=.92;u.onend=()=>toast('Reading complete');speechSynthesis.speak(u);toast('Device read-aloud started. Tap again to stop.')}
+function openReaderSettings(){modal(`<div class="modal-head"><div><h2>Reading appearance</h2><p>Make the Bible comfortable to read.</p></div><button class="close-btn" data-close>×</button></div><div class="field"><label>Text size · <span id="fontVal">${state.profile.fontSize}px</span></label><input id="fontRange" type="range" min="15" max="34" value="${state.profile.fontSize}"/></div><div class="field" style="margin-top:16px"><label>Line spacing</label><select id="lineSelect"><option value="1.6">Compact</option><option value="1.9" ${state.profile.lineHeight==1.9?'selected':''}>Comfortable</option><option value="2.2" ${state.profile.lineHeight==2.2?'selected':''}>Spacious</option></select></div><select id="voiceSelect" aria-label="Read-aloud voice"><option value="device" ${state.profile.voice!=='studio'?'selected':''}>Device read-aloud (works offline)</option><option value="studio" ${state.profile.voice==='studio'?'selected':''}>Studio voice (clearer, needs connection and account)</option></select></div><div class="modal-actions"><button class="primary-btn" id="applyReading">Apply</button></div>`);$('#fontRange').oninput=e=>$('#fontVal').textContent=e.target.value+'px';$('#applyReading').onclick=()=>{state.profile.fontSize=+$('#fontRange').value;state.profile.lineHeight=+$('#lineSelect').value;state.profile.voice=$('#voiceSelect').value==='studio'?'studio':'device';save();closeModal();renderBible()}}
+/* Device speechSynthesis is the offline default. Studio voice asks the hub's
+   /api/speak proxy (Gemini TTS, cached server-side) for a real WAV; if the hub
+   is offline, the account is signed out or the allowance is spent, the chapter
+   still gets read aloud on the device voice instead of failing outright. */
+let studioAudio=null;
+function stopStudio(){if(studioAudio){studioAudio.pause();studioAudio.src='';studioAudio=null;return true}return false}
+function deviceSpeak(text){if(!('speechSynthesis'in window)){toast('Device speech is unavailable','error');return}if(speechSynthesis.speaking){speechSynthesis.cancel();toast('Reading stopped');return}const u=new SpeechSynthesisUtterance(text);u.rate=.92;u.onend=()=>toast('Reading complete');speechSynthesis.speak(u);toast('Device read-aloud started. Tap again to stop.')}
+async function speakStudio(text){
+  if(stopStudio()){toast('Reading stopped');return}
+  const btn=$('#readerAudio');if(btn){btn.disabled=true;btn.textContent='…'}
+  try{
+    const res=await fetch('/api/speak',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
+    if(!res.ok){const d=await res.json().catch(()=>({}));throw new Error(d.error||`HTTP ${res.status}`)}
+    const blob=await res.blob();studioAudio=new Audio(URL.createObjectURL(blob));
+    studioAudio.onended=()=>{stopStudio();toast('Reading complete')};
+    await studioAudio.play();toast('Studio voice started. Tap again to stop.');
+  }catch(e){
+    stopStudio();
+    toast('Studio voice unavailable — using device voice. '+String(e.message||'').slice(0,80),'error');
+    deviceSpeak(text);
+  }finally{if(btn){btn.disabled=false;btn.textContent='◉'}}
+}
+function speakChapter(ch,r){const head=`${books[r.book].name} chapter ${r.chapter}. `+ch.map((x,i)=>`Verse ${i+1}. ${x}`).join(' ');if(state.profile.voice==='studio'){speakStudio(head);return}deviceSpeak(head)}
 
 /* SEARCH */
-function renderSearch(){setTitle('Search');$('#main').innerHTML=`<div class="page"><div class="search-hero"><div class="eyebrow">FAST · COMPLETE · OFFLINE-CAPABLE</div><h1>Search the Scriptures</h1><p class="lead" style="margin:auto">Search every verse by word, exact phrase, or reference across public-domain Bible translations.</p><form class="big-search" id="searchForm"><input id="searchBox" value="${esc(searchState.query)}" placeholder='Try “faith”, “fear not”, or John 3:16' autocomplete="off"/><button class="primary-btn">Search</button></form><div class="search-filters"><button class="filter-chip active" data-test="all">All Bible</button><button class="filter-chip" data-test="ot">Old Testament</button><button class="filter-chip" data-test="nt">New Testament</button><select class="filter-chip" id="searchTr">${translationOptions(state.reader.translation)}</select></div></div><div class="results-wrap" id="searchResults">${renderSearchResults()}</div></div>`;
+function renderSearch(){setTitle('Search');$('#main').innerHTML=`<div class="page"><div class="search-hero"><div class="eyebrow">FAST · COMPLETE · OFFLINE-CAPABLE</div><h1>Search the Scriptures</h1><p class="lead" style="margin:auto">Search every verse by word, exact phrase, or reference across public-domain Bible translations.</p><form class="big-search" id="searchForm"><input id="searchBox" value="${esc(searchState.query)}" placeholder='Try "faith", "fear not", or John 3:16' autocomplete="off"/><button class="primary-btn">Search</button></form><div class="search-filters"><button class="filter-chip active" data-test="all">All Bible</button><button class="filter-chip" data-test="ot">Old Testament</button><button class="filter-chip" data-test="nt">New Testament</button><select class="filter-chip" id="searchTr">${translationOptions(state.reader.translation)}</select></div></div><div class="results-wrap" id="searchResults">${renderSearchResults()}</div></div>`;
   let testament='all';$('#searchForm').onsubmit=e=>{e.preventDefault();performSearch($('#searchBox').value,testament,$('#searchTr').value)};$$('[data-test]').forEach(b=>b.onclick=()=>{$$('[data-test]').forEach(x=>x.classList.remove('active'));b.classList.add('active');testament=b.dataset.test;if(searchState.query)performSearch(searchState.query,testament,$('#searchTr').value)});$$('.result-item').forEach(bindResult);const p=parseRef(searchState.query);if(p&&searchState.results.length===0)openReference(searchState.query)
 }
 function renderSearchResults(){if(searchState.status)return `<div class="empty-state"><p>${esc(searchState.status)}</p></div>`;if(!searchState.query)return `<div class="card"><div class="empty-state"><div class="empty-icon">⌕</div><h3>Find a word, phrase, or passage</h3><p>Exact phrases can be placed in quotation marks. Search loads only when you need it.</p></div></div>`;if(!searchState.results.length)return `<div class="card"><div class="empty-state"><h3>No verses found</h3><p>Check spelling, try fewer words, or select another translation.</p></div></div>`;return `<div class="section-head"><div><h2>${searchState.total.toLocaleString()} result${searchState.total===1?'':'s'}</h2><p>Showing the first ${searchState.results.length}</p></div></div><div class="card">${searchState.results.map((r,i)=>{const a=esc(r.text.slice(0,r.at)),b=esc(r.text.slice(r.at,r.at+r.len)),c=esc(r.text.slice(r.at+r.len));return `<article class="result-item" data-result="${i}"><strong>${r.bookName} ${r.chapter}:${r.verse} · ${TR[r.translation]}</strong><p>${a}<mark>${b}</mark>${c}</p><span class="result-meta">Open verse in Bible reader →</span></article>`}).join('')}</div>`}
@@ -135,26 +371,48 @@ function performSearch(q,testament='all',translation=state.reader.translation){q
 function bindResult(el){el.onclick=()=>{const r=searchState.results[+el.dataset.result];openReference(`${r.bookName} ${r.chapter}:${r.verse}`)}}
 
 /* STUDY / SAFE ASSISTANT */
-async function renderStudy(){setTitle('Kingdom AI','STUDY ASSISTANT');const context=state.aiContext;$('#main').innerHTML=`<div class="page ai-layout"><aside class="card ai-side"><button class="primary-btn ai-new" id="newStudy">＋ New study</button><div class="eyebrow">RECENT STUDIES</div><div class="ai-history">${state.aiHistory.length?state.aiHistory.slice(0,12).map((x,i)=>`<button class="history-item" data-ai-history="${i}">✦ ${esc(x.question.slice(0,32))}</button>`).join(''):'<p style="font-size:11px;color:var(--muted);padding:8px">No saved studies yet.</p>'}</div><div class="notice" style="margin-top:15px">KINGDOM AI never claims divine authority. Explanations are study aids and should be tested against Scripture.</div></aside><section class="card ai-main"><div class="ai-header"><div class="ai-mark">K</div><div><strong>KINGDOM AI</strong><div style="font-size:10px;color:var(--muted)"><span class="status-dot"></span> Scripture study mode</div></div><span class="pill premium-pill" style="margin-left:auto">LOCAL · SAFE</span></div><div class="ai-messages" id="aiMessages"><div class="ai-welcome"><div class="ai-mark" style="margin:auto;width:55px;height:55px;font-size:24px">K</div><h2>Study Scripture with clarity.</h2><p class="lead" style="margin:auto">Ask about a passage or topic. Responses use the public-domain Bible library and TSK cross references on this device.</p>${context?`<div class="notice" style="max-width:620px;margin:20px auto;text-align:left"><strong>Verse context:</strong> ${esc(context.ref)} · ${TR[context.translation]}</div>`:''}<div class="prompt-grid">${['What does John 3:16 mean?','Give me Bible verses about faith','Explain Romans 8:28 in context','Create a study on prayer'].map(q=>`<button class="prompt-card" data-prompt="${esc(q)}">${esc(q)}</button>`).join('')}</div></div></div><form class="ai-composer" id="aiForm"><textarea id="aiInput" rows="1" placeholder="Ask a question about Scripture…"></textarea><button class="primary-btn">Ask</button></form><div class="ai-disclaimer">AI-generated study aid · Bible quotations are labeled · Verify interpretation with Scripture and trusted teachers.</div></section></div>`;$$('[data-prompt]').forEach(b=>b.onclick=()=>{$('#aiInput').value=b.dataset.prompt;$('#aiForm').requestSubmit()});$('#aiForm').onsubmit=e=>{e.preventDefault();answerStudy($('#aiInput').value)};$('#newStudy').onclick=()=>{delete state.aiContext;save();renderStudy()};$$('[data-ai-history]').forEach(b=>b.onclick=()=>showSavedStudy(state.aiHistory[+b.dataset.aiHistory]));if(context)setTimeout(()=>answerStudy(`Explain ${context.ref} in context.`),120)}
-async function answerStudy(q){q=q.trim();if(!q)return;const box=$('#aiMessages');box.innerHTML=`<div class="message user">${esc(q)}</div><div class="ai-answer"><p>Studying the passage and related Scriptures…</p></div>`;let refMatch=q.match(/([1-3]?\s?[A-Za-z]+(?:\s+of\s+[A-Za-z]+)?\s+\d+:\d+)/i),v=null,refs=[];if(refMatch)v=await getVerse(refMatch[1]);if(!v&&state.aiContext)v=state.aiContext;if(v){const d=await loadXrefs(v.book);refs=(d[v.ref]||[]).slice(0,7)}const topic=(q.match(/(?:about|on)\s+([a-z ]+?)[?.]?$/i)||[])[1]?.trim().toLowerCase();let html;if(v){const key=(v.text.match(/\b(faith|grace|love|kingdom|gospel|covenant)\b/i)||[])[1]?.toLowerCase();html=`<div class="message user">${esc(q)}</div><div class="ai-answer"><div class="eyebrow">SCRIPTURE-BASED STUDY</div><h3>Direct answer</h3><p>${studySummary(v)}</p><h3>Bible text</h3><p style="font-family:var(--scripture);font-size:18px">“${esc(v.text)}” <button class="citation" data-ref="${esc(v.ref)}">${esc(v.ref)} · ${TR[v.translation||state.reader.translation]}</button></p><h3>Biblical context</h3><p>This verse should be read within ${esc(books[v.book].name)} ${v.chapter}. Consider the argument or narrative before and after it rather than treating one sentence in isolation.</p>${key&&DICTIONARY[key]?`<h3>Key term · ${key}</h3><p>${DICTIONARY[key][0]}</p>`:''}<h3>Relevant Scriptures</h3><p>${refs.length?refs.map(r=>`<button class="citation" data-ref="${esc(r.split(',')[0])}">${esc(r)}</button>`).join(' '):'No indexed cross references were found for this verse.'}</p><h3>Interpretation note</h3><p>Christian traditions may emphasize different aspects of this passage. The explanation above is a study aid, not a claim to divine authority. Compare translations, examine the full chapter, and consult trusted teachers.</p><h3>Practical application</h3><p>Read the chapter slowly. Write one truth the passage reveals, one response it invites, and one question for further study. Pray in words shaped by the text rather than treating the explanation as Scripture.</p></div>`}else{const t=topic&&DICTIONARY[topic]?topic:Object.keys(DICTIONARY).find(k=>q.toLowerCase().includes(k));if(t){const d=DICTIONARY[t];html=`<div class="message user">${esc(q)}</div><div class="ai-answer"><div class="eyebrow">TOPICAL STUDY · ${esc(t.toUpperCase())}</div><h3>Direct answer</h3><p>${esc(d[0])}</p><h3>Relevant Scriptures</h3><p>${d[1].map(r=>`<button class="citation" data-ref="${r}">${r}</button>`).join(' ')}</p><h3>Study questions</h3><ul><li>What does each passage reveal about God?</li><li>How does the immediate context refine the topic?</li><li>What faithful response does the text invite?</li></ul><h3>Further study</h3><p>Use Bible Search to examine the word across both Testaments, then compare each result in context.</p></div>`}else html=`<div class="message user">${esc(q)}</div><div class="ai-answer"><h3>I need a clearer Scripture reference or topic.</h3><p>This local study assistant works from verifiable Bible references and a reviewed topic dictionary. Try “Explain Romans 8:28,” “What does John 3:16 mean?” or “Bible verses about grace.”</p><div class="notice">Open-ended generative answers are intentionally unavailable in this offline build rather than pretending an external AI service is connected.</div></div>`}box.innerHTML=html;$$('.citation',box).forEach(b=>b.onclick=()=>openReference(b.dataset.ref));state.aiHistory.unshift({question:q,html,date:today()});state.aiHistory=state.aiHistory.slice(0,25);delete state.aiContext;save()}
+async function renderStudy(){setTitle('Kingdom AI','STUDY ASSISTANT');const context=state.aiContext;$('#main').innerHTML=`<div class="page ai-layout"><aside class="card ai-side"><button class="primary-btn ai-new" id="newStudy"> + New study</button><div class="eyebrow">RECENT STUDIES</div><div class="ai-history">${state.aiHistory.length?state.aiHistory.slice(0,12).map((x,i)=>`<button class="history-item" data-ai-history="${i}">✦ ${esc(x.question.slice(0,32))}</button>`).join(''):'<p style="font-size:11px;color:var(--muted);padding:8px">No saved studies yet.</p>'}</div><div class="notice" style="margin-top:15px">KINGDOM AI never claims divine authority. Explanations are study aids and should be tested against Scripture.</div></aside><section class="card ai-main"><div class="ai-header"><div class="ai-mark">K</div><div><strong>KINGDOM AI</strong><div style="font-size:10px;color:var(--muted)"><span class="status-dot"></span> Scripture study mode</div></div><span class="pill premium-pill" style="margin-left:auto">LOCAL · SAFE</span></div><div class="ai-messages" id="aiMessages"><div class="ai-welcome"><div class="ai-mark" style="margin:auto;width:55px;height:55px;font-size:24px">K</div><h2>Study Scripture with clarity.</h2><p class="lead" style="margin:auto">Ask about a passage or topic. Responses use the public-domain Bible library and TSK cross references on this device.</p>${context?`<div class="notice" style="max-width:620px;margin:20px auto;text-align:left"><strong>Verse context:</strong> ${esc(context.ref)} · ${TR[context.translation]}</div>`:''}<div class="prompt-grid">${['What does John 3:16 mean?','Give me Bible verses about faith','Explain Romans 8:28 in context','Create a study on prayer'].map(q=>`<button class="prompt-card" data-prompt="${esc(q)}">${esc(q)}</button>`).join('')}</div></div></div><form class="ai-composer" id="aiForm"><textarea id="aiInput" rows="1" placeholder="Ask a question about Scripture"></textarea><button class="primary-btn">Ask</button></form><div class="ai-disclaimer">AI-generated study aid · Bible quotations are labeled · Verify interpretation with Scripture and trusted teachers.</div></section></div>`;$$('[data-prompt]').forEach(b=>b.onclick=()=>{$('#aiInput').value=b.dataset.prompt;$('#aiForm').requestSubmit()});$('#aiForm').onsubmit=e=>{e.preventDefault();answerStudy($('#aiInput').value)};$('#newStudy').onclick=()=>{delete state.aiContext;save();renderStudy()};$$('[data-ai-history]').forEach(b=>b.onclick=()=>showSavedStudy(state.aiHistory[+b.dataset.aiHistory]));if(context)setTimeout(()=>answerStudy(`Explain ${context.ref} in context.`),120)}
+async function answerStudy(q){q=q.trim();if(!q)return;const box=$('#aiMessages');box.innerHTML=`<div class="message user">${esc(q)}</div><div class="ai-answer"><p>Studying the passage and related Scriptures…</p></div>`;let refMatch=q.match(/([1-3]?\s?[A-Za-z]+(?:\s+of\s+[A-Za-z]+)?\s+\d+:\d+)/i),v=null,refs=[];if(refMatch)v=await getVerse(refMatch[1]);if(!v&&state.aiContext)v=state.aiContext;if(v){const d=await loadXrefs(v.book);refs=(d[v.ref]||[]).slice(0,7)}const topic=(q.match(/(?:about|on)\s+([a-z ]+?)[?.]?$/i)||[])[1]?.trim().toLowerCase();let html;if(v){const key=(v.text.match(/\b(faith|grace|love|kingdom|gospel|covenant)\b/i)||[])[1]?.toLowerCase();html=`<div class="message user">${esc(q)}</div><div class="ai-answer"><div class="eyebrow">SCRIPTURE-BASED STUDY</div><h3>Direct answer</h3><p>${studySummary(v)}</p><h3>Bible text</h3><p style="font-family:var(--scripture);font-size:18px">"${esc(v.text)}" <button class="citation" data-ref="${esc(v.ref)}">${esc(v.ref)} · ${TR[v.translation||state.reader.translation]}</button></p><h3>Biblical context</h3><p>This verse should be read within ${esc(books[v.book].name)} ${v.chapter}. Consider the argument or narrative before and after it rather than treating one sentence in isolation.</p>${key&&DICTIONARY[key]?`<h3>Key term · ${key}</h3><p>${DICTIONARY[key][0]}</p>`:''}<h3>Relevant Scriptures</h3><p>${refs.length?refs.map(r=>`<button class="citation" data-ref="${esc(r.split(',')[0])}">${esc(r)}</button>`).join(' '):'No indexed cross references were found for this verse.'}</p><h3>Interpretation note</h3><p>Christian traditions may emphasize different aspects of this passage. The explanation above is a study aid, not a claim to divine authority. Compare translations, examine the full chapter, and consult trusted teachers.</p><h3>Practical application</h3><p>Read the chapter slowly. Write one truth the passage reveals, one response it invites, and one question for further study. Pray in words shaped by the text rather than treating the explanation as Scripture.</p></div>`}else{const t=topic&&DICTIONARY[topic]?topic:Object.keys(DICTIONARY).find(k=>q.toLowerCase().includes(k));if(t){const d=DICTIONARY[t];html=`<div class="message user">${esc(q)}</div><div class="ai-answer"><div class="eyebrow">TOPICAL STUDY · ${esc(t.toUpperCase())}</div><h3>Direct answer</h3><p>${esc(d[0])}</p><h3>Relevant Scriptures</h3><p>${d[1].map(r=>`<button class="citation" data-ref="${r}">${r}</button>`).join(' ')}</p><h3>Study questions</h3><ul><li>What does each passage reveal about God?</li><li>How does the immediate context refine the topic?</li><li>What faithful response does the text invite?</li></ul><h3>Further study</h3><p>Use Bible Search to examine the word across both Testaments, then compare each result in context.</p></div>`}else html=`<div class="message user">${esc(q)}</div><div class="ai-answer"><h3>I need a clearer Scripture reference or topic.</h3><p>This local study assistant works from verifiable Bible references and a reviewed topic dictionary. Try "Explain Romans 8:28," "What does John 3:16 mean?" or "Bible verses about grace."</p><div class="notice">Open-ended generative answers are intentionally unavailable in this offline build rather than pretending an external AI service is connected.</div></div>`}box.innerHTML=html;$$('.citation',box).forEach(b=>b.onclick=()=>openReference(b.dataset.ref));state.aiHistory.unshift({question:q,html,date:today()});state.aiHistory=state.aiHistory.slice(0,25);delete state.aiContext;save()}
 function studySummary(v){const t=v.text.toLowerCase();if(t.includes('god so loved'))return 'John 3:16 summarizes God’s love expressed through the giving of His Son, calling for trust in Him and promising eternal life rather than perishing.';if(t.includes('all things work together'))return 'Paul encourages those who love God that God works through every circumstance toward His good purpose; the surrounding passage defines that purpose in terms of being conformed to Christ.';if(t.includes('faith'))return 'This passage highlights trust and faithful reliance upon God. Its immediate chapter gives the specific shape and purpose of that faith.';return `This verse contributes to the message of ${books[v.book].name} by directing attention to God’s character, work, and the response invited from the reader.`}
 function showSavedStudy(x){$('#aiMessages').innerHTML=x.html;$$('.citation',$('#aiMessages')).forEach(b=>b.onclick=()=>openReference(b.dataset.ref))}
 
 /* PRAYER */
-function renderPrayer(){setTitle('Prayer');$('#main').innerHTML=`<div class="page"><div class="welcome-row"><div><div class="eyebrow">PRIVATE · SCRIPTURE-CENTERED</div><h1 class="hero-title">Prayer Journal</h1><p class="lead">Bring your requests, thanksgiving, and testimonies before God. Entries stay on this device.</p></div><button class="primary-btn" id="newPrayer">＋ New prayer</button></div><div class="split-layout"><section><div class="section-head"><div><h2>Your prayers</h2><p>${state.prayers.length} private ${state.prayers.length===1?'entry':'entries'}</p></div><div><button class="filter-chip active">All</button></div></div><div class="prayer-list">${state.prayers.length?state.prayers.map((p,i)=>`<article class="card prayer-item"><span class="prayer-status" style="background:${p.status==='Answered'?'var(--success)':p.status==='Waiting'?'var(--warning)':'var(--gold)'}"></span><div><h3>${esc(p.title)}</h3><p>${esc(p.body)}</p><span class="pill">${esc(p.category)}</span> <span class="pill">${esc(p.status)}</span><br><time>${esc(p.date)}</time></div><button class="icon-btn" data-prayer-menu="${i}">•••</button></article>`).join(''):`<div class="card empty-state"><div class="empty-icon">♧</div><h3>Your journal is ready</h3><p>Add a private prayer, Scripture-shaped request, or thanksgiving.</p><button class="primary-btn" id="emptyPrayer">Write first prayer</button></div>`}</div></section><aside class="card prayer-side"><div class="eyebrow">A WORD FOR PRAYER</div><blockquote>“Be careful for nothing; but in every thing by prayer and supplication with thanksgiving let your requests be made known unto God.”</blockquote><strong style="color:var(--gold)">Philippians 4:6 · KJV</strong><hr style="border:0;border-top:1px solid var(--line);margin:24px 0"><h3>Prayer reminders</h3><p style="font-size:12px;color:var(--muted)">Browser notification permission is only requested when you enable reminders.</p><button class="secondary-btn" id="prayerReminder">Set reminder</button></aside></div></div>`;$('#newPrayer').onclick=()=>openPrayerForm();if($('#emptyPrayer'))$('#emptyPrayer').onclick=()=>openPrayerForm();$$('[data-prayer-menu]').forEach(b=>b.onclick=()=>editPrayer(+b.dataset.prayerMenu));$('#prayerReminder').onclick=openReminder}
-function openPrayerForm(v=null,p=null,index=-1){modal(`<div class="modal-head"><div><h2>${p?'Edit':'New'} prayer</h2><p>Private to your local profile</p></div><button class="close-btn" data-close>×</button></div>${v?`<div class="notice" style="margin-bottom:14px">Inspired by ${esc(v.ref)}: “${esc(v.text)}”</div>`:''}<div class="form-grid"><div class="field full"><label>Prayer title</label><input id="prayerTitle" value="${esc(p?.title||'')}" placeholder="What are you praying about?"/></div><div class="field full"><label>Prayer</label><textarea id="prayerBody" placeholder="Write your prayer…">${esc(p?.body||(v?`Lord, help me live in light of ${v.ref}. `:''))}</textarea></div><div class="field"><label>Category</label><select id="prayerCat">${['Personal','Family','Marriage','Career','Ministry','Finances','Wisdom','Thanksgiving'].map(x=>`<option ${p?.category===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="field"><label>Status</label><select id="prayerStatus">${['Praying','Waiting','Answered'].map(x=>`<option ${p?.status===x?'selected':''}>${x}</option>`).join('')}</select></div></div><div class="modal-actions">${p?'<button class="danger-btn" id="deletePrayer">Delete</button>':''}<button class="secondary-btn" data-close>Cancel</button><button class="primary-btn" id="savePrayer">Save prayer</button></div>`);$('#savePrayer').onclick=()=>{const x={title:$('#prayerTitle').value.trim()||'Untitled prayer',body:$('#prayerBody').value.trim(),category:$('#prayerCat').value,status:$('#prayerStatus').value,date:p?.date||today(),scripture:v?.ref||p?.scripture||''};if(index>=0)state.prayers[index]=x;else state.prayers.unshift(x);save();closeModal();toast('Prayer saved privately','success');if(route==='prayer')renderPrayer()};if($('#deletePrayer'))$('#deletePrayer').onclick=()=>{state.prayers.splice(index,1);save();closeModal();renderPrayer()}}
+function renderPrayer(){setTitle('Prayer');$('#main').innerHTML=`<div class="page"><div class="welcome-row"><div><div class="eyebrow">PRIVATE · SCRIPTURE-CENTERED</div><h1 class="hero-title">Prayer Journal</h1><p class="lead">Bring your requests, thanksgiving, and testimonies before God. Entries stay on this device.</p></div><button class="primary-btn" id="newPrayer"> + New prayer</button></div><div class="split-layout"><section><div class="section-head"><div><h2>Your prayers</h2><p>${state.prayers.length} private ${state.prayers.length===1?'entry':'entries'}</p></div><div><button class="filter-chip active">All</button></div></div><div class="prayer-list">${state.prayers.length?state.prayers.map((p,i)=>`<article class="card prayer-item"><span class="prayer-status" style="background:${p.status==='Answered'?'var(--success)':p.status==='Waiting'?'var(--warning)':'var(--gold)'}"></span><div><h3>${esc(p.title)}</h3><p>${esc(p.body)}</p><span class="pill">${esc(p.category)}</span> <span class="pill">${esc(p.status)}</span><br><time>${esc(p.date)}</time></div><button class="icon-btn" data-prayer-menu="${i}" aria-label="Edit prayer: ${esc(p.title)}" title="Edit prayer">✎</button></article>`).join(''):`<div class="card empty-state"><div class="empty-icon">♧</div><h3>Your journal is ready</h3><p>Add a private prayer, Scripture-shaped request, or thanksgiving.</p><button class="primary-btn" id="emptyPrayer">Write first prayer</button></div>`}</div></section><aside class="card prayer-side"><div class="eyebrow">A WORD FOR PRAYER</div><blockquote>"Be careful for nothing; but in every thing by prayer and supplication with thanksgiving let your requests be made known unto God."</blockquote><strong style="color:var(--gold)">Philippians 4:6 · KJV</strong><hr style="border:0;border-top:1px solid var(--line);margin:24px 0"><h3>Prayer reminders</h3><p style="font-size:12px;color:var(--muted)">A private in-app reminder appears at your chosen time while Kingdom Bible is open. No system notification is sent.</p><button class="secondary-btn" id="prayerReminder">Set reminder</button></aside></div></div>`;$('#newPrayer').onclick=()=>openPrayerForm();if($('#emptyPrayer'))$('#emptyPrayer').onclick=()=>openPrayerForm();$$('[data-prayer-menu]').forEach(b=>b.onclick=()=>editPrayer(+b.dataset.prayerMenu));$('#prayerReminder').onclick=openReminder}
+function openPrayerForm(v=null,p=null,index=-1){modal(`<div class="modal-head"><div><h2>${p?'Edit':'New'} prayer</h2><p>Private to your local profile</p></div><button class="close-btn" data-close>×</button></div>${v?`<div class="notice" style="margin-bottom:14px">Inspired by ${esc(v.ref)}: "${esc(v.text)}"</div>`:''}<div class="form-grid"><div class="field full"><label>Prayer title</label><input id="prayerTitle" value="${esc(p?.title||'')}" placeholder="What are you praying about?"/></div><div class="field full"><label>Prayer</label><textarea id="prayerBody" placeholder="Write your prayer">${esc(p?.body||(v?`Lord, help me live in light of ${v.ref}. `:''))}</textarea></div><div class="field"><label>Category</label><select id="prayerCat">${['Personal','Family','Marriage','Career','Ministry','Finances','Wisdom','Thanksgiving'].map(x=>`<option ${p?.category===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="field"><label>Status</label><select id="prayerStatus">${['Praying','Waiting','Answered'].map(x=>`<option ${p?.status===x?'selected':''}>${x}</option>`).join('')}</select></div></div><div class="modal-actions">${p?'<button class="danger-btn" id="deletePrayer">Delete</button>':''}<button class="secondary-btn" data-close>Cancel</button><button class="primary-btn" id="savePrayer">Save prayer</button></div>`);$('#savePrayer').onclick=()=>{const x={title:$('#prayerTitle').value.trim()||'Untitled prayer',body:$('#prayerBody').value.trim(),category:$('#prayerCat').value,status:$('#prayerStatus').value,date:p?.date||today(),scripture:v?.ref||p?.scripture||''};if(index>=0)state.prayers[index]=x;else state.prayers.unshift(x);save();closeModal();toast('Prayer saved privately','success');if(route==='prayer')renderPrayer()};if($('#deletePrayer'))$('#deletePrayer').onclick=()=>{state.prayers.splice(index,1);save();closeModal();renderPrayer()}}
 function editPrayer(i){openPrayerForm(null,state.prayers[i],i)}
-function openReminder(){modal(`<div class="modal-head"><div><h2>Prayer reminder</h2><p>Prayer reminder time</p></div><button class="close-btn" data-close>×</button></div><div class="field"><label>Reminder time</label><input type="time" id="reminderTime" value="${state.profile.prayerTime||'07:00'}"></div><div class="notice" style="margin-top:15px">This reminder is stored on this device only. Kingdom Bible does not request the system notification permission and does not send anything to a server, so nothing is collected and nothing leaves your phone.</div><div class="modal-actions"><button class="primary-btn" id="saveReminder">Save preference</button></div>`);$('#saveReminder').onclick=()=>{state.profile.prayerTime=$('#reminderTime').value;save();closeModal();toast('Reminder preference saved')}}
+function openReminder(){modal(`<div class="modal-head"><div><h2>Prayer reminder</h2><p>Prayer reminder time</p></div><button class="close-btn" data-close>×</button></div><div class="field"><label>Reminder time</label><input type="time" id="reminderTime" value="${state.profile.prayerTime||'07:00'}"></div><div class="notice" style="margin-top:15px">This reminder stays on this device. It appears inside the app at your chosen time while Kingdom Bible is open; no system notification is sent.</div><div class="modal-actions"><button class="primary-btn" id="saveReminder">Save preference</button></div>`);$('#saveReminder').onclick=()=>{state.profile.prayerTime=$('#reminderTime').value;save();closeModal();toast('Reminder preference saved')}}
 
 /* DEVOTIONAL & PLANS */
-function renderDevotional(){setTitle('Devotional');const done=state.devotionalDone.includes(today());$('#main').innerHTML=`<div class="page"><article class="devotional-feature card"><div class="eyebrow">TODAY’S DEVOTIONAL · ${fmtDate()}</div><h1>${DEVOTIONAL.title}</h1><p class="scripture">“${DEVOTIONAL.verse}” — ${DEVOTIONAL.scripture}</p><div style="display:flex;gap:8px;margin-top:25px"><button class="primary-btn" id="devSave">${done?'✓ Completed':'Mark completed'}</button><button class="secondary-btn" id="devShare" style="background:rgba(255,255,255,.08);color:white;border-color:rgba(255,255,255,.15)">↗ Share</button></div></article><article class="card devotional-content"><div class="eyebrow">REFLECTION · 5 MIN READ</div><h2>A faithful next step</h2>${DEVOTIONAL.message.map(p=>`<p>${p}</p>`).join('')}<h2>Reflect</h2><p>${DEVOTIONAL.reflection}</p><h2>Prayer</h2><p>${DEVOTIONAL.prayer}</p><h2>Action point</h2><div class="notice">${DEVOTIONAL.action}</div><div style="margin-top:25px"><button class="secondary-btn" id="openDevScripture">Open ${DEVOTIONAL.scripture} in Bible</button></div></article></div>`;$('#devSave').onclick=()=>{if(!state.devotionalDone.includes(today()))state.devotionalDone.push(today());save();renderDevotional();toast('Devotional completed','success')};$('#devShare').onclick=()=>shareText(`${DEVOTIONAL.title}\n${DEVOTIONAL.verse}\n— ${DEVOTIONAL.scripture}\n\n${DEVOTIONAL.message[0]}`);$('#openDevScripture').onclick=()=>openReference(DEVOTIONAL.scripture)}
-function renderPlans(){setTitle('Reading Plans');$('#main').innerHTML=`<div class="page"><div class="welcome-row"><div><div class="eyebrow">READ WITH PURPOSE</div><h1 class="hero-title">Reading Plans</h1><p class="lead">Build a steady Scripture rhythm without turning progress into a measure of spiritual worth.</p></div><button class="secondary-btn" id="customPlan">＋ Custom plan</button></div><div class="plan-grid">${PLANS.map(p=>{const n=state.planProgress[p.id]||0,pc=Math.round(n/p.days*100);return `<article class="card plan-card"><div class="plan-icon">${p.icon}</div><h3>${p.name}</h3><p>${p.desc}</p><div class="plan-meta"><span>${p.days} days</span><span>${n?pc+'% complete':'Not started'}</span></div><div class="progress"><span style="width:${pc}%"></span></div><button class="${n?'secondary-btn':'primary-btn'} small-btn" style="margin-top:13px" data-plan="${p.id}">${n?'Continue':'Start plan'}</button></article>`}).join('')}</div></div>`;$$('[data-plan]').forEach(b=>b.onclick=()=>openPlan(b.dataset.plan));$('#customPlan').onclick=()=>toast('Custom plan builder is coming soon')}
-function openPlan(id){const p=PLANS.find(x=>x.id===id),n=state.planProgress[id]||0;modal(`<div class="modal-head"><div><div class="eyebrow">DAY ${Math.min(n+1,p.days)} OF ${p.days}</div><h2>${p.name}</h2></div><button class="close-btn" data-close>×</button></div><div class="progress"><span style="width:${Math.round(n/p.days*100)}%"></span></div><div class="card" style="box-shadow:none;margin-top:18px;padding:18px"><strong>Today’s reading</strong><p style="font-family:var(--scripture);font-size:20px">${planReading(id,n)}</p><p style="color:var(--muted);font-size:12px">Read prayerfully and in context. Progress is personal, not competitive.</p></div><div class="modal-actions"><button class="secondary-btn" id="openPlanRead">Open reading</button><button class="primary-btn" id="completePlanDay" ${n>=p.days?'disabled':''}>${n>=p.days?'Plan complete':'Mark day complete'}</button></div>`);const rr=planReading(id,n).split('–')[0];$('#openPlanRead').onclick=()=>openReference(rr.includes(':')?rr:rr+' 1');$('#completePlanDay').onclick=()=>{state.planProgress[id]=Math.min(p.days,n+1);save();closeModal();renderPlans();toast('Today’s reading marked complete','success')}}
-function planReading(id,n){if(id==='psalms30')return `Psalms ${n*5+1}–${Math.min(150,n*5+5)}`;if(id==='proverbs31')return `Proverbs ${Math.min(31,n+1)}`;if(id==='gospels30')return `${['Matthew','Mark','Luke','John'][Math.floor(n/8)%4]} ${n%8+1}`;if(id==='nt90')return `${books[39+(n%27)].name} ${n%books[39+(n%27)].chapters+1}`;if(id==='year')return `Genesis ${n%50+1}`;const refs=['Hebrews 11:1','Philippians 4:6','Matthew 6:33','Romans 8:28','John 15:5','Psalms 46:1','James 1:5'];return refs[n%refs.length]}
+function renderDevotional(offset){setTitle('Devotional');offset=Number(offset)||0;const track=state.profile.devotionalTrack||'adult';const d=new Date();d.setDate(d.getDate()+offset);const key=dateKey(d);const DV=devotionFor(track,d);const done=(state.devotionalDone||[]).includes(key+':'+track);const lib=devLibrary(track);const idx=lib?dayIndex(lib.length,d):0;const total=lib?lib.length:1;$('#main').innerHTML=`<div class="page"><div class="welcome-row"><div><div class="eyebrow">DAILY DEVOTIONAL · ${esc(fmtDate(d))}</div><h1 class="hero-title">Devotional</h1><p class="lead">A new biblical answer every day — youth and adult tracks.</p></div><div class="dev-controls" style="display:flex;gap:8px;flex-wrap:wrap"><button class="secondary-btn small-btn" id="devTrack" aria-label="Switch track">← ${track==='youth'?'Youth':'Adult'} track</button><button class="secondary-btn small-btn" id="devPrev" aria-label="Yesterday">← Prev</button><button class="secondary-btn small-btn" id="devNext" aria-label="Tomorrow" ${offset>=0?'disabled style="opacity:.4"':''}>Next →</button></div></div><article class="devotional-feature card"><div class="eyebrow">DAY ${idx+1} OF ${total} · ${track==='youth'?'YOUTH':'ADULT'} TRACK${offset!==0?' · BROWSING':''}</div><h1>${esc(DV.title)}</h1><p class="scripture">"${esc(DV.verse)}" — ${esc(DV.scripture)}</p>${DV.question?`<div class="notice" style="margin-top:14px">Today's question: <strong>${esc(DV.question)}</strong></div>`:''}<div style="display:flex;gap:8px;margin-top:25px;flex-wrap:wrap"><button class="primary-btn" id="devSave">${done?'✓ Completed':'Mark completed'}</button><button class="secondary-btn" id="devShare" style="background:rgba(255,255,255,.08);color:white;border-color:rgba(255,255,255,.15)">↗ Share</button></div></article><article class="card devotional-content"><div class="eyebrow">REFLECTION · 5 MIN READ</div><h2>A faithful next step</h2>${DV.message.map(p=>`<p>${esc(p)}</p>`).join('')}<h2>Reflect</h2><p>${esc(DV.reflection)}</p><h2>Prayer</h2><p>${esc(DV.prayer)}</p><h2>Action point</h2><div class="notice">${esc(DV.action)}</div><div style="margin-top:25px"><button class="secondary-btn" id="openDevScripture">Open ${esc(DV.scripture)} in Bible</button></div></article></div>`;$('#devTrack').onclick=()=>{state.profile.devotionalTrack=track==='youth'?'adult':'youth';save();renderDevotional(0);toast((state.profile.devotionalTrack==='youth'?'Youth':'Adult')+' track','success')};$('#devPrev').onclick=()=>renderDevotional(offset-1);const nx=$('#devNext');if(nx&&offset<0)nx.onclick=()=>renderDevotional(offset+1);$('#devSave').onclick=()=>{state.devotionalDone=state.devotionalDone||[];const k=key+':'+track;if(!state.devotionalDone.includes(k))state.devotionalDone.push(k);save();renderDevotional(offset);toast('Devotional completed','success')};$('#devShare').onclick=()=>openDevShareSheet(DV,track);$('#openDevScripture').onclick=()=>openReference(DV.scripture)}
+function renderPlans(){
+  setTitle('Reading Plans');
+  $('#main').innerHTML=`<div class="page"><div class="welcome-row"><div><div class="eyebrow">READ WITH PURPOSE</div><h1 class="hero-title">Reading Plans</h1><p class="lead">Build a steady Scripture rhythm without turning progress into a measure of spiritual worth.</p></div><button class="secondary-btn" id="customPlan">+ Custom plan</button></div><div class="plan-grid">${PLANS.map(p=>{const n=clamp(Number(state.planProgress[p.id])||0,0,p.days),pc=Math.round(n/p.days*100);return `<article class="card plan-card"><div class="plan-icon">${esc(p.icon)}</div><h3>${esc(p.name)}</h3><p>${esc(p.desc)}</p>${p.custom?`<button class="text-btn plan-delete" type="button" data-kb-delplan="${esc(p.id)}" aria-label="Delete custom plan ${esc(p.name)}">Delete custom plan</button>`:''}<div class="plan-meta"><span>${p.days} days</span><span>${n?pc+'% complete':'Not started'}</span></div><div class="progress"><span style="width:${pc}%"></span></div><button class="${n?'secondary-btn':'primary-btn'} small-btn" style="margin-top:13px" data-plan="${esc(p.id)}">${n?'Continue':'Start plan'}</button></article>`}).join('')}</div></div>`;
+  $$('[data-plan]').forEach(b=>b.onclick=()=>openPlan(b.dataset.plan));
+  $('#customPlan').onclick=()=>openCustomPlan();
+}
+function planReadings(id,n){return window.KingdomPlans?.readings(id,n,books,state.customPlans||[])||[]}
+function planReading(id,n){return planReadings(id,n)[0]||''}
+function openPlan(id){
+  const p=PLANS.find(x=>x.id===id);if(!p)return toast('Reading plan not found','error');
+  const n=clamp(Number(state.planProgress[id])||0,0,p.days),readings=planReadings(id,n);
+  const readingHtml=readings.length?readings.map((ref,i)=>`<button class="plan-reading-link" type="button" data-plan-ref="${i}" aria-label="Open ${esc(ref)} in Bible"><span>${esc(ref)}</span><span>Open <span aria-hidden="true">↗</span></span></button>`).join(''):'<p class="plan-reading-empty">Reading schedule is unavailable. Refresh the app and try again.</p>';
+  modal(`<div class="modal-head"><div><div class="eyebrow">DAY ${Math.min(n+1,p.days)} OF ${p.days}</div><h2>${esc(p.name)}</h2></div><button class="close-btn" data-close>×</button></div><div class="progress"><span style="width:${Math.round(n/p.days*100)}%"></span></div><div class="card plan-reading-card" style="box-shadow:none;margin-top:18px;padding:18px"><strong>Today’s reading</strong><div class="plan-reading-list">${readingHtml}</div><p class="plan-reading-hint">Open each passage in the Bible, then mark today complete when you’re ready.</p></div><div class="modal-actions"><button class="secondary-btn" data-close>Close</button><button class="primary-btn" id="completePlanDay" ${n>=p.days?'disabled':''}>${n>=p.days?'Plan complete':'Mark day complete'}</button></div>`);
+  $$('[data-plan-ref]').forEach(b=>b.onclick=()=>openReference(readings[Number(b.dataset.planRef)]));
+  $('#completePlanDay').onclick=()=>{state.planProgress[id]=Math.min(p.days,n+1);save();closeModal();renderPlans();toast('Today’s reading marked complete','success')};
+}
 
 /* MINISTRY */
-async function renderMinistry(){setTitle('Ministry Mode','KINGDOM BIBLE');await loadHub();if(hub().isLive(hubState))await ensureSession();let cur=state.ministry.current||await getVerse('John 3:16');state.ministry.current=cur;save();$('#main').innerHTML=`<div class="page"><section class="ministry-hero"><div class="eyebrow">PROFESSIONAL SCRIPTURE PRESENTATION</div><h1>Ministry Mode</h1><p>Present Scripture beautifully for services, sermons, Bible studies, projectors, OBS, and vMix browser sources.</p><div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:22px"><button class="primary-btn" id="openDisplay">▣ Open audience display</button><button class="secondary-btn" id="copyDisplay" style="background:rgba(255,255,255,.08);color:white;border-color:rgba(255,255,255,.15)">Copy browser-source URL</button></div></section>${window.KingdomVoice?window.KingdomVoice.cardHtml():''}${connectCardHtml()}<div class="ministry-grid"><section class="card control-card"><div class="section-head" style="margin:0 0 14px"><div><h2>Presenter control</h2><p>Live preview · updates audience display instantly</p></div><span class="pill">${hub().isLive(hubState)?'<span class="status-dot"></span> Live session':'<span class="status-dot off"></span> This computer only'}</span></div><div class="control-preview ${state.ministry.theme==='light'?'light':state.ministry.theme==='royal'?'royal':''}" id="controlPreview"><blockquote>“${esc(cur.text)}”</blockquote><cite>${esc(cur.ref)} · ${TR[cur.translation||state.reader.translation]}</cite><div class="church-label">${esc(state.ministry.church)}</div></div><div class="control-actions"><button class="secondary-btn" id="minPrev">← Previous</button><button class="primary-btn" id="minSearch">⌕ Change Scripture</button><button class="secondary-btn" id="minNext">Next →</button><button class="secondary-btn" id="minBlank">Blank screen</button></div><div class="form-grid" style="margin-top:16px"><div class="field"><label>Theme</label><select id="minTheme"><option value="royal">Royal Gold</option><option value="dark">Classic Black</option><option value="light">Minimal White</option><option value="sunset">Sunset</option><option value="noir">Noir</option><option value="transparent">Transparent (key)</option></select></div><div class="field"><label>Church / ministry name</label><input id="minChurch" value="${esc(state.ministry.church)}"></div></div></section><aside class="card service-panel"><div class="eyebrow">LIVE SERVICE</div><h2>${esc(state.ministry.sermon||'Sunday Service')}</h2><div class="timer" id="serviceTimer">00:00:00</div><div style="display:flex;gap:8px"><button class="secondary-btn small-btn" id="timerStart">Start timer</button><button class="secondary-btn small-btn" id="timerReset">Reset</button></div><div class="connection" style="margin-top:18px"><span class="status-dot${hub().isLive(hubState)?'':' off'}"></span><span>${hub().isLive(hubState)?'Audience display sync is ready':'Audience display syncs on this computer only'}</span></div><div class="section-head"><div><h2>Media quick start</h2></div></div><button class="secondary-btn" style="width:100%;margin-bottom:8px" id="guideVmix">How to use with vMix</button><button class="secondary-btn" style="width:100%" id="guideObs">How to use with OBS</button></aside></div></div>`;
-  $('#minTheme').value=state.ministry.theme;$('#openDisplay').onclick=()=>window.open(displayUrl(),'kingdomPresentation','width=1280,height=720');$('#copyDisplay').onclick=()=>copyText(displayUrl(),'Browser-source URL copied — paste it into vMix / OBS');$('#minSearch').onclick=openMinistrySearch;$('#minPrev').onclick=()=>minStep(-1);$('#minNext').onclick=()=>minStep(1);$('#minBlank').onclick=()=>sendPresentation({...cur,blank:true});$('#minTheme').onchange=e=>{state.ministry.theme=e.target.value;save();sendPresentation(cur);renderMinistry()};$('#minChurch').onchange=e=>{state.ministry.church=e.target.value.trim()||'KINGDOM BIBLE';save();sendPresentation(cur)};$('#guideVmix').onclick=()=>openGuide('vMix');$('#guideObs').onclick=()=>openGuide('OBS');bindConnectCard();bindTimer();bindVoice()}
+async function renderMinistry(){setTitle('Ministry Mode','KINGDOM BIBLE');await loadHub();if(hub().isLive(hubState))await ensureSession();
+  /* Get Scripture resident before the mic opens: from here on, resolving a
+     spoken reference must be pure in-memory work.
+     A single failed verse fetch must never blank Ministry (white screen):
+     fall back to the bundled devotional verse so the page always renders. */
+  warmTranslation(state.reader.translation);
+  let cur=state.ministry.current||null;
+  if(!cur){try{cur=await getVerse('John 3:16')}catch(e){console.warn('ministry verse failed, using fallback',e)}}
+  if(!cur||!cur.text)cur={text:DEVOTIONAL.verse,ref:DEVOTIONAL.scripture,translation:state.reader.translation};
+  state.ministry.current=cur;save();$('#main').innerHTML=`<div class="page"><section class="ministry-hero"><div class="eyebrow">PROFESSIONAL SCRIPTURE PRESENTATION</div><h1>Ministry Mode</h1><p>Present Scripture beautifully for services, sermons, Bible studies, projectors, OBS, and vMix browser sources.</p><div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:22px"><button class="primary-btn" id="openDisplay">↗ Open audience display</button><button class="secondary-btn" id="copyDisplay" style="background:rgba(255,255,255,.08);color:white;border-color:rgba(255,255,255,.15)">Copy browser-source URL</button><button class="secondary-btn" id="openManual" style="background:rgba(255,255,255,.08);color:white;border-color:rgba(255,255,255,.15)">ℹ User Manual</button></div></section>${window.KingdomVoice?window.KingdomVoice.cardHtml():''}${connectCardHtml()}<div class="ministry-grid"><section class="card control-card"><div class="section-head" style="margin:0 0 14px"><div><h2>Presenter control</h2><p>Live preview · updates audience display instantly</p></div><span class="pill">${hub().isLive(hubState)?'<span class="status-dot"></span> Live session':'<span class="status-dot off"></span> This computer only'}</span></div><div class="control-preview ${state.ministry.theme==='light'?'light':state.ministry.theme==='royal'?'royal':''}" id="controlPreview"><blockquote>“${esc(cur.text)}”</blockquote><cite>${esc(cur.ref)} · ${TR[cur.translation||state.reader.translation]}</cite><div class="church-label">${esc(state.ministry.church)}</div></div><div class="control-actions"><button class="secondary-btn" id="minPrev">← Previous</button><button class="primary-btn" id="minSearch">⌕ Change Scripture</button><button class="secondary-btn" id="minNext">Next →</button><button class="secondary-btn" id="minBlank">Blank screen</button></div><div class="form-grid" style="margin-top:16px"><div class="field"><label>Theme</label><select id="minTheme"><option value="royal">Royal Gold</option><option value="dark">Classic Black</option><option value="light">Minimal White</option><option value="sunset">Sunset</option><option value="noir">Noir</option><option value="transparent">Transparent (key)</option></select></div><div class="field"><label>Church / ministry name</label><input id="minChurch" value="${esc(state.ministry.church)}"></div></div></section><aside class="card service-panel"><div class="eyebrow">LIVE SERVICE</div><h2>${esc(state.ministry.sermon||'Sunday Service')}</h2><div class="timer" id="serviceTimer">00:00:00</div><div style="display:flex;gap:8px"><button class="secondary-btn small-btn" id="timerStart">Start timer</button><button class="secondary-btn small-btn" id="timerReset">Reset</button></div><div class="connection" style="margin-top:18px"><span class="status-dot${hub().isLive(hubState)?'':' off'}"></span><span>${hub().isLive(hubState)?'Audience display sync is ready':'Audience display syncs on this computer only'}</span></div><div class="section-head"><div><h2>Media quick start</h2></div></div><button class="secondary-btn" style="width:100%;margin-bottom:8px" id="guideVmix">How to use with vMix</button><button class="secondary-btn" style="width:100%" id="guideObs">How to use with OBS</button></aside></div></div>`;
+  $('#minTheme').value=state.ministry.theme;$('#openDisplay').onclick=()=>window.open(displayUrl(),'kingdomPresentation','width=1280,height=720');$('#copyDisplay').onclick=()=>copyText(displayUrl(),'Browser-source URL copied — paste it into vMix / OBS');$('#openManual').onclick=openManual;$('#minSearch').onclick=openMinistrySearch;$('#minPrev').onclick=()=>minStep(-1,true);$('#minNext').onclick=()=>minStep(1,true);$('#minBlank').onclick=()=>sendPresentation({...cur,blank:true});$('#minTheme').onchange=e=>{state.ministry.theme=e.target.value;save();sendPresentation(cur);renderMinistry()};$('#minChurch').onchange=e=>{state.ministry.church=e.target.value.trim()||'KINGDOM BIBLE';save();sendPresentation(cur)};$('#guideVmix').onclick=()=>openGuide('vMix');$('#guideObs').onclick=()=>openGuide('OBS');bindConnectCard();bindTimer();bindVoice();bindMinistryKeys()}
 /* Repaint only the presenter preview — Voice Mode fires many updates per
    minute and a full re-render would flicker and tear down the mic UI. */
 function updateMinistryPreview(v){
@@ -165,20 +423,48 @@ function updateMinistryPreview(v){
 async function presentHit(hit,tr){
   const v=await getPassage(hit,tr||state.reader.translation);
   if(!v)return{ok:false,error:'Reference is outside this chapter'};
-  state.ministry.current=v;save();
+  state.ministry.current=v;saveQuiet();
   const sent=await sendPresentation(v);
   updateMinistryPreview(v);
   return sent&&sent.ok===false?sent:v;
 }
+/* Arrow-key verse stepping for the presenter. Only active on the Ministry
+   page, never inside inputs, and always a quiet preview repaint so the
+   Previous/Next buttons stay mounted and cannot shift position. */
+let ministryKeysBound=false;
+function bindMinistryKeys(){
+  if(ministryKeysBound)return;ministryKeysBound=true;
+  document.addEventListener('keydown',e=>{
+    if(route!=='ministry'||e.ctrlKey||e.metaKey||e.altKey)return;
+    const t=e.target;
+    if(t&&/INPUT|TEXTAREA|SELECT/.test(t.tagName))return;
+    if($('#modalRoot')&&$('#modalRoot').firstChild)return;
+    if(e.key==='ArrowRight'){e.preventDefault();minStep(1,true);}
+    else if(e.key==='ArrowLeft'){e.preventDefault();minStep(-1,true);}
+  });
+}
+
 function bindVoice(){
   if(!window.KingdomVoice)return;
   KingdomVoice.bind({
     books,
+    translations:Object.keys(TR),
+    /* Preload the whole translation while the presenter is still setting up, so
+       no reference spoken tonight has to wait on a fetch. */
+    warm:tr=>warmTranslation(tr||state.reader.translation),
+    warmBook:(tr,bi)=>{try{loadBook(tr||state.reader.translation,bi).catch(()=>{})}catch(e){}},
     present:(hit,tr)=>presentHit(hit,tr),
-    /* "…now verse 25": jump inside the passage currently on the display */
-    gotoVerse:(verse,verseEnd,tr)=>{
+    /* "now verse 25": jump inside the passage currently on the display */
+    gotoVerse:(verse,verseEnd,tr,bookHint)=>{
       const cur=state.ministry.current;
+      /* The preacher named a book. If the display is showing a DIFFERENT one,
+         resolving against `cur` would put the wrong book on the projector, so
+         fall back to the spoken book's own first chapter instead of guessing
+         inside the passage that happens to be up. With no book spoken ("...now
+         verse 25") the current passage is exactly what is meant. */
       if(!cur||cur.book==null)return null;
+      if(bookHint!=null&&cur.book!==bookHint)
+        return presentHit({book:bookHint,chapter:1,verse,verseEnd:verseEnd||null},tr||state.reader.translation);
       return presentHit({book:cur.book,chapter:cur.chapter,verse,verseEnd:verseEnd||null},tr||cur.translation);
     },
     next:()=>minStep(1,true),
@@ -188,7 +474,7 @@ function bindVoice(){
     notify:toast,
   });
 }
-async function openMinistrySearch(){modal(`<div class="modal-head"><div><h2>Send Scripture live</h2><p>A verse (Romans 8:28), a range (John 3:16-18) or a whole chapter (Psalm 23)</p></div><button class="close-btn" data-close>×</button></div><form id="minRefForm"><div class="field"><label>Scripture reference</label><input id="minRef" placeholder="John 3:16 · jn 3 16 · 1 John 2:5 · Psalm 23"/></div><div class="field" style="margin-top:12px"><label>Translation</label><select id="minTr">${translationOptions(state.reader.translation)}</select></div><div class="modal-actions"><button class="primary-btn">Send to display</button></div></form>`);$('#minRefForm').onsubmit=async e=>{e.preventDefault();const raw=$('#minRef').value.trim();const p=parseRef(raw);if(!p){toast(`Could not recognise “${raw}” — try a form like John 3:16 or jn 3 16`,'error');return}const v=await getPassage(p,$('#minTr').value);if(!v){toast(`${books[p.book].name} ${p.chapter}${p.verse?':'+p.verse:''} is outside this chapter — ${books[p.book].name} ${p.chapter} has fewer verses`,'error');return}state.ministry.current=v;save();await sendPresentation(v);closeModal();renderMinistry();toast(`${v.ref} is live`,'success')}}
+async function openMinistrySearch(){modal(`<div class="modal-head"><div><h2>Send Scripture live</h2><p>A verse (Romans 8:28), a range (John 3:16-18) or a whole chapter (Psalm 23)</p></div><button class="close-btn" data-close>×</button></div><form id="minRefForm"><div class="field"><label>Scripture reference</label><input id="minRef" placeholder="John 3:16 · jn 3 16 · 1 John 2:5 · Psalm 23"/></div><div class="field" style="margin-top:12px"><label>Translation</label><select id="minTr">${translationOptions(state.reader.translation)}</select></div><div class="modal-actions"><button class="primary-btn">Send to display</button></div></form>`);$('#minRefForm').onsubmit=async e=>{e.preventDefault();const raw=$('#minRef').value.trim();const p=parseRef(raw);if(!p){toast(`Could not recognise "${raw}" — try a form like John 3:16 or jn 3 16`,'error');return}const v=await getPassage(p,$('#minTr').value);if(!v){toast(`${books[p.book].name} ${p.chapter}${p.verse?':'+p.verse:''} is outside this chapter — ${books[p.book].name} ${p.chapter} has fewer verses`,'error');return}state.ministry.current=v;save();await sendPresentation(v);closeModal();renderMinistry();toast(`${v.ref} is live`,'success')}}
 /* Delegate step navigation to the server so it can cross chapter and book boundaries.
    Without a hub there is no server to ask, so walk the canon locally from the same
    bundled data — the presenter must never press "Next" on a stage and get nothing. */
@@ -211,16 +497,27 @@ async function minStep(d,quiet){
 }
 /* Local equivalent of the hub's next/prev, crossing chapter and book boundaries. */
 async function localStep(d,quiet){
-  const out=await window.KingdomNav.step(state.ministry.current,d,books,loadBook,getPassage);
-  if(!out.ok){if(!quiet)toast(out.error,'error');return out}
-  const next=out.passage;
-  state.ministry.current=next;save();
-  const sent=await sendPresentation(next);
-  if(!sent||sent.ok!==true){
-    const error=sent&&sent.error||'Could not send the verse to the display';
-    if(!quiet)toast(error,'error');
-    return{ok:false,error};
+  const cur=state.ministry.current;
+  const fail=error=>{if(!quiet)toast(error,'error');return{ok:false,error}};
+  if(!cur||cur.book==null)return fail('Send a verse first');
+  const tr=cur.translation||state.reader.translation;
+  /* after a range, "next" continues from the END of the range */
+  let bi=cur.book,ch=cur.chapter,v=(d>0?(cur.verseEnd||cur.verse||1):(cur.verse||1))+d;
+  if(v<1){
+    if(ch===1){if(bi===0)return fail('Start of the Bible');bi--;ch=books[bi].chapters}
+    else ch--;
+    v=(await loadBook(tr,bi)).chapters[ch-1].length;
   }
+  if(v>(await loadBook(tr,bi)).chapters[ch-1].length){
+    if(ch>=books[bi].chapters){if(bi>=books.length-1)return fail('End of the Bible');bi++;ch=1}
+    else ch++;
+    v=1;
+  }
+  const next=await getPassage({book:bi,chapter:ch,verse:v,verseEnd:null},tr);
+  if(!next||!next.text)return fail('Cannot advance');
+  state.ministry.current=next;saveQuiet();
+  const sent=await sendPresentation(next);
+  if(!sent||sent.ok!==true)return fail(sent&&sent.error||'Could not send the verse to the display');
   if(quiet)updateMinistryPreview(next);else renderMinistry();
   return next;
 }
@@ -236,14 +533,16 @@ async function syncFromHub(){
 async function sendPresentation(v){const payload={...v,theme:state.ministry.theme,church:state.ministry.church,ts:Date.now()};
   let localDelivered=false,hubDelivered=false,hubError='';
   try{localStorage.setItem('kingdomPresentation',JSON.stringify(payload));localDelivered=true}catch{}
-  /* A live session drives the display and every paired phone. If the hub went
-     offline, keep using the local display channels rather than a stale code. */
+  /* Local screens first: the projector on this computer must not lag behind a
+     remote session round trip. */
+  try{new BroadcastChannel('kingdom-presentation').postMessage(payload);localDelivered=true}catch{}
+  /* A live session drives every paired phone. If the hub dropped offline, keep
+     the local presentation working rather than posting through a stale code. */
   if(sessionCode&&hub().isLive(hubState)){
     const out=await sessionAction({type:'presentation',payload:{...payload,book:payload.book,chapter:payload.chapter,verse:payload.verse,verseEnd:payload.verseEnd}});
     if(out&&out.ok===true)hubDelivered=true;
     else hubError=out&&out.error||'Could not reach the ministry hub';
   }
-  try{new BroadcastChannel('kingdom-presentation').postMessage(payload);localDelivered=true}catch{}
   if(hubError)return{ok:false,error:hubError};
   if(!hubDelivered&&!localDelivered)return{ok:false,error:'Could not send to the display'};
   return{ok:true,presentation:payload};
@@ -251,20 +550,26 @@ async function sendPresentation(v){const payload={...v,theme:state.ministry.them
 
 /* ---------- live service session (presenter side) ----------
    The phone remote, the service code, the SSE stream and server-side verse
-   resolution all live in the local Node hub. On a static host (Vercel) those
-   routes do not exist, so hub-probe.js tells us which world we are in before
-   anything is rendered. Never infer it from a status code: a static host
-   answers /health with 200 text/html. */
-let sessionCode=null,netInfo=null,hubState='checking';
+   resolution all live in the Node hub (server.js). On a static host (Vercel)
+   those routes do not exist, so hub-probe.js tells us which world we are in.
+   Never infer it from a status code: a static host answers /health with 200 text/html.
+
+   Phone remote and QR always point at the live hub origin:
+   - Local PC:    the LAN address printed at startup (http://<lan-ip>:4173)
+   - Render cloud: https://kingdom-bible.onrender.com
+   Never localhost on the phone — that means the phone itself.
+   */
+let sessionCode=null,netInfo=null,hubState='checking',sessionError='';
 const HUB_PORT=4173;
 /* If hub-probe.js ever fails to load, fail closed: never claim a live session, and
    still tell the presenter exactly what to do rather than rendering an empty card. */
 const HUB_FALLBACK={PORT:HUB_PORT,isLive:()=>false,probe:async()=>'static',
   describe:()=>({title:'Phone remote needs the ministry hub',
-    body:'The live service is served by the ministry computer itself.',
-    hint:'Run "npm start" on the ministry computer and open the LAN address it prints.',
+    body:'The live service is served by the ministry computer itself (localhost:4173) or the Render cloud hub.',
+    hint:'Run "npm start" on the ministry computer, or use the Live Ministry Hub button to open the Render cloud hub.',
     steps:['Open the KINGDOM BIBLE folder in a terminal.','Run `npm start`.',
-           'Open the LAN address it prints, then choose "Check again".'],
+           'Open the LAN address it prints, then choose "Check again".',
+           'Or tap "Open Live Ministry Hub" to use the cloud hub on Render.'],
     launchUrl:'http://localhost:'+HUB_PORT})};
 function hub(){return window.KingdomHub||HUB_FALLBACK}
 async function loadHub(){
@@ -273,35 +578,61 @@ async function loadHub(){
   return hubState;
 }
 async function loadNet(){try{netInfo=await(await fetch('/api/network',{cache:'no-store'})).json()}catch{netInfo=null}}
-/* The audience display must be reachable from the projector machine and the phone,
-   so it always uses the LAN origin + the live code — never localhost, never code-less. */
-function lanOrigin(){const a=netInfo&&netInfo.addresses&&netInfo.addresses[0];return a?`http://${a}:${netInfo.port}`:location.origin}
-function remoteUrl(){return lanOrigin()+'/remote'+(sessionCode?'?code='+encodeURIComponent(sessionCode):'')}
-function displayUrl(){return lanOrigin()+'/present'+(sessionCode?'?code='+encodeURIComponent(sessionCode):'')}
+/* Pairing links stay on the hub that minted the code. A loopback page needs a
+   discovered LAN address for a phone; a public hub uses its own public origin. */
+function currentHost(){return String(location.hostname||'').toLowerCase().replace(/^\[|\]$/g,'')}
+function isLoopbackHost(){const host=currentHost();return host==='localhost'||host==='127.0.0.1'||host==='::1'}
+function isPrivateIPv4Host(){
+  const parts=currentHost().split('.').map(Number);
+  if(parts.length!==4||parts.some(n=>!Number.isInteger(n)||n<0||n>255))return false;
+  return parts[0]===10||(parts[0]===192&&parts[1]===168)||(parts[0]===172&&parts[1]>=16&&parts[1]<=31);
+}
+function isLocalHubHost(){return isLoopbackHost()||isPrivateIPv4Host()}
+function phoneOrigin(){
+  if(!isLoopbackHost())return location.origin;
+  const a=netInfo&&Array.isArray(netInfo.addresses)&&netInfo.addresses[0];
+  return a?`http://${a}:${(netInfo&&netInfo.port)||HUB_PORT}`:null;
+}
+function hubOrigin(){
+  if(isLoopbackHost()){
+    const a=netInfo&&Array.isArray(netInfo.addresses)&&netInfo.addresses[0];
+    return a?`http://${a}:${(netInfo&&netInfo.port)||HUB_PORT}`:location.origin;
+  }
+  return location.origin;
+}
+function remoteUrl(){const origin=phoneOrigin();return origin&&sessionCode?origin+'/remote?code='+encodeURIComponent(sessionCode):''}
+function displayUrl(){return hubOrigin()+'/present'+(sessionCode?'?code='+encodeURIComponent(sessionCode):'')}
 async function ensureSession(){
   if(sessionCode)return sessionCode;
-  /* only a proven live hub can mint or validate a code */
-  if(!hub().isLive(hubState))return null;
-  /* reuse the code already in storage: rotating it would drop every paired phone
-     and any vMix input that is mid-service. Only mint a new one when it is invalid. */
+  if(!hub().isLive(hubState)){
+    sessionError='The ministry hub is not available on this site.';
+    return null;
+  }
+  /* Keep the current code across transient transport/server failures. Retire it
+     only when the hub explicitly rejects it with 401, or paired phones disconnect. */
   const known=localStorage.getItem('kingdomCode');
   if(known){
-    /* A transport failure is NOT proof the code is stale. Only an explicit
-       rejection may retire it — otherwise a brief Wi-Fi blip would orphan every
-       paired phone and a vMix input that is mid-service. */
     let rejected=false;
     try{
-      const r=await fetch('/api/session/status',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code:known})});
-      if(r.status===401)rejected=true;
-      else{const d=await r.json();if(d.ok){sessionCode=known;return sessionCode}}
-    }catch{}
-    if(!rejected)return known;
+      const response=await fetch('/api/session/status',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code:known})});
+      if(response.status===401)rejected=true;
+      else{
+        const data=await response.json();
+        if(response.ok&&data.ok){sessionCode=known;sessionError='';return sessionCode}
+        sessionError=data.error||'Could not verify the saved service code.';
+      }
+    }catch{sessionError='Could not check the saved service code; it has been kept.'}
+    if(!rejected){sessionCode=known;return known}
     localStorage.removeItem('kingdomCode');
   }
   try{
-    const r=await(await fetch('/api/session/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({})})).json();
-    if(r.ok){sessionCode=r.code;localStorage.setItem('kingdomCode',r.code);return r.code}
-  }catch{}
+    const response=await fetch('/api/session/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({})});
+    const data=await response.json();
+    if(response.ok&&data.ok&&/^[A-Z0-9]{4,6}$/.test(data.code||'')){
+      sessionCode=data.code;localStorage.setItem('kingdomCode',data.code);sessionError='';return data.code;
+    }
+    sessionError=data.error||'The live hub did not return a service code.';
+  }catch{sessionError='Could not reach the live hub to start a service. Check the connection and try again.'}
   return null;
 }
 async function sessionAction(action){
@@ -327,6 +658,53 @@ function drawQR(text,canvas){
   return true;
 }
 
+/* Render is the live ministry hub. Static-reader deployments link to it for
+   pairing and presentation; local Node runs remain a separate same-Wi-Fi option.
+   Resolve its URL from server config, then the hub probe, then this fallback. */
+function liveHubUrl(){
+  try{
+    const fromCfg=window.KingdomPremium?.config?.()?.liveHubUrl;
+    if(fromCfg&&/^https?:\/\//.test(fromCfg))return String(fromCfg).replace(/\/+$/,'');
+  }catch{}
+  try{
+    const probeUrl=hub()?.LIVE_HUB_URL;
+    if(probeUrl&&/^https?:\/\//.test(probeUrl))return String(probeUrl).replace(/\/+$/,'');
+  }catch{}
+  return 'https://kingdom-bible.onrender.com';
+}
+function liveHubLink(){
+  /* Carry the reader to the live ministry stage, keeping the current launch
+     context: same ?source= (pwa / install prompt), landing on #ministry. */
+  let src='';
+  try{src=new URLSearchParams(location.search).get('source')||''}catch{}
+  const q=src?'?source='+encodeURIComponent(src):'';
+  return liveHubUrl()+q+'#ministry';
+}
+function openLiveHub(ev){
+  /* Open Render directly instead of guessing whether the sleeping service is
+     online. The plain anchor also works without JavaScript; the reader stays
+     on this page while the hub starts in a separate tab. */
+  const url=liveHubLink();
+  try{if(ev&&ev.preventDefault)ev.preventDefault()}catch{}
+  window.open(url,'_blank','noopener');
+  toast('Opening the Render ministry hub in a new tab. If it is waking up, wait briefly and reload.');
+}
+function liveHubCardHtml(){
+  const url=liveHubLink();
+  return `<section class="card connect-card live-hub-card">
+  <div class="section-head" style="margin:0 0 14px">
+    <div><h2>Live Ministry Hub</h2><p>Render service for phone pairing and live Bible presentation</p></div>
+    <span class="pill">Render hub</span>
+  </div>
+  <div class="connect-body"><div class="connect-info" style="width:100%">
+    <p class="hub-lead">This static reader cannot create a service code. Open the Render hub before starting the presentation, then use the QR and display URL from that same hub.</p>
+    <div class="hub-actions">
+      <a class="primary-btn small-btn" href="${esc(url)}" target="_blank" rel="noopener" id="openLiveHub">Open Live Ministry Hub</a>
+      <button class="secondary-btn small-btn" id="copyLiveHub">Copy live link</button>
+    </div>
+    <p class="hint">If Render is waking up, wait briefly and reload the new tab; this reader remains available.</p>
+  </div></div></section>`;
+}
 /* presenter-facing connection card: code + QR + LAN address
    Three honest states. The old version rendered a green "Live" pill, a dashed
    "------" code and a blank white QR box whenever the hub was missing, which is
@@ -336,64 +714,76 @@ function connectCardHtml(){
   const live=hub().isLive(hubState);
   if(!live){
     const d=hub().describe(hubState)||{};
-    return `<section class="card connect-card hub-offline-card">
+    const liveUrl=liveHubLink();
+    const offlineCard=`<section class="card connect-card hub-offline-card">
   <div class="section-head" style="margin:0 0 14px">
-    <div><h2>${esc(d.title||'Connect the ministry hub')}</h2><p>Scan the code, or type the address on any phone on this Wi-Fi</p></div>
-    <span class="pill hub-pill-off"><span class="status-dot off"></span> Hub offline</span>
+    <div><h2>${esc(d.title||'Connect the ministry hub')}</h2><p>Or present locally on this site — no hub needed</p></div>
+    <span class="pill hub-pill-off"><span class="status-dot off"></span> This site only</span>
   </div>
-  <div class="connect-body">
+  <div class="connect-body no-qr">
     <div class="connect-info" style="width:100%">
       <p class="hub-lead">${esc(d.body||'')}</p>
       <ol class="hub-steps">${(d.steps||[]).map(s=>`<li>${esc(s).replace(/`([^`]+)`/g,'<code>$1</code>')}</li>`).join('')}</ol>
       <div class="hub-actions">
         <button class="primary-btn small-btn" id="hubRetry">Check again</button>
         <a class="secondary-btn small-btn" href="${esc(d.launchUrl||'http://localhost:'+HUB_PORT)}" id="hubLaunch">Open the local hub</a>
+        <a class="primary-btn small-btn" href="${esc(liveUrl)}" target="_blank" rel="noopener" id="openLiveHub">Open Live Ministry Hub</a>
       </div>
-      <p class="hint" id="netHint">${esc(d.hint||'')}</p>
+      <p class="hint" id="netHint">${esc(d.hint||'')} The QR code, phone remote, vMix and OBS use the live hub that starts the session.</p>
     </div>
   </div></section>`;
+    return `${liveHubCardHtml()}${offlineCard}`;
   }
-  const addr=netInfo&&netInfo.addresses&&netInfo.addresses[0];
   const port=(netInfo&&netInfo.port)||HUB_PORT;
-  /* with a live hub but no LAN address, fall back to this machine's own origin
-     so the field still carries a real, openable URL */
-  const origin=addr?`http://${addr}:${port}`:location.origin;
-  const url=origin+'/remote';
-  const code=sessionCode||'------';
-  return `<section class="card connect-card">
+  const origin=phoneOrigin();
+  const phoneUrl=sessionCode&&origin?remoteUrl():'';
+  const ready=!!phoneUrl;
+  const status=!sessionCode?'No service code':!origin?'Needs Wi-Fi':'Phone ready';
+  const title=!sessionCode?'Service code not available':!origin?'Phone connection needs Wi-Fi':'Connect a phone remote';
+  const phoneHint=ready
+    ? (isLocalHubHost()?`Both devices must use this PC's Wi-Fi. If the phone cannot connect, allow Node.js through the firewall on port ${port} and avoid guest Wi-Fi isolation.`:'The presenter and phone are using this live hub. Scan the QR or open the full phone link; the code is included.')
+    : !sessionCode
+      ? (sessionError||'The live hub did not create a service code. Choose Retry pairing, or open the live hub.')
+      : 'No phone-reachable LAN address was found. Connect this computer to Wi-Fi and choose Check again; the QR is hidden rather than pointing at localhost.';
+  return `<section class="card connect-card ${ready?'':'hub-offline-card'}">
   <div class="section-head" style="margin:0 0 14px">
-    <div><h2>Connect a phone remote</h2><p>Scan the code, or type the address on any phone on this Wi-Fi</p></div>
-    <span class="pill premium-pill"><span class="status-dot"></span> Live</span>
+    <div><h2>${title}</h2><p>${ready?'Scan the QR or use the direct phone link — it includes the service code.':'The app will not show a fake code or a QR that cannot connect.'}</p></div>
+    <span class="pill ${ready?'premium-pill':'hub-pill-off'}"><span class="status-dot${ready?'':' off'}"></span> ${status}</span>
   </div>
-  <div class="connect-body">
-    <div class="qr-wrap"><canvas id="sessionQr" width="160" height="160" aria-label="QR code to open the phone remote"></canvas><span class="qr-cap">Scan to open</span></div>
-    <div class="connect-info">
-      <div class="code-row">
-        <div class="code-box"><label>Service code</label><strong id="sessionCode">${esc(code)}</strong></div>
-        <button class="secondary-btn small-btn" id="copyCode">Copy code</button>
-      </div>
-      <div class="field" style="margin-top:12px"><label>Phone address</label>
-        <div class="url-row"><input id="sessionUrl" readonly value="${esc(url)}"><button class="secondary-btn small-btn" id="copyUrl">Copy</button></div>
-      </div>
-      <p class="hint" id="netHint">${addr?'Both devices must be on the same Wi-Fi network. If the phone cannot connect, allow Node.js through Windows Firewall on port '+port+'.':'The hub is running, but this computer has no LAN address. Connect it to Wi-Fi, then choose "Check again".'}</p>
+  <div class="connect-body ${ready?'':'no-qr'}">
+    ${ready?'<div class="qr-wrap"><canvas id="sessionQr" width="160" height="160" aria-label="QR code to open the paired phone remote"></canvas><span class="qr-cap">Scan to open</span></div>':''}
+    <div class="connect-info" ${ready?'':'style="width:100%"'}>
+      ${sessionCode?`<div class="code-row"><div class="code-box"><label>Service code</label><strong id="sessionCode">${esc(sessionCode)}</strong></div><button class="secondary-btn small-btn" id="copyCode">Copy code</button></div>`:`<p class="hub-lead">${esc(sessionError||'No service code is available yet.')}</p>`}
+      ${ready?`<div class="field" style="margin-top:12px"><label>Direct phone link · code included</label><div class="url-row"><input id="sessionUrl" readonly value="${esc(phoneUrl)}" aria-label="Full phone remote link including service code"><button class="secondary-btn small-btn" id="copyUrl">Copy link</button></div><div class="hub-actions" style="margin-top:9px"><a class="secondary-btn small-btn" href="${esc(phoneUrl)}" target="_blank" rel="noopener" id="openPhoneRemote">Open phone remote</a></div></div>`:''}
+      ${!ready?`<div class="hub-actions" style="margin-top:12px"><button class="primary-btn small-btn" id="hubRetry">${sessionCode?'Check again':'Retry pairing'}</button><a class="secondary-btn small-btn" href="${esc(liveHubLink())}" target="_blank" rel="noopener">Open Live Ministry Hub</a></div>`:''}
+      <p class="hint" id="netHint">${esc(phoneHint)}</p>
     </div>
   </div></section>`;
 }
 function bindConnectCard(){
+  const goLive=$('#openLiveHub');
+  if(goLive)goLive.onclick=openLiveHub;
+  const liveBtn=$('#copyLiveHub');
+  if(liveBtn)liveBtn.onclick=()=>copyText(liveHubLink(),'Live ministry link copied');
   const retry=$('#hubRetry');
-  if(retry)retry.onclick=async()=>{retry.disabled=true;retry.textContent='Checking…';await loadHub();if(hub().isLive(hubState))await ensureSession();renderMinistry();toast(hub().isLive(hubState)?'Ministry hub connected':'The ministry hub is still not running',hub().isLive(hubState)?'success':'error')};
+  if(retry)retry.onclick=async()=>{
+    retry.disabled=true;retry.textContent='Checking…';
+    await loadHub();
+    if(hub().isLive(hubState))await ensureSession();
+    renderMinistry();
+    const ready=hub().isLive(hubState)&&!!sessionCode&&!!phoneOrigin();
+    toast(ready?'Phone pairing is ready':'The hub or phone connection is still unavailable',ready?'success':'error');
+  };
   const urlEl=$('#sessionUrl');
-  const full=urlEl?urlEl.value:'';
-  const qrUrl=full?full+'?code='+encodeURIComponent(sessionCode||''):'';
-  /* a QR is only drawn when it is genuinely scannable; otherwise the canvas is
-     removed entirely rather than left as a blank white square */
-  if(qrUrl&&sessionCode)drawQR(qrUrl,$('#sessionQr'));
-  else $('.qr-wrap')?.remove();
-  const cc=$('#copyCode');if(cc)cc.onclick=()=>copyText(sessionCode,'Service code copied');
-  const cu=$('#copyUrl');if(cu)cu.onclick=()=>copyText(full,'Address copied');
+  const full=urlEl&&/^https?:\/\//.test(urlEl.value)?urlEl.value:'';
+  if(full&&sessionCode){
+    if(!drawQR(full,$('#sessionQr'))){$('.qr-wrap')?.remove();$('.connect-body')?.classList.add('no-qr')}
+  }else $('.qr-wrap')?.remove();
+  const cc=$('#copyCode');if(cc)cc.onclick=()=>sessionCode&&copyText(sessionCode,'Service code copied');
+  const cu=$('#copyUrl');if(cu)cu.onclick=()=>full&&copyText(full,'Full phone link copied');
 }
 function bindTimer(){let sec=0,id=null;const out=$('#serviceTimer'),draw=()=>out.textContent=new Date(sec*1000).toISOString().slice(11,19);$('#timerStart').onclick=e=>{if(id){clearInterval(id);id=null;e.target.textContent='Start timer'}else{id=setInterval(()=>{sec++;draw()},1000);e.target.textContent='Pause'}};$('#timerReset').onclick=()=>{sec=0;draw()}}
-function openGuide(type){const vm=type==='vMix';modal(`<div class="modal-head"><div><h2>Use KINGDOM BIBLE with ${type}</h2><p>Browser-source quick start</p></div><button class="close-btn" data-close>×</button></div><div class="guide-steps">${(vm?['Create or open the Ministry Mode session.','Copy the browser-source URL.','Open vMix and choose Add Input → Web Browser.','Paste the URL and set 1920 × 1080.','Open the audience display or presenter control.','Search Scripture and send verses live.']:['Create or open the Ministry Mode session.','Copy the browser-source URL.','In OBS, add a Browser Source.','Paste the URL and set 1920 × 1080.','For transparency, choose the Transparent theme.','Use Presenter Control to send verses live.']).map(x=>`<div class="guide-step">${x}</div>`).join('')}</div><div class="notice" style="margin-top:15px">The presentation route contains no controls and is suitable for capture. Keep this control page private.</div>`)}
+function openGuide(type){const vm=type==='vMix';modal(`<div class="modal-head"><div><h2>Use KINGDOM BIBLE with ${type}</h2><p>Browser-source quick start</p></div><button class="close-btn" data-close>×</button></div><div class="guide-steps">${(vm?['Create or open the Ministry Mode session.','Copy the browser-source URL.','Open vMix and choose Add Input → Web Browser.','Paste the URL and set 1920 × 1080.','Open the audience display or presenter control.','Search Scripture and send verses live.']:['Create or open the Ministry Mode session.','Copy the browser-source URL.','In OBS, add a Browser Source.','Paste the URL and set 1920 × 1080.','For transparency, choose the Transparent theme.','Use Presenter Control to send verses live.']).map(x=>`<div class="guide-step">${x}</div>`).join('')}</div><div class="notice" style="margin-top:15px">${vm?'<strong>Readability:</strong> For a full-frame Scripture slide, set Zoom, Zoom X, and Zoom Y to 1.00 and Pan X/Y to 0.00 in the Browser input’s Position tab. Lower Zoom values shrink the whole input. For picture-in-picture, keep the camera on a separate layer. ':''}The presentation route contains no controls and is suitable for capture. Keep this control page private.</div>`)}
 /* ---------- audience display (vMix / OBS capture surface) ----------
    The stage is a fixed viewport that must never scroll or crop: a verse that runs off
    the bottom is a bug on a projector. Fitting happens in two stages.
@@ -447,8 +837,9 @@ async function renderPresentation(){
     document.addEventListener('selectionchange',()=>{if(document.activeElement&&/INPUT|TEXTAREA/.test(document.activeElement.tagName))return;const s=window.getSelection();if(s&&!s.isCollapsed)s.removeAllRanges()});
 
     const stage=$('#stage'),verseBox=$('#stageVerse'),brand=$('#stageBrand'),hint=$('#stageHint');
-    /* a multi-verse passage needs a smaller ceiling than a single verse */
-    const fit=p=>verseBox.classList.contains('is-blank')?0:fitText(verseBox,stage,p&&p.multiverse?56:94,14);
+    /* Short verses project HUGE; multi-verse passages get a high ceiling too but
+       leave headroom so the auto-fit keeps them inside the capture frame. */
+    const fit=p=>verseBox.classList.contains('is-blank')?0:fitText(verseBox,stage,p&&p.multiverse?112:184,20);
     const apply=p=>{
       if(!p)return;
       stage.className='presentation-stage '+(p.theme||'royal');
@@ -497,18 +888,310 @@ async function renderPresentation(){
   }
 
 /* PROFILE */
-function renderProfile(){setTitle('Profile & Settings');const saved=Object.keys(state.bookmarks);$('#main').innerHTML=`<div class="page"><div class="card profile-header"><div class="avatar">${esc(state.profile.name[0]||'G')}</div><div style="flex:1"><h1>${esc(state.profile.name)}</h1><p>Local profile · Personal data stored on this device</p></div><button class="secondary-btn" id="editProfile">Edit profile</button></div><div class="profile-layout" style="margin-top:18px"><nav class="card settings-nav"><button class="active">Overview</button><button>Appearance</button><button>Reading</button><button>Privacy</button><button>Data</button></nav><section class="card settings-content"><div class="eyebrow">YOUR LIBRARY</div><div class="home-stats" style="margin:15px 0 25px"><div class="stat-card"><div><strong>${state.chaptersRead.length}</strong><small>chapters</small></div></div><div class="stat-card"><div><strong>${saved.length}</strong><small>saved</small></div></div><div class="stat-card"><div><strong>${Object.keys(state.highlights).length}</strong><small>highlights</small></div></div><div class="stat-card"><div><strong>${Object.keys(state.notes).length}</strong><small>notes</small></div></div></div><div class="eyebrow">APPEARANCE</div><div class="setting-row"><div><h3>Theme</h3><p>Choose a comfortable reading environment.</p></div><div class="theme-options">${['light','dark','sepia','amoled','contrast'].map(t=>`<button class="theme-swatch ${state.profile.theme===t?'active':''}" data-theme-pick="${t}">${t[0].toUpperCase()+t.slice(1)}</button>`).join('')}</div></div><div class="setting-row"><div><h3>Preferred translation</h3><p>Only public-domain translations are included.</p></div><select class="reader-select" id="profileTr">${translationOptions(state.profile.translation)}</select></div><div class="setting-row"><div><h3>Install KINGDOM BIBLE</h3><p>Offline access and an app-like home-screen experience.</p></div><button class="secondary-btn" id="profileInstall">Install</button></div><div class="eyebrow" style="margin-top:25px">PRIVACY & DATA</div><div class="setting-row"><div><h3>Local-first privacy</h3><p>Notes, prayers, bookmarks, and history remain in this browser.</p></div><span class="pill"><span class="status-dot"></span> Private</span></div><div class="setting-row"><div><h3>Export personal data</h3><p>Download your profile data as JSON.</p></div><button class="secondary-btn" id="exportData">Export</button></div><div class="setting-row"><div><h3>Cloud account & sync</h3><p>Secure multi-device accounts are not connected in this local build.</p></div><span class="pill">Coming Soon</span></div><div class="setting-row"><div><h3>Clear local data</h3><p>Permanently remove personal activity from this browser.</p></div><button class="danger-btn small-btn" id="clearData">Clear</button></div></section></div></div>`;$('#editProfile').onclick=openEditProfile;$$('[data-theme-pick]').forEach(b=>b.onclick=()=>{state.profile.theme=b.dataset.themePick;save();renderProfile()});$('#profileTr').onchange=e=>{state.profile.translation=e.target.value;state.reader.translation=e.target.value;save();toast('Preferred translation updated')};$('#profileInstall').onclick=installApp;$('#exportData').onclick=exportData;$('#clearData').onclick=confirmClear}
+/* Referral links are valid only for signed-in member accounts with a personal
+   code. Never turn an administrator or guest's generic app URL into a fake referral. */
+function profileReferralLink(acct){
+  if(!acct?.signedIn||acct.role==='admin'||!acct.referralCode)return'';
+  return location.origin+'/?ref='+encodeURIComponent(acct.referralCode);
+}
+function profileReferralMarkup(acct,refLink){
+  if(acct.role==='admin')return`<div class="eyebrow" style="margin-top:25px">REFERRALS & WALLET</div><p style="color:var(--muted);font-size:13px;margin:6px 0 12px">Administrator accounts do not have a personal referral code or wallet. Sharing the app homepage alone does not track or credit signups. Sign out, then sign in with a standard member account to get a unique referral link.</p>`;
+  if(!acct.signedIn)return`<div class="eyebrow" style="margin-top:25px">YOUR REFERRAL LINK</div><p style="color:var(--muted);font-size:13px;margin:6px 0 12px">Sign in to a standard member account to get a personal, trackable referral link. The general app URL does not credit referrals.</p>`;
+  if(!acct.referralCode||!refLink)return`<div class="eyebrow" style="margin-top:25px">YOUR REFERRAL LINK</div><p style="color:var(--muted);font-size:13px;margin:6px 0 12px">This account has no personal referral code, so a generic app link cannot track signups. Use a standard member account with a referral code to share a tracked link.</p>`;
+  return`<div class="eyebrow" style="margin-top:25px">YOUR REFERRAL LINK</div><p style="color:var(--muted);font-size:13px;margin:6px 0 12px">Share this link. Anyone who opens it and creates an account is credited to you — you earn ₦100 for their signup and 10% of their first subscription payment.</p><div class="referral-link-row"><input id="profileReferral" class="referral-input" readonly value="${esc(refLink)}" aria-label="Your referral link"></div><div class="referral-actions" style="margin-top:10px"><button class="secondary-btn small-btn" id="copyProfileReferral">Copy link</button><button class="primary-btn small-btn" id="shareApp">Share app</button></div><div class="eyebrow" style="margin-top:25px">EARNINGS & WALLET</div><div id="walletPanel"><p style="color:var(--muted);font-size:13px">Loading your referral earnings…</p></div>`;
+}
+function renderProfile(){setTitle('Profile & Settings');const saved=Object.keys(state.bookmarks);const acct=accountState,refLink=profileReferralLink(acct);$('#main').innerHTML=`<div class="page"><div class="card profile-header"><label class="avatar avatar-upload" title="Upload profile photo">${avatarMarkup()}<input id="profileAvatar" type="file" accept="image/png,image/jpeg,image/webp" hidden></label><div style="flex:1"><h1>${esc(displayName())}</h1><p>${acct.signedIn?'Signed in as '+esc(acct.email||''):'Local profile · Personal data stored on this device'}</p></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="secondary-btn" id="editProfile">Edit profile</button>${(acct.avatar||state.profile.avatar)?'<button class="secondary-btn" id="removeAvatar">Remove photo</button>':''}</div></div><div class="profile-layout" style="margin-top:18px"><nav class="card settings-nav"><button class="active">Overview</button><button>Appearance</button><button>Reading</button><button>Privacy</button><button>Data</button></nav><section class="card settings-content"><div class="eyebrow">YOUR LIBRARY</div><div class="home-stats" style="margin:15px 0 25px"><div class="stat-card"><div><strong>${state.chaptersRead.length}</strong><small>chapters</small></div></div><div class="stat-card"><div><strong>${saved.length}</strong><small>saved</small></div></div><div class="stat-card"><div><strong>${Object.keys(state.highlights).length}</strong><small>highlights</small></div></div><div class="stat-card"><div><strong>${Object.keys(state.notes).length}</strong><small>notes</small></div></div></div><div class="eyebrow">APPEARANCE</div><div class="setting-row"><div><h3>Theme</h3><p>Choose a comfortable reading environment.</p></div><div class="theme-options">${['light','dark','sepia','amoled','contrast'].map(t=>`<button class="theme-swatch ${state.profile.theme===t?'active':''}" data-theme-pick="${t}">${t[0].toUpperCase()+t.slice(1)}</button>`).join('')}</div></div><div class="setting-row"><div><h3>Preferred translation</h3><p>Only public-domain translations are included.</p></div><select class="reader-select" id="profileTr">${translationOptions(state.profile.translation)}</select></div><div class="setting-row"><div><h3>Install KINGDOM BIBLE</h3><p>Offline access and an app-like home-screen experience.</p></div><button class="secondary-btn" id="profileInstall">Install</button></div><div class="eyebrow" style="margin-top:25px">MEMBERSHIP & SUPPORT</div><div class="setting-row"><div><h3>Kingdom Bible Pro</h3><p>${acct.role==='admin'?'Administrator access is complimentary. Referral rewards and withdrawals are available to standard member accounts.':'Start your 30-day trial, choose a plan, earn referral rewards, and manage withdrawals.'}</p></div><button class="primary-btn small-btn" id="profileUpgrade">${acct.role==='admin'?'View access':'View plans'}</button></div>${acct.signedIn?`<div class="setting-row"><div><h3>Account</h3><p>Signed in as ${esc(acct.email||'')}. Signing out removes this session from this browser.</p></div><button class="secondary-btn small-btn" id="profileSignOut">Sign out</button></div>`:''}${profileReferralMarkup(acct,refLink)}<div class="setting-row"><div><h3>Questions or enquiries</h3><p>Contact support directly on WhatsApp.</p></div><button class="secondary-btn small-btn" id="profileWhatsApp">WhatsApp</button></div><div class="eyebrow" style="margin-top:25px">HELP & SETUP</div><div class="setting-row"><div><h3>User Manual</h3><p>Learn navigation, reading, search, ministry, Voice Mode, remote control, and presentation setup.</p></div><button class="secondary-btn" id="profileManual">Open manual</button></div><div class="eyebrow" style="margin-top:25px">PRIVACY & DATA</div><div class="setting-row"><div><h3>Local-first privacy</h3><p>Notes, prayers, bookmarks, and history remain in this browser.</p></div><span class="pill"><span class="status-dot"></span> Private</span></div><div class="setting-row"><div><h3>Export personal data</h3><p>Download your profile data as JSON.</p></div><button class="secondary-btn" id="exportData">Export</button></div><div class="setting-row"><div><h3>Cloud account & sync</h3><p>${acct.role==='admin'?'Administrator access is available on this account; referral wallets belong to standard member accounts.':acct.signedIn?'Your account, profile photo and referral wallet follow you when you sign in on another device.':'Sign in to carry your profile photo and referral wallet across devices.'}</p></div><span class="pill"><span class="status-dot${acct.signedIn?'':' off'}"></span> ${acct.signedIn?'Connected':'Not signed in'}</span></div><div class="setting-row"><div><h3>Clear local data</h3><p>Permanently remove personal activity from this browser.</p></div><button class="danger-btn small-btn" id="clearData">Clear</button></div></section></div></div>`;$('#editProfile').onclick=openEditProfile;$$('[data-theme-pick]').forEach(b=>b.onclick=()=>{state.profile.theme=b.dataset.themePick;save();renderProfile()});$('#profileTr').onchange=e=>{state.profile.translation=e.target.value;state.reader.translation=e.target.value;save();toast('Preferred translation updated')};$('#profileInstall').onclick=installApp;$('#profileManual').onclick=openManual;$('#profileUpgrade').onclick=()=>window.KingdomPremium?.open();
+  /* Sign-out lives on Profile because that is where a signed-in reader looks for
+     it. It used to exist only inside the plan modal, which is one extra tap away
+     and easy to miss entirely. */
+  const so=$('#profileSignOut');
+  if(so)so.onclick=async()=>{so.disabled=true;try{await window.KingdomPremium?.signOut?.();toast('Signed out','success')}finally{so.disabled=false}};const pw2=$('#profileWhatsApp');if(pw2)pw2.onclick=()=>window.open(window.KingdomPremium?.supportText?.()||'https://wa.me/2348134438808?text=Hello%20KINGDOM%20BIBLE%20support','_blank','noopener');
+  const cr=$('#copyProfileReferral');if(cr)cr.onclick=async()=>{const i=$('#profileReferral');i.select();try{await navigator.clipboard.writeText(refLink)}catch{document.execCommand&&document.execCommand('copy')}toast('Referral link copied','success')};
+  const sa=$('#shareApp');if(sa)sa.onclick=()=>window.KingdomPremium?.shareApp?.();
+  const rm=$('#removeAvatar');if(rm)rm.onclick=async()=>{state.profile.avatar='';save();if(acct.signedIn){try{await window.KingdomPremium.saveProfile(state.profile.name,'');applyAccount(window.KingdomPremium.user)}catch(e){toast(e.message,'error')}}else renderProfile();toast('Profile photo removed','success')};
+  const avatar=$('#profileAvatar');if(avatar)avatar.onchange=async e=>{const f=e.target.files?.[0];if(!f)return;if(f.size>6*1024*1024){toast('Please choose a photo under 6 MB','error');e.target.value='';return}
+    try{const dataUrl=await downscaleImage(f,320);
+      /* Locally first so the change is instant, then to the account when signed in so
+         the photo follows the person to their other device instead of dying here. */
+      state.profile.avatar=dataUrl;save();
+      if(acct.signedIn){try{const u=await window.KingdomPremium.saveProfile(state.profile.name,dataUrl);applyAccount(u)}catch(err){toast('Saved on this device — '+err.message,'error')}}
+      renderProfile();toast('Profile photo updated','success');
+    }catch(err){toast(err.message||'Could not read that image','error')}
+    finally{e.target.value=''}};
+  if(acct.signedIn&&acct.role!=='admin'&&acct.referralCode)loadWalletPanel();
+  $('#exportData').onclick=exportData;$('#clearData').onclick=confirmClear}
+/* Camera photos are often 4000px wide and several megabytes. The server caps the
+   stored image at 512 KB, so shrink to 320px square JPEG first — that is plenty for
+   an avatar and keeps localStorage usable. */
+function downscaleImage(file,max){
+  return new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onerror=()=>reject(Error('Could not read that image'));
+    reader.onload=()=>{
+      const img=new Image();
+      img.onerror=()=>reject(Error('That file is not a readable image'));
+      img.onload=()=>{
+        const side=Math.min(img.width,img.height);
+        const c=document.createElement('canvas');
+        c.width=c.height=Math.min(max,side);
+        c.getContext('2d').drawImage(img,(img.width-side)/2,(img.height-side)/2,side,side,0,0,c.width,c.height);
+        /* PNG keeps transparency for logos; JPEG is much smaller for photographs. */
+        const isPhoto=/jpe?g/i.test(file.type)||!file.type;
+        resolve(isPhoto?c.toDataURL('image/jpeg',0.86):c.toDataURL('image/png'));
+      };
+      img.src=String(reader.result);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+/* ---------- referral earnings & wallet ----------
+   People who invite others must be able to SEE what they earned and withdraw it once it
+   clears the ₦1,000 minimum. The balance shown is the withdrawable one; anything an
+   administrator is still reviewing is listed separately so it is never counted twice. */
+const naira=n=>'₦'+Number(n||0).toLocaleString();
+async function loadWalletPanel(){
+  const box=$('#walletPanel');if(!box)return;
+  if(!accountState.signedIn){box.innerHTML='<p style="color:var(--muted);font-size:13px">Sign in to see your referral earnings and withdraw them.</p>';return}
+  try{
+    const d=await window.KingdomPremium.wallet();
+    const r=d.referral||{};
+    const rows=(d.ledger||[]).slice(0,6).map(x=>`<div class="ledger-row"><span>${esc(x.description||x.type)}<small>${esc((x.date||'').slice(0,10))}</small></span><strong class="${Number(x.amount)>=0?'gain':'loss'}">${Number(x.amount)>=0?'+':'-'}${naira(Math.abs(x.amount))}</strong></div>`).join('');
+    const wds=(d.withdrawals||[]).slice(0,4).map(w=>`<div class="ledger-row"><span>Withdrawal<small>${esc((w.requestedAt||'').slice(0,10))}</small></span><strong>${naira(w.amount)} · ${esc(w.status)}</strong></div>`).join('');
+    const progress=Math.min(100,Math.round((r.balance/r.minWithdrawal)*100));
+    box.innerHTML=`<div class="wallet-card"><div class="wallet-balance"><strong>${naira(r.balance)}</strong><small>available to withdraw</small></div><div class="home-stats" style="margin:14px 0"><div class="stat-card"><div><strong>${r.invited||0}</strong><small>people invited</small></div></div><div class="stat-card"><div><strong>${naira(r.totalEarned||0)}</strong><small>total earned</small></div></div><div class="stat-card"><div><strong>${naira(r.paidNaira||0)}</strong><small>paid out</small></div></div></div><div class="wallet-progress"><div class="wallet-bar"><span style="width:${progress}%"></span></div><small>${r.canWithdraw?'You can withdraw now.':'Earn '+naira(r.shortfall||0)+' more to reach the '+naira(r.minWithdrawal||1000)+' minimum.'}</small></div>${r.pendingNaira?'<p style="color:var(--muted);font-size:12px">'+naira(r.pendingNaira)+' is pending administrator review.</p>':''}<button class="primary-btn small-btn" id="withdrawNow" ${r.canWithdraw?'':'disabled'}>Withdraw earnings</button>${rows?'<div class="ledger">'+rows+wds+'</div>':'<p style="color:var(--muted);font-size:12px;margin-top:12px">No referral earnings yet. Share your link to get started.</p>'}</div>`;
+    const w=$('#withdrawNow');if(w)w.onclick=()=>window.KingdomPremium?.open();
+  }catch(e){box.innerHTML=`<p style="color:var(--muted);font-size:13px">${esc(e.message||'Could not load your wallet')}</p>`}
+}
 function openEditProfile(){modal(`<div class="modal-head"><div><h2>Edit profile</h2><p>Personalize your local experience.</p></div><button class="close-btn" data-close>×</button></div><div class="form-grid"><div class="field full"><label>Name</label><input id="profileName" value="${esc(state.profile.name)}"></div><div class="field"><label>Reading time</label><input type="time" id="profileTime" value="${state.profile.readingTime}"></div><div class="field"><label>Translation</label><select id="editTr">${translationOptions(state.profile.translation)}</select></div></div><div class="modal-actions"><button class="primary-btn" id="saveProfile">Save profile</button></div>`);$('#saveProfile').onclick=()=>{state.profile.name=$('#profileName').value.trim()||'Reader';state.profile.readingTime=$('#profileTime').value;state.profile.translation=$('#editTr').value;save();closeModal();renderProfile();toast('Profile updated','success')}}
-function exportData(){const blob=new Blob([JSON.stringify({...state,exportedAt:new Date().toISOString(),app:'KINGDOM BIBLE v1.0.0'},null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`kingdom-bible-data-${today()}.json`;a.click();URL.revokeObjectURL(a.href);toast('Personal data exported')}
+function exportData(){const blob=new Blob([JSON.stringify({...state,exportedAt:new Date().toISOString(),app:'KINGDOM BIBLE v'+(window.KingdomPremium?.config?.()?.appVersion||APP_VERSION)},null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`kingdom-bible-data-${today()}.json`;a.click();URL.revokeObjectURL(a.href);toast('Personal data exported')}
 function confirmClear(){modal(`<div class="modal-head"><div><h2>Clear local data?</h2><p>This cannot be undone.</p></div><button class="close-btn" data-close>×</button></div><p>This permanently removes bookmarks, notes, highlights, prayer entries, reading progress, and settings from this browser.</p><div class="modal-actions"><button class="secondary-btn" data-close>Cancel</button><button class="danger-btn" id="confirmClear">Clear everything</button></div>`);$('#confirmClear').onclick=()=>{localStorage.removeItem(LS);state=structuredClone(DEFAULT);save();closeModal();navigate('home');toast('Local data cleared')}}
 
 /* MEMORY, COMMANDS, PWA */
 function openMemory(v){let step=0;const words=v.text.split(' ');const draw=()=>{const hidden=words.map((w,i)=>step===0?w:step===1&&i%4===0?'_____':step===2&&i%2===0?'_____':step>=3?'_____':w).join(' ');modal(`<div class="modal-head"><div><div class="eyebrow">MEMORY PRACTICE · STEP ${step+1} OF 4</div><h2>${esc(v.ref)}</h2></div><button class="close-btn" data-close>×</button></div><div class="selected-passage" style="font:21px/1.9 var(--scripture)">${esc(hidden)}</div><p style="color:var(--muted);font-size:12px">${['Read the verse aloud slowly.','Recall the missing words.','More words are now hidden.','Recite the entire verse from memory.'][step]}</p><div class="modal-actions"><button class="secondary-btn" id="memoryReveal">Reveal</button><button class="primary-btn" id="memoryNext">${step===3?'Finish':'Next step'}</button></div>`);$('#memoryReveal').onclick=()=>{$('.selected-passage').textContent=v.text};$('#memoryNext').onclick=()=>{if(step<3){step++;draw()}else{closeModal();toast('Practice complete — keep returning to the Word','success')}}};draw()}
-function openCommand(){const items=[...NAV,...QUICK.filter(q=>!NAV.some(n=>n[0]===q[0]))];modal(`<input class="command-input" id="commandInput" placeholder="Search Scripture or go to a feature…"/><div class="command-results" id="commandResults"><div class="command-group">NAVIGATE</div>${items.map(x=>`<button class="command-item" data-croute="${x[0]}"><span>${x[1]}</span><strong>${x[2]}</strong><small>Open</small></button>`).join('')}<div class="command-group">RECENT SEARCHES</div>${state.history.slice(0,4).map(x=>`<button class="command-item" data-csearch="${esc(x)}"><span>⌕</span><strong>${esc(x)}</strong><small>Search</small></button>`).join('')}</div>`,'command-modal');const input=$('#commandInput');input.oninput=()=>{const q=input.value.toLowerCase();$$('.command-item').forEach(x=>x.hidden=!x.textContent.toLowerCase().includes(q))};$$('[data-croute]').forEach(b=>b.onclick=()=>navigate(b.dataset.croute));$$('[data-csearch]').forEach(b=>b.onclick=()=>{searchState.query=b.dataset.csearch;navigate('search');setTimeout(()=>performSearch(b.dataset.csearch),50)});input.onkeydown=e=>{if(e.key==='Enter'&&input.value.trim()){searchState.query=input.value.trim();navigate('search');setTimeout(()=>performSearch(input.value.trim()),50)}}}
-function openQuick(){if($('.quick-menu')){closeModal();return}modal(`<div class="eyebrow" style="padding:8px">QUICK ACTIONS</div>${[['search','⌕','Search Bible'],['prayer','♧','Start prayer'],['bible','✎','Add Scripture note'],['study','✦','Start study'],['ministry','▣','Start presentation']].map(x=>`<button data-route="${x[0]}"><span>${x[1]}</span>${x[2]}</button>`).join('')}`,'quick-menu')}
+function openManual(){modal(`<div class="modal-head"><div><div class="eyebrow">KINGDOM BIBLE · USER MANUAL</div><h2>Read, study, and present the Word</h2><p>A practical guide for the reader, ministry team, and presentation operator.</p></div><button class="close-btn" data-close>×</button></div><div class="manual-content">
+  <section><h3>Navigation</h3><p>Use the sidebar on desktop or the bottom navigation on a phone. Home gives you today’s activity; Bible opens the reader; Study, Prayer, Devotional, Plans, Ministry, and Profile keep those tools one tap away. The top search button opens the command palette.</p><p><strong>Keyboard:</strong> press <kbd>Ctrl</kbd> + <kbd>K</kbd> (or <kbd>⌘ K</kbd> on Mac) for navigation, recent searches, and this manual. The quick-action <strong>+</strong> button is available on smaller screens.</p></section>
+  <section><h3>Reading the Bible</h3><p>Open <strong>Bible</strong>, choose a book and chapter, then choose KJV, ASV, or WEB. Use the chapter arrows to move through the canon. Reader settings control font, size, line spacing, and theme.</p><p>Select a verse to bookmark it, highlight it, add a note, share it, or use it to start a prayer. Your reading activity and personal notes stay in this browser.</p></section>
+  <section><h3>Search and Scripture references</h3><p>Search by words or phrases in <strong>Search</strong>. You can also type references such as <strong>John 3:16</strong>, <strong>Jn 3 16</strong>, <strong>1 John 2:5</strong>, a range, or a whole chapter. Select a result to open it in the reader. Recent searches are available from the <kbd>Ctrl</kbd> + <kbd>K</kbd> palette.</p></section>
+  <section><h3>Ministry setup</h3><p>Open <strong>Ministry</strong> to set the church name, translation, display theme, and live service. Choose <strong>Change Scripture</strong> to send a verse, range, or chapter to the audience display. <strong>Open audience display</strong> opens a clean capture surface; <strong>Copy browser-source URL</strong> copies the coded display address.</p><p>For online phone control, open the Render ministry hub and start Ministry Mode there. For a same-Wi-Fi/offline service, run <code>npm start</code> on the ministry computer and open its LAN address. For microphone use, the page must be <code>https://</code> or localhost.</p></section>
+  <section><h3>Voice Preacher Mode</h3><p>On the Ministry page, open Voice Preacher Mode in Chrome or Edge, allow the microphone, and tap the mic. It scans interim speech frames: a complete book, chapter, and verse can reach the display while you keep speaking. Untick instant send if an operator should approve each reference first.</p><p><strong>Mic troubleshooting:</strong> If the wrong mic is selected, open the browser site settings and choose the intended microphone, not a webcam or a disconnected headset. In Windows/macOS sound settings, select the real input or the correct Voicemeeter output, confirm the input meter moves, and close other apps holding the mic. In Voicemeeter, check the hardware input, routing bus, mute buttons, and sample rate; then reload the page and allow the microphone again.</p><p><strong>Secure page:</strong> microphone access requires <code>https://</code> or <code>http://localhost</code>. A plain <code>http://192.168.x.x</code> LAN address cannot use Voice Mode. The phone remote can still use the LAN address.</p></section>
+  <section><h3>Phone remote and QR pairing</h3><p>Start a live session in Ministry. Scan the QR code shown in <strong>Connect a phone remote</strong>, or type the full phone link, then enter the 4–6 character service code. On Render, the phone can connect over Wi-Fi or mobile data; for a local hub, keep the phone and ministry computer on the same Wi-Fi. The remote can send Scripture, move to the next or previous verse, blank the display, and change the look.</p><p>If it will not connect, turn off guest-network client isolation and allow Node.js through the computer’s firewall on the displayed port. Do not use <code>localhost</code> on the phone: it means the phone itself.</p></section>
+  <section><h3>Pro membership, referrals, and support</h3><p>Choose <strong>Try Pro free</strong> on Home or open Profile → <strong>View plans</strong>. Every new account starts with 30 days; the app warns you when seven days remain. Plans are monthly and payments are processed through Paystack. The referral code in your account can earn ₦100 for a verified signup and 10% of the referred user’s first successful subscription payment. Wallet withdrawals start at ₦1,000, are reviewed by the administrator, and target payment within three working days.</p><p>Use <strong>WhatsApp support</strong> for enquiries, billing, privacy, or refund questions. Holding the Kingdom Bible logo for 2.5 seconds opens the admin sign-in page; only the configured administrator credentials can enter.</p></section>
+  <section><h3>vMix and OBS</h3><p>In Ministry, copy the <strong>browser-source URL</strong>. In vMix choose <strong>Add Input → Web Browser</strong>; in OBS add a <strong>Browser Source</strong>. Paste the URL, use 1920 × 1080, and keep the service code in the URL. Do not paste a localhost address into vMix or OBS when they run on another machine.</p><p>Use the Transparent theme for a keyed overlay. The presentation route has no controls and is designed for capture; keep the presenter control page private.</p></section>
+</div>`,'manual-modal')}
+function openCommand(){const items=[...NAV,...QUICK.filter(q=>!NAV.some(n=>n[0]===q[0])),['manual','ℹ','User Manual']];modal(`<input class="command-input" id="commandInput" placeholder="Search Scripture or go to a feature"/><div class="command-results" id="commandResults"><div class="command-group">NAVIGATE</div>${items.map(x=>x[0]==='manual'?`<button class="command-item" data-cmanual><span>${x[1]}</span><strong>${x[2]}</strong><small>Open</small></button>`:`<button class="command-item" data-croute="${x[0]}"><span>${x[1]}</span><strong>${x[2]}</strong><small>Open</small></button>`).join('')}<div class="command-group">RECENT SEARCHES</div>${state.history.slice(0,4).map(x=>`<button class="command-item" data-csearch="${esc(x)}"><span>⌕</span><strong>${esc(x)}</strong><small>Search</small></button>`).join('')}</div>`,'command-modal');const input=$('#commandInput');input.oninput=()=>{const q=input.value.toLowerCase();$$('.command-item').forEach(x=>x.hidden=!x.textContent.toLowerCase().includes(q))};$$('[data-croute]').forEach(b=>b.onclick=()=>navigate(b.dataset.croute));$$('[data-cmanual]').forEach(b=>b.onclick=openManual);$$('[data-csearch]').forEach(b=>b.onclick=()=>{searchState.query=b.dataset.csearch;navigate('search');setTimeout(()=>performSearch(b.dataset.csearch),50)});input.onkeydown=e=>{if(e.key==='Enter'&&input.value.trim()){searchState.query=input.value.trim();navigate('search');setTimeout(()=>performSearch(input.value.trim()),50)}}}
+function openQuick(){if($('.quick-menu')){closeModal();return}modal(`<div class="eyebrow" style="padding:8px">QUICK ACTIONS</div>${[['search','⌕','Search Bible'],['prayer','♧','Start prayer'],['bible','✏','Add Scripture note'],['study','✦','Start study'],['ministry','▣','Start presentation']].map(x=>`<button data-route="${x[0]}"><span>${x[1]}</span>${x[2]}</button>`).join('')}`,'quick-menu')}
 function cycleTheme(){const a=['dark','light','sepia','amoled'],i=a.indexOf(state.profile.theme);state.profile.theme=a[(i+1)%a.length];save();toast(`${state.profile.theme[0].toUpperCase()+state.profile.theme.slice(1)} theme`)}
-async function shareText(text){if(navigator.share)try{await navigator.share({title:'KINGDOM BIBLE',text})}catch{}else{await navigator.clipboard.writeText(text);toast('Copied for sharing')}closeModal()}
-function registerPWA(){if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(console.warn);window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredInstall=e;$('#installBtn').hidden=false});$('#installBtn').onclick=installApp}
-async function installApp(){if(deferredInstall){deferredInstall.prompt();await deferredInstall.userChoice;deferredInstall=null;$('#installBtn').hidden=true}else toast('Use your browser menu and choose “Install app” or “Add to Home Screen”.')}
+async function shareText(text){/* Every share carries the reader's referral link so inviting someone always credits the inviter. */const body=text+'\n\nRead with me on KINGDOM BIBLE:\n'+(window.KingdomPremium?.referralLink?.()||location.origin+'/');if(navigator.share)try{await navigator.share({title:'KINGDOM BIBLE',text:body,url:window.KingdomPremium?.referralLink?.()||location.origin+'/'});closeModal();return}catch{}try{await navigator.clipboard.writeText(body);toast('Copied — your referral link is attached','success')}catch{toast('Copy failed','error')}closeModal()}
+/* ---------- devotional share sheet: full text + multi-page logo card ----------
+   Text shares carry the WHOLE devotional (every teaching paragraph, Reflect,
+   Prayer, Action point) in one message. The 1080×1350 image card cannot hold the
+   full teaching on one page, so it is laid out and split into 3-4 pages; every
+   page carries the logo, a PAGE x / N counter and the referral footer. */
+function devShareStrings(DV,track){
+  const url=window.KingdomPremium?.referralLink?.()||location.origin+'/';
+  const short=`${DV.title}\n"${DV.verse}" — ${DV.scripture}\n\n${DV.action}`;
+  const parts=[DV.title,`"${DV.verse}" — ${DV.scripture}`];
+  if(DV.question)parts.push(`Today's question: ${DV.question}`);
+  (DV.message||[]).forEach(p=>parts.push(p));
+  parts.push(`Reflect\n${DV.reflection}`);
+  parts.push(`Prayer\n${DV.prayer}`);
+  parts.push(`Action point\n${DV.action}`);
+  parts.push(`Read with me on KINGDOM BIBLE (${track==='youth'?'Youth':'Adult'} track):\n${url}`);
+  return{url,short,body:parts.join('\n\n')};
+}
+function devWrapLines(g,text,font,maxW){
+  g.font=font;
+  const words=String(text).split(/\s+/);let line='',lines=[];
+  for(const w of words){const t=line?line+' '+w:w;if(g.measureText(t).width>maxW&&line){lines.push(line);line=w}else line=t}
+  if(line)lines.push(line);
+  return lines.length?lines:[''];
+}
+function devCardImage(src){return new Promise(res=>{const img=new Image();img.onload=()=>res(img);img.onerror=()=>res(null);img.src=src+(src.includes('?')?'&':'?')+'cb='+Date.now()})}
+/* The full teaching does not fit one 1080×1350 page — lay it out once, paginate
+   into as many pages as the text needs (3-4 in practice), then paint each page. */
+function devCardFlow(DV,s){
+  s=s||1;const F=[],r=n=>Math.round(n*s);
+  const tx=(text,size,o)=>{o=o||{};F.push({kind:'text',text,font:(o.bold?'bold ':'')+(o.italic?'italic ':'')+r(size)+'px Georgia, serif',color:o.color||'rgba(255,255,255,.86)',lh:r(o.lh||size+14),space:r(o.space||0),keep:!!o.keep})};
+  tx(DV.title,66,{bold:true,color:'#ffffff',lh:80});
+  tx('"'+DV.verse+'"',40,{italic:true,color:'rgba(255,255,255,.92)',lh:54,space:36});
+  tx('— '+DV.scripture,32,{bold:true,color:'#f4d68a',lh:44,space:14});
+  if(DV.question){tx("TODAY'S QUESTION",28,{bold:true,color:'rgba(255,255,255,.66)',lh:40,space:36,keep:true});tx(DV.question,34,{color:'#ffffff',lh:46,space:8})}
+  (DV.message||[]).forEach(p=>tx(p,34,{lh:48,space:32}));
+  tx('Reflect',44,{bold:true,color:'#f4d68a',lh:56,space:44,keep:true});
+  tx(DV.reflection,34,{lh:46,space:8});
+  tx('Prayer',44,{bold:true,color:'#f4d68a',lh:56,space:44,keep:true});
+  tx(DV.prayer,34,{lh:46,space:8});
+  F.push({kind:'box',text:DV.action,font:'bold '+r(26)+'px Georgia, serif',textFont:r(32)+'px Georgia, serif',lh:r(44),space:r(44),pad:r(26),labelH:r(36)});
+  return F;
+}
+function devCardLayout(g,flow){
+  for(const b of flow){
+    if(b.kind==='box'){b.lines=devWrapLines(g,b.text,b.textFont,888);b.h=b.pad*2+b.labelH+b.lines.length*b.lh}
+    else b.lines=devWrapLines(g,b.text,b.font,912);
+  }
+  const pages=[];const BOTTOM=1190;let page={top:380,items:[]},y=380;
+  const newPage=()=>{pages.push(page);page={top:300,items:[]};y=300};
+  for(let bi=0;bi<flow.length;bi++){
+    const b=flow[bi],next=flow[bi+1];
+    let sp=y>page.top?b.space:0;
+    if(b.kind==='box'){
+      if(y+sp+b.h>BOTTOM&&page.items.length){newPage();sp=0}
+      y+=sp;page.items.push({b,box:true,y});y+=b.h;continue;
+    }
+    /* heading stays with the line beneath it; long blocks need 2 lines of room */
+    if(b.keep&&next&&y+sp+b.lh+(next.kind==='box'?next.h:next.lh)>BOTTOM&&page.items.length){newPage();sp=0}
+    if(!b.keep&&b.lines.length>=3&&y+sp+2*b.lh>BOTTOM&&page.items.length){newPage();sp=0}
+    y+=sp;
+    for(let i=0;i<b.lines.length;i++){
+      if(y+b.lh>BOTTOM&&page.items.length)newPage();
+      page.items.push({b,i,y});y+=b.lh;
+    }
+  }
+  pages.push(page);
+  return pages;
+}
+function devPaintPage(g,pages,idx,logo,track,total){
+  const bg=g.createLinearGradient(0,0,1080,1350);bg.addColorStop(0,'#0a1128');bg.addColorStop(.6,'#12204a');bg.addColorStop(1,'#1b2a56');
+  g.fillStyle=bg;g.fillRect(0,0,1080,1350);
+  g.strokeStyle='rgba(244,214,138,.5)';g.lineWidth=4;g.strokeRect(36,36,1008,1278);
+  g.textAlign='left';
+  if(idx===0){
+    if(logo){try{g.drawImage(logo,84,84,150,150)}catch(e){}}
+    g.fillStyle='#f4d68a';g.font='bold 40px Georgia, serif';g.fillText('KINGDOM BIBLE',266,150);
+    g.fillStyle='rgba(255,255,255,.72)';g.font='26px Georgia, serif';
+    g.fillText(`DAILY DEVOTIONAL · ${track==='youth'?'YOUTH':'ADULT'} TRACK`,266,192);
+    g.fillStyle='#f4d68a';g.fillRect(84,286,180,5);
+    if(total>1){g.fillStyle='rgba(244,214,138,.9)';g.font='bold 26px Georgia, serif';g.textAlign='right';g.fillText(`PAGE 1 / ${total}`,996,150);g.textAlign='left'}
+  }else{
+    g.fillStyle='#f4d68a';g.font='bold 36px Georgia, serif';g.fillText('KINGDOM BIBLE',84,124);
+    g.fillStyle='rgba(255,255,255,.72)';g.font='26px Georgia, serif';g.fillText('DAILY DEVOTIONAL · CONTINUED',84,168);
+    g.fillStyle='rgba(244,214,138,.9)';g.font='bold 26px Georgia, serif';g.textAlign='right';g.fillText(`PAGE ${idx+1} / ${total}`,996,124);g.textAlign='left';
+    g.fillStyle='#f4d68a';g.fillRect(84,224,180,5);
+  }
+  for(const it of pages[idx].items){
+    const b=it.b;
+    if(it.box){
+      g.fillStyle='rgba(244,214,138,.16)';g.fillRect(64,it.y,952,b.h);
+      g.strokeStyle='rgba(244,214,138,.55)';g.lineWidth=2;g.strokeRect(64,it.y,952,b.h);
+      g.fillStyle='#f4d68a';g.font=b.font;g.fillText("TODAY'S STEP",96,it.y+b.pad+Math.round(b.labelH*.75));
+      g.fillStyle='#ffffff';g.font=b.textFont;
+      b.lines.forEach((l,i)=>g.fillText(l,96,it.y+b.pad+b.labelH+i*b.lh+Math.round(b.lh*.75)));
+    }else{g.font=b.font;g.fillStyle=b.color;g.fillText(b.lines[it.i],84,it.y+Math.round(b.lh*.75))}
+  }
+  g.fillStyle='rgba(255,255,255,.55)';g.font='24px Georgia, serif';
+  g.fillText(fmtDate(new Date()),84,1268);
+  g.textAlign='right';g.fillText('Read with me on KINGDOM BIBLE',996,1268);g.textAlign='left';
+}
+async function devShareCardBlobs(DV,track){
+  const logo=await devCardImage('assets/logo.png');
+  const m=document.createElement('canvas');m.width=1080;m.height=1350;
+  const g=m.getContext('2d');
+  let pages=devCardLayout(g,devCardFlow(DV,1));
+  if(pages.length>4)pages=devCardLayout(g,devCardFlow(DV,.85)); /* safety: never exceed 4 pages */
+  const blobs=[];
+  for(let i=0;i<pages.length;i++){
+    const c=document.createElement('canvas');c.width=1080;c.height=1350;
+    devPaintPage(c.getContext('2d'),pages,i,logo,track,pages.length);
+    blobs.push(await new Promise(res=>c.toBlob(res,'image/png')));
+  }
+  return blobs;
+}
+async function shareDevCard(DV,track){
+  try{
+    const blobs=await devShareCardBlobs(DV,track);if(!blobs.length)throw new Error('no blob');
+    const n=blobs.length;
+    const files=blobs.map((b,i)=>new File([b],`kingdom-devotional-${i+1}-of-${n}.png`,{type:'image/png'}));
+    let shared=false;
+    if(navigator.share){
+      try{
+        await navigator.share({files,title:'KINGDOM BIBLE',text:`${DV.title} — full daily devotional card (${n} page${n>1?'s':''})`});
+        shared=true;
+      }catch(e){
+        if(e&&e.name==='AbortError')throw e;
+        try{
+          await navigator.share({files,title:'KINGDOM BIBLE',text:`${DV.title} — full daily devotional card (${n} page${n>1?'s':''})`});
+          shared=true;
+        }catch(e2){
+          if(e2&&e2.name!=='AbortError')throw e2;
+        }
+      }
+    }
+    if(shared)return;
+    /* Fallback: save every page so no part of the message is lost. */
+    blobs.forEach((b,i)=>setTimeout(()=>{
+      const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=`kingdom-devotional-${i+1}-of-${n}.png`;
+      document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+    },i*700));
+    toast(n>1?`Saved ${n} cards — share them in order (page 1 of ${n} first)`:'Card saved — share it from your gallery','success');
+  }catch(err){if(err&&err.name!=='AbortError')toast('Could not build the card','error')}
+}
+function openDevShareSheet(DV,track){
+  const{url,short,body}=devShareStrings(DV,track);
+  modal(`<div class="modal-head"><div><div class="eyebrow">SHARE · ${track==='youth'?'YOUTH':'ADULT'} TRACK</div><h2>${esc(DV.title)}</h2></div><button class="close-btn" data-close>×</button></div>
+  <div style="display:grid;gap:10px;margin-top:14px"><button class="primary-btn" id="shareCardBtn">🖼 Share full card (all pages)</button><button class="secondary-btn" id="shareTextBtn">↗ Share full devotional text</button><button class="secondary-btn" id="copyDevBtn">⧉ Copy full text + link</button></div>
+  <div class="eyebrow" style="margin-top:18px">SHARE TO</div>
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px"><button class="secondary-btn" data-share="wa">WhatsApp</button><button class="secondary-btn" data-share="fb">Facebook</button><button class="secondary-btn" data-share="x">X / Twitter</button><button class="secondary-btn" data-share="tg">Telegram</button><button class="secondary-btn" data-share="li">LinkedIn</button><button class="secondary-btn" data-share="mail">Email</button></div>
+  <p style="color:var(--muted);font-size:12px;margin-top:14px">Copy, WhatsApp, Telegram and Email carry the full devotional; X and Facebook show a short preview (platform limits). Every share carries your personal referral link, so new readers are credited to you.</p>`);
+  $('#shareCardBtn').onclick=()=>shareDevCard(DV,track);
+  $('#shareTextBtn').onclick=async()=>{
+    if(navigator.share)try{await navigator.share({title:'KINGDOM BIBLE',text:body,url});closeModal();return}catch(e){if(e&&e.name==='AbortError')return}
+    try{await navigator.clipboard.writeText(body);toast('Copied — referral link attached','success')}catch{toast('Copy failed','error')}
+  };
+  $('#copyDevBtn').onclick=async()=>{try{await navigator.clipboard.writeText(body);toast('Copied — referral link attached','success')}catch{toast('Copy failed','error')}};
+  $$('[data-share]').forEach(b=>b.onclick=()=>{
+    const k=b.dataset.share;let u='';
+    if(k==='wa')u='https://wa.me/?text='+encodeURIComponent(body);
+    else if(k==='fb')u='https://www.facebook.com/sharer/sharer.php?u='+encodeURIComponent(url)+'&quote='+encodeURIComponent(short);
+    else if(k==='x')u='https://twitter.com/intent/tweet?text='+encodeURIComponent(short+'\n'+url);
+    else if(k==='tg')u='https://t.me/share/url?url='+encodeURIComponent(url)+'&text='+encodeURIComponent(body);
+    else if(k==='li')u='https://www.linkedin.com/sharing/share-offsite/?url='+encodeURIComponent(url);
+    else if(k==='mail')u='mailto:?subject='+encodeURIComponent('Daily Devotional — '+DV.title)+'&body='+encodeURIComponent(body);
+    if(k==='mail')location.href=u;else window.open(u,'_blank','noopener');
+  });
+}
+/* ---------- app update notification ----------
+   A new release only reaches the reader once the service worker swaps. Without this the
+   ministry laptop can keep serving a cached shell for weeks, and the symptom is simply
+   "the new features are not showing". We surface the pending worker as a dismissible
+   banner and reload exactly once when it takes control. */
+let updateWorker=null;
+function showUpdateBanner(){
+  if($('#updateBanner'))return;
+  const bar=document.createElement('div');
+  bar.id='updateBanner';bar.className='update-banner';
+  bar.innerHTML=`<span>✨ A new version of KINGDOM BIBLE is ready.</span><button class="primary-btn small-btn" id="applyUpdate">Update now</button><button class="icon-btn" id="dismissUpdate" aria-label="Dismiss">×</button>`;
+  document.body.append(bar);
+  bar.querySelector('#applyUpdate').onclick=()=>{
+    bar.remove();
+    /* Tell the waiting worker to activate now, then let controllerchange reload. */
+    if(updateWorker)updateWorker.postMessage({type:'SKIP_WAITING'});
+    else location.reload();
+  };
+  bar.querySelector('#dismissUpdate').onclick=()=>bar.remove();
+}
+function registerPWA(){
+  if('serviceWorker'in navigator){
+    navigator.serviceWorker.register('/sw.js').then(reg=>{
+      /* `updatefound` only tells us a new worker is downloading; the banner belongs on
+         `installed`, and only when a worker is already in control (otherwise this is the
+         very first install, which needs no announcement). */
+      reg.addEventListener('updatefound',()=>{
+        const w=reg.installing;if(!w)return;
+        updateWorker=w;
+        w.addEventListener('statechange',()=>{
+          if(w.state==='installed'&&navigator.serviceWorker.controller)showUpdateBanner();
+        });
+      });
+    }).catch(console.warn);
+    /* Fires after the new worker activates and takes over the page. */
+    let reloaded=false;
+    navigator.serviceWorker.addEventListener('controllerchange',()=>{
+      if(reloaded)return;reloaded=true;location.reload();
+    });
+  }
+  window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredInstall=e;const b=$('#installBtn');if(b)b.hidden=false});
+  const ib=$('#installBtn');if(ib)ib.onclick=installApp;
+}
+async function installApp(){if(deferredInstall){deferredInstall.prompt();await deferredInstall.userChoice;deferredInstall=null;$('#installBtn').hidden=true}else toast('Use your browser menu and choose "Install app" or "Add to Home Screen".')}
 function networkStatus(){const draw=()=>$('#offlineBar').hidden=navigator.onLine;addEventListener('online',draw);addEventListener('offline',draw);draw()}
 init();
