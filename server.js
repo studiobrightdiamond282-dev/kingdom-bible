@@ -9,7 +9,7 @@ const ROOT=path.join(__dirname,'public'),DATA=path.join(__dirname,'data');
    should set the same values in their secret manager instead. */
 (function loadDotEnv(file){try{if(!fs.existsSync(file))return;for(const line of fs.readFileSync(file,'utf8').split(/\r?\n/)){const m=line.match(/^\s*([A-Z][A-Z0-9_]*)\s*=\s*(.*)\s*$/);if(m&&!process.env[m[1]])process.env[m[1]]=m[2].replace(/^['"]|['"]$/g,'')}}catch{}})(path.join(__dirname,'.env'));
 const PORT=Number(process.env.PORT||4173),HOST='0.0.0.0';
-const APP='KINGDOM BIBLE',VERSION='1.2.11';
+const APP='KINGDOM BIBLE',VERSION='1.2.12';
 /* Static and server-rendered contact data comes from config/site.js. */
 const MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.mp4':'video/mp4','.webm':'video/webm','.svg':'image/svg+xml','.txt':'text/plain; charset=utf-8','.xml':'application/xml; charset=utf-8'};
 /* Absolute origin used for the link-preview urls (og:image and friends).
