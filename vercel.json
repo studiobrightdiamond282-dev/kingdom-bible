@@ -11,6 +11,10 @@
       "destination": "/status.html"
     },
     {
+      "source": "/film",
+      "destination": "/film.html"
+    },
+    {
       "source": "/remote",
       "destination": "/remote.html"
     },
@@ -49,7 +53,7 @@
         },
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; worker-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'"
+          "value": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; worker-src 'self'; media-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'"
         }
       ]
     },
@@ -62,7 +66,7 @@
         },
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; worker-src 'self'; frame-ancestors *; base-uri 'self'; form-action 'self'; object-src 'none'"
+          "value": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; worker-src 'self'; media-src 'self'; frame-ancestors *; base-uri 'self'; form-action 'self'; object-src 'none'"
         }
       ]
     },
@@ -72,6 +76,19 @@
         {
           "key": "Cache-Control",
           "value": "public, max-age=86400, immutable"
+        }
+      ]
+    },
+    {
+      "source": "/film/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=86400"
+        },
+        {
+          "key": "Content-Type",
+          "value": "video/mp4"
         }
       ]
     },

@@ -2,14 +2,18 @@
   "name": "kingdom-bible",
   "version": "1.2.0",
   "private": true,
-  "description": "KINGDOM BIBLE \u2014 premium local-first Bible, study, prayer and ministry PWA",
+  "description": "KINGDOM BIBLE — premium local-first Bible, study, prayer and ministry PWA",
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "test": "node tests/smoke.js && node tests/refs.js && node tests/qr.js && node tests/fit.js && node tests/hub.js",
+    "test": "node tests/smoke.js && node tests/refs.js && node tests/qr.js && node tests/fit.js && node tests/hub.js && node tests/film.js",
     "test:integration": "node tests/integration.js",
-    "test:all": "node tests/smoke.js && node tests/refs.js && node tests/qr.js && node tests/fit.js && node tests/hub.js && node tests/integration.js",
-    "assetlinks": "node scripts/assetlinks.js"
+    "test:all": "node tests/smoke.js && node tests/refs.js && node tests/qr.js && node tests/fit.js && node tests/hub.js && node tests/film.js && node tests/integration.js",
+    "assetlinks": "node scripts/assetlinks.js",
+    "film:audio": "cd scripts/film && python3 build_audio.py",
+    "film:render": "cd scripts/film && python3 render_video.py",
+    "film:poster": "cd scripts/film && python3 poster.py --gallery",
+    "film:publish": "node scripts/publish-film.js"
   },
   "engines": {
     "node": ">=20"

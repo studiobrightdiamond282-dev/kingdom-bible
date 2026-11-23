@@ -6,7 +6,7 @@ const REF=require('./public/bible-ref.js');
 const ROOT=path.join(__dirname,'public'),DATA=path.join(__dirname,'data');
 const PORT=Number(process.env.PORT||4173),HOST='0.0.0.0';
 const APP='KINGDOM BIBLE',VERSION='1.2.0';
-const MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.png':'image/png','.svg':'image/svg+xml','.txt':'text/plain; charset=utf-8','.xml':'application/xml; charset=utf-8'};
+const MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.png':'image/png','.jpg':'image/jpeg','.svg':'image/svg+xml','.mp4':'video/mp4','.webm':'video/webm','.txt':'text/plain; charset=utf-8','.xml':'application/xml; charset=utf-8'};
 const THEMES=['royal','dark','light','transparent','sunset','noir'];
 const TRANSLATIONS=['kjv','asv','web'];
 const MAX_VERSES=40;
@@ -20,7 +20,7 @@ function headers(res,type='application/json; charset=utf-8',frameable=false){
   /* ALLOWALL is not a real XFO value: when the page is meant to be captured/embedded,
      drop the legacy header entirely and let CSP frame-ancestors carry the policy. */
   if(!frameable)res.setHeader('X-Frame-Options','SAMEORIGIN');
-  res.setHeader('Content-Security-Policy',"default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; worker-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'"+(frameable?'; frame-ancestors *':''));
+  res.setHeader('Content-Security-Policy',"default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; worker-src 'self'; media-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'"+(frameable?'; frame-ancestors *':''));
 }
 function json(res,status,data){res.statusCode=status;headers(res);res.end(JSON.stringify(data))}
 
@@ -65,6 +65,22 @@ function resolve(input,tr){
   const ref=verses.length===1&&p.verse!=null?`${label}:${p.verse}`:p.verse==null?label:`${label}:${verses[0].n}-${verses[verses.length-1].n}`;
   return{ref,label,book:p.book,chapter:p.chapter,verse:verses[0].n,verseEnd:verses[verses.length-1].n,verses,text:verses.map(v=>v.text).join(' '),translation:tr};
 }
+/* Video needs ranged responses: without them a <video> element can play but not
+   seek, and Safari refuses the source outright. */
+function streamMedia(req,res,file,st){
+  res.setHeader('Accept-Ranges','bytes');
+  const m=/^bytes=(\d*)-(\d*)$/.exec(req.headers.range||'');
+  if(!m){res.setHeader('Content-Length',st.size);return fs.createReadStream(file).pipe(res)}
+  let start=m[1]===''?null:Number(m[1]),end=m[2]===''?null:Number(m[2]);
+  if(start===null){start=Math.max(0,st.size-(end||0));end=st.size-1}
+  if(end===null||end>=st.size)end=st.size-1;
+  if(start>end||start>=st.size){res.statusCode=416;res.setHeader('Content-Range','bytes */'+st.size);return res.end()}
+  res.statusCode=206;
+  res.setHeader('Content-Range','bytes '+start+'-'+end+'/'+st.size);
+  res.setHeader('Content-Length',end-start+1);
+  return fs.createReadStream(file,{start,end}).pipe(res);
+}
+
 /* ---------- LAN discovery ---------- */
 function lanAddresses(){
   const out=new Set();
@@ -223,6 +239,8 @@ const server=http.createServer(async(req,res)=>{
       let f;
       if(p==='/'||p==='/index.html')f=path.join(ROOT,'index.html');
       else if(p==='/remote')f=path.join(ROOT,'remote.html');
+      /* THE LAST HUMAN CLICK has a clean route, like /status and /remote */
+      else if(p==='/film'||p==='/film/')f=path.join(ROOT,'film.html');
       else if(p==='/present'||p==='/present/')f=path.join(ROOT,'index.html');
       else f=path.join(ROOT,path.normalize(p).replace(/^(\.\.[\\/])+/,''));
       if(f.startsWith(ROOT)&&fs.existsSync(f)&&fs.statSync(f).isFile()){
@@ -235,6 +253,8 @@ const server=http.createServer(async(req,res)=>{
         headers(res,MIME[ext]||'application/octet-stream',live);
         res.setHeader('Cache-Control',noStore?'no-store, must-revalidate':'public, max-age=60');
         res.setHeader('ETag','"'+st.size+'-'+st.mtimeMs+'"');
+        /* byte ranges let the film be scrubbed instead of re-downloaded */
+        if(/^video\//.test(MIME[ext]||''))return streamMedia(req,res,f,st);
         return fs.createReadStream(f).pipe(res);
       }
     }

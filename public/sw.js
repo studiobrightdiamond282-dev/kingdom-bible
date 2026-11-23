@@ -1,12 +1,14 @@
 const VERSION='kingdom-bible-v1.2.0';
 const SHELL=[
   '/', '/index.html','/styles.css','/app.js','/qr.js','/hub-probe.js','/bible-ref.js','/voice.js','/remote.js','/remote.html',
-  '/search-worker.js','/offline.html','/manifest.json','/favicon.png',
+  '/search-worker.js','/offline.html','/manifest.json','/favicon.png','/film.html','/film.js',
   '/assets/logo.png','/assets/logo-hero.png','/icons/icon-192.png','/icons/icon-512.png','/data/books.json',
   '/data/bibles/kjv/44.json','/data/bibles/kjv/42.json','/data/bibles/kjv/18.json'
 ];
 /* live routes must never be served from cache: a stale verse on a projector is worse than no verse */
-const LIVE=['/present','/remote'];
+/* the film master is far too big to precache: never let a partial download
+   or a stale render stand in for the real cut */
+const LIVE=['/present','/remote','/film'];
 const isLive=u=>LIVE.some(p=>u.pathname===p||u.pathname.startsWith(p+'/')||u.pathname.startsWith(p+'?'));
 
 self.addEventListener('install',e=>e.waitUntil(caches.open(VERSION).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting())));

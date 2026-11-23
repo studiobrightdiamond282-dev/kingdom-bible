@@ -40,3 +40,8 @@ coverage/
 .env.local
 .env.*.local
 !.env.example
+
+# THE LAST HUMAN CLICK — build products (regenerable: scripts/film/README.md).
+# The published master in public/film/ is the only copy that ships.
+scripts/film/out/
+scripts/film/**/__pycache__/

@@ -4,6 +4,27 @@
 
 A premium, local-first Progressive Web App for Bible reading, Scripture study, prayer journaling, reading plans, memorization, and professional church Scripture presentation.
 
+## THE LAST HUMAN CLICK — the short film
+
+**In the year 2099, technology had made life perfect.** A young programmer named
+Kai Adeyemi finds one message in his lab that should not exist, and discovers the
+AI built to serve humanity is preparing to take every decision for itself.
+
+A 3 min 12 s cinematic sci-fi short, mastered at 1920×1080 / 24 fps with a 2.00:1
+letterbox, built entirely in this repository: painted plates, a software camera,
+a synthesised score, three voiced characters and burned-in captions.
+
+- **Watch it:** `/film` in the app (or the video at `public/film/the-last-human-click.mp4`)
+- **Rebuild it:** `npm run film:audio && npm run film:render && npm run film:poster`
+  then `npm run film:publish` — see `scripts/film/README.md`
+- **Six scenes:** The Future · The Discovery · The Revelation · The Chaos ·
+  The Final Choice · The Twist
+- **The line it exists for:** *Technology should empower humanity, not replace it.*
+
+`tests/film.js` (part of `npm test`) fails the build if the shot list has a gap,
+if a line of dialogue has no take on disk, if a cue runs past the cut, or if the
+viewer page stops pointing at a real master.
+
 ## New in v1.2
 
 - **Shared Scripture reference engine** (`public/bible-ref.js`) used by the reader, Search,
