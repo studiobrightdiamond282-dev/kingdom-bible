@@ -254,7 +254,16 @@ const server=http.createServer(async(req,res)=>{
         res.setHeader('Cache-Control',noStore?'no-store, must-revalidate':'public, max-age=60');
         res.setHeader('ETag','"'+st.size+'-'+st.mtimeMs+'"');
         /* byte ranges let the film be scrubbed instead of re-downloaded */
-        if(/^video\//.test(MIME[ext]||''))return streamMedia(req,res,f,st);
+        /* ?download forces a save (with a human filename) instead of inline play;
+           it is the difference between a link people can find and one they can use. */
+        if(/^video\//.test(MIME[ext]||'')){
+          if(u.searchParams.has('download')){
+            const nice=String(u.searchParams.get('download')||'').trim();
+            const safe=(nice||path.basename(f)).replace(/[\\/:*?"<>|\x00-\x1f]/g,' ').slice(0,120);
+            res.setHeader('Content-Disposition',"attachment; filename=\""+safe+"\"");
+          }
+          return streamMedia(req,res,f,st);
+        }
         return fs.createReadStream(f).pipe(res);
       }
     }
