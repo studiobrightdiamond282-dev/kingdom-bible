@@ -51,9 +51,31 @@ function probeVideo() {
   // a 404 on the source also fires `error` on the element in most browsers;
   // belt and braces for the rest:
   fetch(video.currentSrc || video.src || '/film/the-last-human-click.mp4', { method: 'HEAD' })
-    .then(r => { if (!r.ok) fail(); })
+    .then(r => { if (!r.ok) return fail(); const size = Number(r.headers.get('content-length') || 0); nameDownload(size); })
     .catch(fail);
 }
 
 render();
 probeVideo();
+
+
+/* Keep the download button honest: show the real byte size the server reports,
+   and never offer a download of a file that is not there. */
+function nameDownload(bytes) {
+  const link = document.getElementById('dlLink');
+  if (!link) return;
+  if (!bytes) return;
+  const mb = bytes / (1024 * 1024);
+  const small = link.querySelector('small');
+  if (small) small.textContent = `MP4 · 1080p · ${mb.toFixed(0)} MB`;
+}
+
+/* Belt and braces for the "no master yet" case: the reveal button must not
+   silently download a 404 page. */
+document.addEventListener('click', e => {
+  const a = e.target.closest && e.target.closest('a[download]');
+  if (!a) return;
+  if (document.getElementById('player')?.classList.contains('pending')) {
+    e.preventDefault();
+  }
+});
